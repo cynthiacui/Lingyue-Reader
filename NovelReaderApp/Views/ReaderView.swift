@@ -52,7 +52,8 @@ struct ReaderView: View {
 
     var body: some View {
         GeometryReader { proxy in
-            let pages = readerPages(for: proxy.size, safeAreaInsets: proxy.safeAreaInsets)
+            let textSize = readerTextSize(containerSize: proxy.size, safeAreaInsets: proxy.safeAreaInsets)
+            let pages = readerPages(textSize: textSize)
             let currentPage = currentPage(in: pages)
 
             ZStack {
@@ -60,7 +61,7 @@ struct ReaderView: View {
 
                 TabView(selection: $currentPageIndex) {
                     ForEach(pages.indices, id: \.self) { index in
-                        pageView(for: pages[index], safeAreaInsets: proxy.safeAreaInsets)
+                        pageView(for: pages[index], safeAreaInsets: proxy.safeAreaInsets, textSize: textSize)
                             .tag(index)
                     }
                 }
@@ -75,7 +76,7 @@ struct ReaderView: View {
                 }
 
                 if !showControls {
-                    readerHeader(safeTop: proxy.safeAreaInsets.top, width: proxy.size.width)
+                    readerHeader(safeTop: proxy.safeAreaInsets.top)
                         .transition(.opacity)
                 }
 
@@ -99,7 +100,7 @@ struct ReaderView: View {
     }
 
     private func headerTopPadding(safeTop: CGFloat) -> CGFloat {
-        max(safeTop - 24, 28)
+        max(safeTop - 24, 26)
     }
 
     private func contentTopPadding(safeAreaInsets: EdgeInsets) -> CGFloat {
@@ -117,27 +118,18 @@ struct ReaderView: View {
         max(safeTop + 8, 52)
     }
 
-    private func headerIslandGap(width: CGFloat) -> CGFloat {
-        min(max(width * 0.34, 124), 156)
-    }
-
-    private func headerSideWidth(width: CGFloat) -> CGFloat {
-        let available = width - headerIslandGap(width: width) - 28
-        return max(74, min(126, available / 2))
-    }
-
-    private func pageView(for page: ReaderPageItem, safeAreaInsets: EdgeInsets) -> some View {
+    private func pageView(for page: ReaderPageItem, safeAreaInsets: EdgeInsets, textSize: CGSize) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             JustifiedReaderText(
-                text: displayed(page.content),
+                text: page.content,
                 fontSize: fontSize,
                 lineSpacing: lineSpacing,
                 color: UIColor(pageForeground)
             )
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .frame(width: textSize.width, height: textSize.height, alignment: .topLeading)
 
             HStack {
-                Text(displayed(page.chapterTitle))
+                Text(page.chapterTitle)
                     .lineLimit(1)
                     .minimumScaleFactor(0.75)
 
@@ -148,6 +140,7 @@ struct ReaderView: View {
             }
             .font(.system(size: 11, weight: .medium))
             .foregroundStyle(secondaryForeground)
+            .frame(maxWidth: .infinity)
         }
         .padding(.horizontal, horizontalMargin)
         .padding(.top, contentTopPadding(safeAreaInsets: safeAreaInsets))
@@ -183,26 +176,26 @@ struct ReaderView: View {
         .ignoresSafeArea()
     }
 
-    private func readerHeader(safeTop: CGFloat, width: CGFloat) -> some View {
+    private func readerHeader(safeTop: CGFloat) -> some View {
         VStack {
             HStack(alignment: .center, spacing: 14) {
                 TimelineView(.periodic(from: .now, by: 30)) { timeline in
                     Text(timeString(from: timeline.date))
                         .monospacedDigit()
                 }
-                .frame(width: headerSideWidth(width: width), alignment: .trailing)
+                .frame(alignment: .leading)
 
                 Spacer()
-                    .frame(width: headerIslandGap(width: width))
 
                 Text(displayed(novel.title))
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
-                    .frame(width: headerSideWidth(width: width), alignment: .leading)
+                    .frame(alignment: .trailing)
             }
             .font(.system(size: 12, weight: .semibold))
             .foregroundStyle(secondaryForeground)
             .frame(maxWidth: .infinity)
+            .padding(.horizontal, horizontalMargin)
             .padding(.top, headerTopPadding(safeTop: safeTop))
 
             Spacer()
@@ -224,7 +217,7 @@ struct ReaderView: View {
 
                 Spacer()
 
-                Text(displayed(currentPage.chapterTitle))
+                Text(currentPage.chapterTitle)
                     .font(.system(size: 14, weight: .medium))
                     .foregroundStyle(secondaryForeground)
                     .lineLimit(1)
@@ -405,18 +398,17 @@ struct ReaderView: View {
         }
     }
 
-    private func readerPages(for containerSize: CGSize, safeAreaInsets: EdgeInsets) -> [ReaderPageItem] {
-        let textSize = readerTextSize(containerSize: containerSize, safeAreaInsets: safeAreaInsets)
-
+    private func readerPages(textSize: CGSize) -> [ReaderPageItem] {
         return chapters.enumerated().flatMap { chapterIndex, chapter in
-            let chapterPages = splitIntoPages(chapter.content, textSize: textSize)
+            let chapterTitle = displayed(chapter.title)
+            let chapterPages = splitIntoPages(displayed(chapter.content), textSize: textSize)
 
             return chapterPages.enumerated().map { pageIndex, content in
                 ReaderPageItem(
                     chapterIndex: chapterIndex,
                     pageIndex: pageIndex,
                     chapterPageCount: chapterPages.count,
-                    chapterTitle: chapter.title,
+                    chapterTitle: chapterTitle,
                     content: content
                 )
             }
@@ -424,7 +416,7 @@ struct ReaderView: View {
     }
 
     private func readerTextSize(containerSize: CGSize, safeAreaInsets: EdgeInsets) -> CGSize {
-        let footerHeight: CGFloat = 18
+        let footerHeight = footerTextHeight
         let footerSpacing: CGFloat = 8
         let width = max(containerSize.width - horizontalMargin * 2, 120)
         let height = max(
@@ -439,75 +431,86 @@ struct ReaderView: View {
         return CGSize(width: width, height: height)
     }
 
+    private var footerTextHeight: CGFloat {
+        let font = UIFont.systemFont(ofSize: 11, weight: .medium)
+        return ceil(font.lineHeight)
+    }
+
     private func splitIntoPages(_ content: String, textSize: CGSize) -> [String] {
         var remaining = content.trimmingCharacters(in: .whitespacesAndNewlines)
         var result: [String] = []
 
         while !remaining.isEmpty {
-            let fittingCount = fittingCharacterCount(in: remaining, textSize: textSize)
-            let splitCount = adjustedSplitCount(in: remaining, fittingCount: fittingCount)
-            let splitIndex = remaining.index(remaining.startIndex, offsetBy: splitCount)
+            let splitIndex = fittingSplitIndex(in: remaining, textSize: textSize)
             let pageText = String(remaining[..<splitIndex]).trimmingCharacters(in: .whitespacesAndNewlines)
 
-            result.append(pageText.isEmpty ? String(remaining.prefix(splitCount)) : pageText)
+            result.append(pageText.isEmpty ? String(remaining[..<splitIndex]) : pageText)
             remaining = String(remaining[splitIndex...]).trimmingCharacters(in: .whitespacesAndNewlines)
         }
 
         return result.isEmpty ? [""] : result
     }
 
-    private func fittingCharacterCount(in text: String, textSize: CGSize) -> Int {
-        let totalCount = text.count
-        guard totalCount > 0 else { return 0 }
+    private func fittingSplitIndex(in text: String, textSize: CGSize) -> String.Index {
+        guard !text.isEmpty else { return text.startIndex }
+
+        let nsText = text as NSString
+        let totalLength = nsText.length
+        let textView = measuringTextView(width: textSize.width)
 
         var lowerBound = 1
-        var upperBound = totalCount
-        var bestCount = 1
+        var upperBound = totalLength
+        var bestLength = 1
 
         while lowerBound <= upperBound {
             let midpoint = (lowerBound + upperBound) / 2
-            let candidate = String(text.prefix(midpoint))
+            let candidate = nsText.substring(to: midpoint)
+            let candidateHeight = measuredTextHeight(candidate, using: textView, width: textSize.width)
 
-            if measuredTextHeight(candidate, width: textSize.width) <= textSize.height {
-                bestCount = midpoint
+            if candidateHeight <= textSize.height + 0.5 {
+                bestLength = midpoint
                 lowerBound = midpoint + 1
             } else {
                 upperBound = midpoint - 1
             }
         }
 
-        return bestCount
-    }
-
-    private func adjustedSplitCount(in text: String, fittingCount: Int) -> Int {
-        guard fittingCount < text.count else { return fittingCount }
-
-        let prefix = String(text.prefix(fittingCount))
-        let minimumUsefulCount = Int(Double(fittingCount) * 0.88)
-        let preferredBreaks = Set("。！？；，、,.!?;\n")
-
-        for (offset, character) in prefix.enumerated().reversed() {
-            guard offset >= minimumUsefulCount else { break }
-            if preferredBreaks.contains(character) {
-                return max(offset + 1, 1)
-            }
+        guard bestLength < totalLength else {
+            return text.endIndex
         }
 
-        return fittingCount
+        let nsRange = NSRange(location: 0, length: bestLength)
+        return Range(nsRange, in: text)?.upperBound ?? text.index(after: text.startIndex)
     }
 
-    private func measuredTextHeight(_ text: String, width: CGFloat) -> CGFloat {
-        let attributedText = NSAttributedString(
-            string: text,
-            attributes: readerTextAttributes(color: .label)
-        )
-        let rect = attributedText.boundingRect(
-            with: CGSize(width: width, height: .greatestFiniteMagnitude),
-            options: [.usesLineFragmentOrigin, .usesFontLeading],
-            context: nil
-        )
+    private func measuringTextView(width: CGFloat) -> UITextView {
+        let textView = UITextView(frame: CGRect(x: 0, y: 0, width: width, height: 1))
+        textView.isEditable = false
+        textView.isSelectable = false
+        textView.isScrollEnabled = false
+        textView.isUserInteractionEnabled = false
+        textView.backgroundColor = .clear
+        textView.clipsToBounds = true
+        textView.contentInset = .zero
+        textView.contentInsetAdjustmentBehavior = .never
+        textView.textContainerInset = .zero
+        textView.textContainer.lineFragmentPadding = 0
+        textView.textContainer.maximumNumberOfLines = 0
+        textView.textContainer.lineBreakMode = .byWordWrapping
+        return textView
+    }
 
-        return ceil(rect.height)
+    private func measuredTextHeight(_ text: String, using textView: UITextView, width: CGFloat) -> CGFloat {
+        textView.attributedText = attributedReaderText(text, color: .label)
+        let fittingSize = textView.sizeThatFits(CGSize(width: width, height: CGFloat.greatestFiniteMagnitude))
+        return ceil(fittingSize.height)
+    }
+
+    private func attributedReaderText(_ text: String, color: UIColor) -> NSAttributedString {
+        NSAttributedString(
+            string: text,
+            attributes: readerTextAttributes(color: color)
+        )
     }
 
     private func readerTextAttributes(color: UIColor) -> [NSAttributedString.Key: Any] {
@@ -558,13 +561,16 @@ private struct JustifiedReaderText: UIViewRepresentable {
     let lineSpacing: CGFloat
     let color: UIColor
 
-    func makeUIView(context: Context) -> UITextView {
-        let textView = UITextView()
+    func makeUIView(context: Context) -> ReaderTextView {
+        let textView = ReaderTextView()
         textView.isEditable = false
         textView.isSelectable = false
         textView.isScrollEnabled = false
         textView.isUserInteractionEnabled = false
         textView.backgroundColor = .clear
+        textView.clipsToBounds = true
+        textView.contentInset = .zero
+        textView.contentInsetAdjustmentBehavior = .never
         textView.textContainerInset = .zero
         textView.textContainer.lineFragmentPadding = 0
         textView.textContainer.maximumNumberOfLines = 0
@@ -575,7 +581,7 @@ private struct JustifiedReaderText: UIViewRepresentable {
         return textView
     }
 
-    func updateUIView(_ textView: UITextView, context: Context) {
+    func updateUIView(_ textView: ReaderTextView, context: Context) {
         let paragraphStyle = NSMutableParagraphStyle()
         paragraphStyle.alignment = .justified
         paragraphStyle.baseWritingDirection = .leftToRight
@@ -591,6 +597,21 @@ private struct JustifiedReaderText: UIViewRepresentable {
                 .paragraphStyle: paragraphStyle
             ]
         )
+        textView.updateContainerSize()
+    }
+}
+
+private final class ReaderTextView: UITextView {
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        updateContainerSize()
+    }
+
+    func updateContainerSize() {
+        guard bounds.width > 0, bounds.height > 0 else { return }
+        guard textContainer.size != bounds.size else { return }
+        textContainer.size = bounds.size
+        layoutManager.invalidateLayout(forCharacterRange: NSRange(location: 0, length: attributedText.length), actualCharacterRange: nil)
     }
 }
 

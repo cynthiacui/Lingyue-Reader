@@ -7,7 +7,6 @@ struct LibraryView: View {
     @State private var categories = LibraryCategory.seeded(from: MockData.novels)
     @State private var isAddingCategory = false
     @State private var newCategoryName = ""
-    @State private var actionBook: Novel?
     @State private var categoryEditBook: Novel?
     @State private var newBookCategoryName = ""
 
@@ -38,20 +37,27 @@ struct LibraryView: View {
             .contentMargins(.horizontal, horizontalMargin, for: .scrollContent)
             .safeAreaPadding(.bottom, 12)
 
-            if let actionBook {
-                bookActionOverlay(for: actionBook)
-                    .transition(.opacity.combined(with: .scale(scale: 0.96)))
-                    .zIndex(10)
-            }
-
             if let categoryEditBook {
                 categoryEditOverlay(for: categoryEditBook)
                     .transition(.opacity.combined(with: .scale(scale: 0.96)))
                     .zIndex(11)
             }
+
+            if isAddingCategory {
+                NewCategoryOverlay(
+                    categoryName: $newCategoryName,
+                    onAdd: addCategory,
+                    onDismiss: {
+                        newCategoryName = ""
+                        isAddingCategory = false
+                    }
+                )
+                .transition(.opacity.combined(with: .scale(scale: 0.96)))
+                .zIndex(12)
+            }
         }
-        .animation(.easeInOut(duration: 0.18), value: actionBook?.id)
         .animation(.easeInOut(duration: 0.18), value: categoryEditBook?.id)
+        .animation(.easeInOut(duration: 0.18), value: isAddingCategory)
         .navigationTitle("书架")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -65,19 +71,6 @@ struct LibraryView: View {
                 .accessibilityLabel("新建分类")
             }
         }
-        .alert("新建分类", isPresented: $isAddingCategory) {
-            TextField("分类名称", text: $newCategoryName)
-
-            Button("取消", role: .cancel) {
-                newCategoryName = ""
-            }
-
-            Button("添加") {
-                addCategory()
-            }
-        } message: {
-            Text("分类会先创建为空，可以稍后加入书籍。")
-        }
     }
 
     private var currentlyReadingSection: some View {
@@ -86,18 +79,13 @@ struct LibraryView: View {
 
             LazyVGrid(columns: readingColumns, spacing: 10) {
                 ForEach(Array(MockData.currentlyReading.prefix(2))) { novel in
-                    NavigationLink {
+                    BookPressableNavigationRow {
                         ReaderView(novel: novel)
                     } label: {
                         CompactReadingCard(novel: novel)
+                    } onLongPress: {
+                        presentCategoryEditor(for: novel)
                     }
-                    .buttonStyle(.plain)
-                    .simultaneousGesture(
-                        LongPressGesture(minimumDuration: 0.45)
-                            .onEnded { _ in
-                                presentBookActions(for: novel)
-                            }
-                    )
                 }
             }
         }
@@ -129,7 +117,7 @@ struct LibraryView: View {
                         CategoryShelf(
                             category: category,
                             categories: $categories,
-                            onBookLongPress: presentBookActions
+                            onBookLongPress: presentCategoryEditor
                         )
                     }
                 }
@@ -137,31 +125,21 @@ struct LibraryView: View {
         }
     }
 
-    private func bookActionOverlay(for novel: Novel) -> some View {
-        BookActionOverlay(novel: novel) {
-            newBookCategoryName = ""
-            actionBook = nil
-            categoryEditBook = novel
-        } onDismiss: {
-            actionBook = nil
-        }
-    }
-
     private func categoryEditOverlay(for novel: Novel) -> some View {
         CategoryEditOverlay(
             novel: novel,
             categories: $categories,
-            newCategoryName: $newBookCategoryName
-        ) {
-            categoryEditBook = nil
-        } onDismiss: {
-            categoryEditBook = nil
-            newBookCategoryName = ""
-        }
+            newCategoryName: $newBookCategoryName,
+            onDismiss: {
+                categoryEditBook = nil
+                newBookCategoryName = ""
+            }
+        )
     }
 
-    private func presentBookActions(for novel: Novel) {
-        actionBook = novel
+    private func presentCategoryEditor(for novel: Novel) {
+        newBookCategoryName = ""
+        categoryEditBook = novel
     }
 
     private func addCategory() {
@@ -178,6 +156,7 @@ struct LibraryView: View {
 
         categories.append(LibraryCategory(name: trimmedName, novels: []))
         newCategoryName = ""
+        isAddingCategory = false
     }
 }
 
@@ -225,59 +204,120 @@ private struct CenteredOverlay<Content: View>: View {
     }
 }
 
-private struct BookActionOverlay: View {
-    let novel: Novel
-    let onEditCategory: () -> Void
+private struct BookPressableNavigationRow<Destination: View, Label: View>: View {
+    @State private var isNavigating = false
+    @State private var didLongPress = false
+
+    let destination: Destination
+    let label: Label
+    let onLongPress: () -> Void
+
+    init(
+        @ViewBuilder destination: () -> Destination,
+        @ViewBuilder label: () -> Label,
+        onLongPress: @escaping () -> Void
+    ) {
+        self.destination = destination()
+        self.label = label()
+        self.onLongPress = onLongPress
+    }
+
+    var body: some View {
+        label
+            .contentShape(Rectangle())
+            .navigationDestination(isPresented: $isNavigating) {
+                destination
+            }
+            .onTapGesture {
+                guard !didLongPress else { return }
+                isNavigating = true
+            }
+            .onLongPressGesture(minimumDuration: 0.45) {
+                didLongPress = true
+                onLongPress()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                    didLongPress = false
+                }
+            }
+    }
+}
+
+private struct NewCategoryOverlay: View {
+    @Binding var categoryName: String
+    @FocusState private var isNameFocused: Bool
+
+    let onAdd: () -> Void
     let onDismiss: () -> Void
 
     var body: some View {
         CenteredOverlay {
             VStack(alignment: .leading, spacing: 14) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(novel.title)
+                    Text("新建分类")
                         .font(.system(size: 18, weight: .bold, design: .rounded))
                         .foregroundStyle(Color.readerInk)
-                        .lineLimit(1)
 
-                    Text("选择操作")
+                    Text("分类会先创建为空，可以稍后加入书籍。")
                         .font(.system(size: 13))
                         .foregroundStyle(Color.readerMuted)
                 }
 
-                Button(action: onEditCategory) {
-                    HStack(spacing: 10) {
-                        Image(systemName: "folder.badge.gearshape")
-                            .font(.system(size: 17, weight: .semibold))
-
-                        Text("编辑书籍分类")
-                            .font(.system(size: 15, weight: .semibold))
-
-                        Spacer()
-
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 12, weight: .bold))
-                            .foregroundStyle(Color.readerMuted)
-                    }
-                    .foregroundStyle(Color.readerInk)
-                    .padding(12)
+                TextField("分类名称", text: $categoryName)
+                    .focused($isNameFocused)
+                    .textInputAutocapitalization(.never)
+                    .submitLabel(.done)
+                    .font(.system(size: 15))
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 11)
                     .background(Color.readerBackground)
                     .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                }
-                .buttonStyle(.plain)
+                    .onSubmit(addIfPossible)
 
-                Button("取消", action: onDismiss)
+                HStack(spacing: 10) {
+                    Button("取消") {
+                        onDismiss()
+                    }
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(Color.readerMuted)
                     .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
+                    .background(Color.readerBackground)
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+
+                    Button("添加") {
+                        addIfPossible()
+                    }
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundStyle(Color.readerSurface)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
+                    .background(trimmedCategoryName.isEmpty ? Color.readerMuted.opacity(0.45) : Color.readerAccent)
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .disabled(trimmedCategoryName.isEmpty)
+                }
             }
             .padding(16)
-            .frame(maxWidth: 320, alignment: .leading)
+            .frame(maxWidth: 340, alignment: .leading)
             .background(Color.readerSurface)
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             .shadow(color: .black.opacity(0.16), radius: 24, x: 0, y: 12)
+            .onAppear {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                    isNameFocused = true
+                }
+            }
         } onDismiss: {
             onDismiss()
         }
+    }
+
+    private var trimmedCategoryName: String {
+        categoryName.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func addIfPossible() {
+        guard !trimmedCategoryName.isEmpty else { return }
+        onAdd()
     }
 }
 
@@ -285,7 +325,7 @@ private struct CategoryEditOverlay: View {
     let novel: Novel
     @Binding var categories: [LibraryCategory]
     @Binding var newCategoryName: String
-    let onMove: () -> Void
+    @FocusState private var isNewCategoryFocused: Bool
     let onDismiss: () -> Void
 
     var body: some View {
@@ -358,12 +398,17 @@ private struct CategoryEditOverlay: View {
 
                     HStack(spacing: 8) {
                         TextField("分类名称", text: $newCategoryName)
+                            .focused($isNewCategoryFocused)
                             .textInputAutocapitalization(.never)
+                            .submitLabel(.done)
                             .font(.system(size: 14))
                             .padding(.horizontal, 10)
                             .padding(.vertical, 9)
                             .background(Color.readerBackground)
                             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                            .onSubmit {
+                                createCategoryAndMove(novel)
+                            }
 
                         Button("添加") {
                             createCategoryAndMove(novel)
@@ -415,7 +460,7 @@ private struct CategoryEditOverlay: View {
 
             categories[targetIndex].novels.append(novel)
             newCategoryName = ""
-            onMove()
+            onDismiss()
         }
     }
 
@@ -528,18 +573,13 @@ private struct CategoryShelf: View {
             } else {
                 VStack(spacing: 8) {
                     ForEach(Array(category.novels.prefix(previewLimit))) { novel in
-                        NavigationLink {
+                        BookPressableNavigationRow {
                             ReaderView(novel: novel)
                         } label: {
                             CategoryBookRow(novel: novel, categoryName: category.name)
+                        } onLongPress: {
+                            onBookLongPress(novel)
                         }
-                        .buttonStyle(.plain)
-                        .simultaneousGesture(
-                            LongPressGesture(minimumDuration: 0.45)
-                                .onEnded { _ in
-                                    onBookLongPress(novel)
-                                }
-                        )
                     }
                 }
             }
@@ -631,7 +671,6 @@ private struct CategoryDetailView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var searchText = ""
     @State private var sortMode: CategorySortMode = .recent
-    @State private var actionBook: Novel?
     @State private var categoryEditBook: Novel?
     @State private var newBookCategoryName = ""
 
@@ -694,18 +733,13 @@ private struct CategoryDetailView: View {
                     } else {
                         LazyVStack(spacing: 8) {
                             ForEach(visibleNovels) { novel in
-                                NavigationLink {
+                                BookPressableNavigationRow {
                                     ReaderView(novel: novel)
                                 } label: {
                                     CategoryBookRow(novel: novel, categoryName: categoryName)
+                                } onLongPress: {
+                                    presentCategoryEditor(for: novel)
                                 }
-                                .buttonStyle(.plain)
-                                .simultaneousGesture(
-                                    LongPressGesture(minimumDuration: 0.45)
-                                        .onEnded { _ in
-                                            actionBook = novel
-                                        }
-                                )
                             }
                         }
                     }
@@ -716,38 +750,29 @@ private struct CategoryDetailView: View {
             .contentMargins(.horizontal, horizontalMargin, for: .scrollContent)
             .safeAreaPadding(.bottom, 12)
 
-            if let actionBook {
-                BookActionOverlay(novel: actionBook) {
-                    newBookCategoryName = ""
-                    self.actionBook = nil
-                    categoryEditBook = actionBook
-                } onDismiss: {
-                    self.actionBook = nil
-                }
-                .transition(.opacity.combined(with: .scale(scale: 0.96)))
-                .zIndex(10)
-            }
-
             if let categoryEditBook {
                 CategoryEditOverlay(
                     novel: categoryEditBook,
                     categories: $categories,
-                    newCategoryName: $newBookCategoryName
-                ) {
-                    self.categoryEditBook = nil
-                } onDismiss: {
-                    self.categoryEditBook = nil
-                    newBookCategoryName = ""
-                }
+                    newCategoryName: $newBookCategoryName,
+                    onDismiss: {
+                        self.categoryEditBook = nil
+                        newBookCategoryName = ""
+                    }
+                )
                 .transition(.opacity.combined(with: .scale(scale: 0.96)))
                 .zIndex(11)
             }
         }
-        .animation(.easeInOut(duration: 0.18), value: actionBook?.id)
         .animation(.easeInOut(duration: 0.18), value: categoryEditBook?.id)
         .navigationTitle(categoryName)
         .navigationBarTitleDisplayMode(.inline)
         .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .always), prompt: "搜索书名、作者或章节")
+    }
+
+    private func presentCategoryEditor(for novel: Novel) {
+        newBookCategoryName = ""
+        categoryEditBook = novel
     }
 }
 

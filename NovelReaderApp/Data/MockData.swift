@@ -83,49 +83,45 @@ enum MockData {
         switch novel.title {
         case "长安夜行录":
             return longChapters(
-                titles: ["雨入长安", "残卷", "坊门夜鼓", "青帷马车", "旧案名册", "太常寺灯", "朱印", "暗巷", "更漏声", "宫墙影", "雪夜供词", "玄武门外", "金吾卫", "旧人归来", "天明之前"],
-                seed: "沈砚循着残卷在长安夜色中追查旧案。雨声落在青石板上，灯火照见被岁月掩住的名字。她越接近真相，越发现当年的沉默并非遗忘，而是一张仍在收紧的网。"
+                titles: ["雨入长安", "残卷", "坊门夜鼓", "青帷马车", "旧案名册", "太常寺灯", "朱印", "暗巷", "更漏声", "宫墙影", "雪夜供词", "玄武门外", "金吾卫", "旧人归来", "天明之前"]
             )
         case "雾海听潮":
             return longChapters(
-                titles: ["午夜来信", "旧磁带", "雾港坐标", "灯塔", "退潮之后"],
-                seed: "电台午夜只剩潮声，林舟却在杂音里听见失踪姐姐的留言。每一卷旧磁带都指向海雾深处，那座从地图上消失的小城，似乎仍在某个夜晚等待归人。"
+                titles: ["午夜来信", "旧磁带", "雾港坐标", "灯塔", "退潮之后"]
             )
         case "山月不知心底事":
             return longChapters(
-                titles: ["山城旧雨", "桂花巷", "旧书店", "未寄出的信", "春雨"],
-                seed: "许知夏与周叙在山城重逢。雨声、旧巷、热栗子和没有寄出的信，把七年的沉默一点点拆开。遗憾不能重写，但人可以学着重新靠近。"
+                titles: ["山城旧雨", "桂花巷", "旧书店", "未寄出的信", "春雨"]
             )
         case "星河算法":
             return longChapters(
-                titles: ["沙盒城市", "零号样本", "异常预测", "第七区", "人的选择"],
-                seed: "城市醒来之前，算法已经替每个人安排好路线。程砚曾相信预测系统能减少痛苦，直到它开始删除那些不符合最优解的人。"
+                titles: ["沙盒城市", "零号样本", "异常预测", "第七区", "人的选择"]
             )
         case "一碗人间烟火":
             return longChapters(
-                titles: ["深夜面馆", "桂花糖藕", "一盏灯", "热汤", "明天再想"],
-                seed: "梧桐巷的面馆总在深夜亮着灯。苏禾不急着追问每位客人的来处，只把热汤端上桌，让漂泊的心事先有地方坐下。"
+                titles: ["深夜面馆", "桂花糖藕", "一盏灯", "热汤", "明天再想"]
             )
         default:
             return longChapters(
-                titles: ["第一章", "第二章", "第三章"],
-                seed: "夜色安静下来，故事从这里开始。纸页翻动的声音很轻，却足以把人带到另一个世界。"
+                titles: ["第一章", "第二章", "第三章"]
             )
         }
     }
 
-    private static func longChapters(titles: [String], seed: String) -> [NovelChapter] {
+    private static func longChapters(titles: [String]) -> [NovelChapter] {
         titles.enumerated().map { index, title in
-            NovelChapter(
-                title: "第 \(index + 1) 章 \(title)",
-                content: longChapterContent(seed: seed, chapterNumber: index + 1)
+            let fullTitle = "第 \(index + 1) 章 \(title)"
+            return NovelChapter(
+                title: fullTitle,
+                content: longChapterContent(chapterTitle: fullTitle)
             )
         }
     }
 
-    private static func longChapterContent(seed: String, chapterNumber: Int) -> String {
+    private static func longChapterContent(chapterTitle: String) -> String {
         [
-            "\(seed)\n\n第 \(chapterNumber) 章开始时，窗外的光线还很低，人物的脚步声在安静里显得格外清楚。那些被暂时按下的疑问又浮上来，像纸页背面的墨痕，越是不看，越能感觉到它存在。",
+            chapterTitle,
+            "窗外的光线还很低，人物的脚步声在安静里显得格外清楚。那些被暂时按下的疑问又浮上来，像纸页背面的墨痕，越是不看，越能感觉到它存在。",
             "他停下来，重新整理眼前的线索。每一个名字、每一句没有说完的话、每一次迟疑，都像被放进同一只匣子里。匣子并不沉，却让人很难轻易放下。",
             "街角传来细碎的人声，风把远处的灯影推到墙上。有人从身边经过，又很快消失在另一条巷子里。故事里的城市并不喧哗，却始终有人在暗处等待一个回答。",
             "这一刻，主角忽然意识到，真正重要的并不是谜底本身，而是一路追问时看见的那些人。有人隐瞒，是因为害怕；有人离开，是因为不敢回头；也有人留下，只是想证明一切还来得及。",
