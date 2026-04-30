@@ -1288,7 +1288,7 @@ private actor DiscoverySearchService {
                 bucket.linksBySourceID[hit.source.id] = DiscoverySourceLink(source: hit.source, url: hit.url)
             }
 
-            bucket.relevance += score
+            bucket.relevance = max(bucket.relevance, score)
             grouped[key] = bucket
         }
 
@@ -1298,7 +1298,7 @@ private actor DiscoverySearchService {
                 title: bucket.canonicalTitle,
                 summary: bucket.snippets.first ?? "",
                 sourceLinks: bucket.linksBySourceID.values.sorted { $0.source.name < $1.source.name },
-                relevance: bucket.relevance + Double(bucket.linksBySourceID.count) * 1.4
+                relevance: bucket.relevance
             )
         }
 
@@ -1682,9 +1682,24 @@ private enum DiscoveryTextCleaner {
             text = text.replacingOccurrences(of: entity, with: decoded)
         }
 
+        text = simplifiedChinese(text)
+
         text = text
             .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        return text
+    }
+
+    private static func simplifiedChinese(_ text: String) -> String {
+        let transformIDs = ["Traditional-Simplified", "Any-Hans"]
+
+        for transformID in transformIDs {
+            let mutableText = NSMutableString(string: text)
+            if CFStringTransform(mutableText, nil, transformID as CFString, false) {
+                return mutableText as String
+            }
+        }
 
         return text
     }
@@ -1733,37 +1748,58 @@ private enum DiscoveryTextCleaner {
 
 private enum DiscoveryRelevance {
     static func score(title: String, summary: String, query: String, sourceName: String, rank: Int) -> Double {
-        let titleLower = title.lowercased()
-        let summaryLower = summary.lowercased()
-        let queryLower = query.lowercased()
-        let sourceLower = sourceName.lowercased()
+        let normalizedTitle = normalizedComparableText(title)
+        let normalizedSummary = normalizedComparableText(summary)
+        let normalizedQuery = normalizedComparableText(query)
 
-        var score = 0.0
+        guard !normalizedQuery.isEmpty else { return 0 }
 
-        if titleLower.contains(queryLower) {
-            score += 12
+        if normalizedTitle == normalizedQuery {
+            return 1_000
         }
 
-        let separators = CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: "，,。;；|/"))
-        let tokens = queryLower
-            .components(separatedBy: separators)
-            .filter { !$0.isEmpty && $0.count >= 2 }
+        let titleMatch = matchPercentage(candidate: normalizedTitle, query: normalizedQuery)
+        let summaryMatch = matchPercentage(candidate: normalizedSummary, query: normalizedQuery) * 0.35
 
-        for token in tokens {
-            if titleLower.contains(token) {
-                score += 2.8
-            } else if summaryLower.contains(token) {
-                score += 1.4
+        return max(titleMatch, summaryMatch) * 100
+    }
+
+    private static func matchPercentage(candidate: String, query: String) -> Double {
+        guard !candidate.isEmpty, !query.isEmpty else { return 0 }
+        if candidate.contains(query) {
+            return 1
+        }
+
+        let matchedCount = longestCommonSubsequenceLength(Array(candidate), Array(query))
+        return Double(matchedCount) / Double(query.count)
+    }
+
+    private static func longestCommonSubsequenceLength(_ lhs: [Character], _ rhs: [Character]) -> Int {
+        guard !lhs.isEmpty, !rhs.isEmpty else { return 0 }
+
+        var previous = Array(repeating: 0, count: rhs.count + 1)
+        var current = previous
+
+        for leftIndex in lhs.indices {
+            for rightOffset in 0..<rhs.count {
+                if lhs[leftIndex] == rhs[rightOffset] {
+                    current[rightOffset + 1] = previous[rightOffset] + 1
+                } else {
+                    current[rightOffset + 1] = max(previous[rightOffset + 1], current[rightOffset])
+                }
             }
+            swap(&previous, &current)
+            current = Array(repeating: 0, count: rhs.count + 1)
         }
 
-        if titleLower.contains(sourceLower) || summaryLower.contains(sourceLower) {
-            score += 2
-        }
+        return previous[rhs.count]
+    }
 
-        score += max(0, 5 - Double(rank))
-
-        return score
+    private static func normalizedComparableText(_ text: String) -> String {
+        DiscoveryTextCleaner.cleanTitle(text)
+            .replacingOccurrences(of: #"[^\p{L}\p{N}]"#, with: "", options: .regularExpression)
+            .lowercased()
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
 
