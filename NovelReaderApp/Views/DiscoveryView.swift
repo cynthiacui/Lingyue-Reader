@@ -23,9 +23,9 @@ struct DiscoveryView: View {
                 VStack(alignment: .leading, spacing: 0) {
                     searchBar
                         .padding(.top, 10)
-                        .padding(.bottom, 14)
+                        .padding(.bottom, 22)
 
-                    sourceList
+                    libraryList
                 }
                 .padding(.bottom, 24)
             }
@@ -82,41 +82,87 @@ struct DiscoveryView: View {
         )
     }
 
-    private var sourceList: some View {
-        VStack(spacing: 0) {
-            ForEach(DiscoverySourceCatalog.sources) { source in
-                Button {
-                    openSource(source)
-                } label: {
-                    HStack(alignment: .top, spacing: 12) {
-                        Text(source.name)
-                            .font(.system(size: 19, weight: .bold, design: .rounded))
-                            .foregroundStyle(Color.readerInk)
-                            .multilineTextAlignment(.leading)
-                            .lineLimit(2)
-                            .frame(maxWidth: .infinity, alignment: .leading)
+    private var libraryList: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            Text("书库")
+                .font(.system(size: 30, weight: .bold, design: .rounded))
+                .foregroundStyle(Color.readerInk)
+                .padding(.bottom, 2)
 
-                        if openingSourceID == source.id {
-                            ProgressView()
-                                .controlSize(.small)
-                                .tint(Color.readerMuted)
-                        }
+            sourceSection(
+                title: "可搜索书库",
+                subtitle: "会参与上方聚合搜索",
+                sources: DiscoverySourceCatalog.searchableSources
+            )
 
-                        Text(source.tagline)
-                            .font(.system(size: 15))
-                            .foregroundStyle(Color.readerMuted)
-                            .multilineTextAlignment(.trailing)
-                            .lineLimit(2)
-                            .frame(width: dynamicTypeSize.isAccessibilitySize ? 150 : 172, alignment: .trailing)
+            sourceSection(
+                title: "暂未接入搜索",
+                subtitle: "目前可直接打开来源网站",
+                sources: DiscoverySourceCatalog.unsearchableSources
+            )
+            .padding(.top, 8)
+        }
+    }
+
+    private func sourceSection(title: String, subtitle: String, sources: [DiscoverySource]) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .lastTextBaseline, spacing: 8) {
+                Text(title)
+                    .font(.system(size: 17, weight: .semibold, design: .rounded))
+                    .foregroundStyle(Color.readerInk)
+
+                Text("\(sources.count)")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Color.readerMuted)
+            }
+            .padding(.bottom, 3)
+
+            Text(subtitle)
+                .font(.footnote)
+                .foregroundStyle(Color.readerMuted)
+                .padding(.bottom, 6)
+
+            VStack(spacing: 0) {
+                ForEach(sources) { source in
+                    sourceRow(source)
+
+                    if source.id != sources.last?.id {
+                        Divider()
+                            .overlay(Color.readerMuted.opacity(0.18))
                     }
-                    .padding(.vertical, 14)
                 }
-                .buttonStyle(.plain)
-
-                Divider()
-                    .overlay(Color.readerMuted.opacity(0.18))
             }
         }
+    }
+
+    private func sourceRow(_ source: DiscoverySource) -> some View {
+        Button {
+            openSource(source)
+        } label: {
+            HStack(alignment: .top, spacing: 12) {
+                Text(source.name)
+                    .font(.system(size: 19, weight: .bold, design: .rounded))
+                    .foregroundStyle(Color.readerInk)
+                    .multilineTextAlignment(.leading)
+                    .lineLimit(2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                if openingSourceID == source.id {
+                    ProgressView()
+                        .controlSize(.small)
+                        .tint(Color.readerMuted)
+                }
+
+                Text(source.tagline)
+                    .font(.system(size: 15))
+                    .foregroundStyle(Color.readerMuted)
+                    .multilineTextAlignment(.trailing)
+                    .lineLimit(2)
+                    .frame(width: dynamicTypeSize.isAccessibilitySize ? 150 : 172, alignment: .trailing)
+            }
+            .padding(.vertical, 14)
+        }
+        .buttonStyle(.plain)
     }
 
     private func triggerSearch() {
@@ -537,6 +583,29 @@ private enum DiscoverySourceCatalog {
             fixedParams: [DiscoveryRouteParam(key: "searchtype", value: "articlename")]
         ),
         DiscoverySourceSearchRoute(
+            sourceID: "半夏小说",
+            endpoint: "https://www.xbanxia.cc/modules/article/search_t.php",
+            method: .post,
+            queryKey: "searchkey",
+            fixedParams: [DiscoveryRouteParam(key: "Submit", value: "")]
+        ),
+        DiscoverySourceSearchRoute(
+            sourceID: "笔趣阁小说",
+            endpoint: "https://m.bqgl.cc/user/search.html",
+            method: .get,
+            queryKey: "q"
+        ),
+        DiscoverySourceSearchRoute(
+            sourceID: "宙斯小说",
+            endpoint: "https://www.zhswx.com/list/{query}.html",
+            method: .get
+        ),
+        DiscoverySourceSearchRoute(
+            sourceID: "黄金屋中文",
+            endpoint: "https://tw.hjwzw.com/List/{query}",
+            method: .get
+        ),
+        DiscoverySourceSearchRoute(
             sourceID: "努努书坊",
             endpoint: "https://www.nunucom.com/search/",
             method: .post,
@@ -567,6 +636,10 @@ private enum DiscoverySourceCatalog {
         sources.filter { $0.searchRoute != nil }
     }
 
+    static var unsearchableSources: [DiscoverySource] {
+        sources.filter { $0.searchRoute == nil }
+    }
+
     static let sources: [DiscoverySource] = [
         DiscoverySource(name: "破万卷小说", tagline: "各類小說作品齊全", homepageURLString: "https://www.powanjuan.cc/", searchRoute: route(for: "破万卷小说")),
         DiscoverySource(name: "书林文学", tagline: "最新完结小说，速度快", homepageURLString: "https://www.baozhijixie.com/", searchRoute: route(for: "书林文学")),
@@ -590,7 +663,7 @@ private enum DiscoverySourceCatalog {
         DiscoverySource(name: "轻小说百科", tagline: "热门轻小说文库", homepageURLString: "https://lnovel.org/"),
         DiscoverySource(name: "天翼文学", tagline: "知名网络小说站点，书全速度快"),
         DiscoverySource(name: "梦远书城", tagline: "老牌书城，古典文学经典名作"),
-        DiscoverySource(name: "笔趣阁小说", tagline: "知名人气站点繁體版"),
+        DiscoverySource(name: "笔趣阁小说", tagline: "知名人气站点繁體版", homepageURLString: "https://m.bqgl.cc/", searchRoute: route(for: "笔趣阁小说")),
         DiscoverySource(name: "轻小说文库", tagline: "最新最全日系轻小说"),
         DiscoverySource(name: "饭饭小说", tagline: "热门网络小说齐全"),
         DiscoverySource(name: "飘天文学网", tagline: "人气站点(副)，书全质优", homepageURLString: "https://www.piaotian8.com/"),
@@ -602,7 +675,7 @@ private enum DiscoverySourceCatalog {
 
         DiscoverySource(name: "樱下书院", tagline: "热门网络小说电子书"),
         DiscoverySource(name: "零点看书", tagline: "各类热门网络小说质量好"),
-        DiscoverySource(name: "宙斯小说", tagline: "各类热门小说，速度快"),
+        DiscoverySource(name: "宙斯小说", tagline: "各类热门小说，速度快", homepageURLString: "https://www.zhswx.com/", searchRoute: route(for: "宙斯小说")),
         DiscoverySource(name: "无忧书城", tagline: "古典现代外国等各类文学书籍"),
         DiscoverySource(name: "神凑轻小说", tagline: "最新最全日系轻小说"),
         DiscoverySource(name: "书海阁小说", tagline: "各类热门网络小说齐全"),
@@ -615,7 +688,7 @@ private enum DiscoverySourceCatalog {
         DiscoverySource(name: "小说狂人", tagline: "各類熱門小說齊全"),
         DiscoverySource(name: "讀小說", tagline: "冷门小说等各类作品全"),
         DiscoverySource(name: "台灣小說網", tagline: "熱門小說台灣站", homepageURLString: "https://www.xsw.tw/", searchRoute: route(for: "台灣小說網")),
-        DiscoverySource(name: "黄金屋中文", tagline: "繁體電子書城，書多質量好"),
+        DiscoverySource(name: "黄金屋中文", tagline: "繁體電子書城，書多質量好", homepageURLString: "https://tw.hjwzw.com/", searchRoute: route(for: "黄金屋中文")),
         DiscoverySource(name: "青柠言情网", tagline: "最全的言情小说书库"),
         DiscoverySource(name: "69书吧", tagline: "知名人气站点，书全质优", homepageURLString: "https://www.69shuba.com/"),
 
@@ -627,7 +700,7 @@ private enum DiscoverySourceCatalog {
         DiscoverySource(name: "镇魂小说", tagline: "优质纯爱言情小说"),
         DiscoverySource(name: "繁體小說網1", tagline: "台灣熱門小說網，書全質量好"),
         DiscoverySource(name: "2k小说网", tagline: "知名人气站点作品齐全"),
-        DiscoverySource(name: "半夏小说", tagline: "優質在線小說閱讀"),
+        DiscoverySource(name: "半夏小说", tagline: "優質在線小說閱讀", homepageURLString: "https://www.xbanxia.cc/", searchRoute: route(for: "半夏小说")),
         DiscoverySource(name: "四库书屋", tagline: "热门网络小说齐全速度快"),
         DiscoverySource(name: "蜂鸟小说网", tagline: "言情小说，书全更新快"),
         DiscoverySource(name: "西方奇幻网", tagline: "优质西方奇幻小说"),
@@ -743,7 +816,7 @@ private actor DiscoverySearchService {
 #endif
                 return []
             }
-            let parsedResults = Array(parseDirectResults(source: source, html: html).prefix(10))
+            let parsedResults = Array(parseDirectResults(source: source, html: html).prefix(20))
             let hits = parsedResults.enumerated().compactMap { index, result in
                 makeDirectSourceHit(
                     source: source,
@@ -876,6 +949,14 @@ private actor DiscoverySearchService {
             return parseEmpireCMSBookResults(html: html, baseURLString: "https://trxs.org")
         case "台灣小說網":
             return parseXSWResults(html: html)
+        case "半夏小说":
+            return parseBanxiaResults(html: html)
+        case "笔趣阁小说":
+            return parseBQGLResults(payload: html)
+        case "宙斯小说":
+            return parseZhswxResults(html: html)
+        case "黄金屋中文":
+            return parseHJWZWResults(html: html)
         case "努努书坊":
             return parseNunuResults(html: html)
         case "破万卷小说":
@@ -1057,6 +1138,160 @@ private actor DiscoverySearchService {
         return results
     }
 
+    private func parseBanxiaResults(html: String) -> [ParsedSourceResult] {
+        let blocks = regexMatches(
+            pattern: #"<li[^>]*class=["']pop-book2["'][^>]*>[\s\S]*?</li>"#,
+            in: html
+        )
+        var results: [ParsedSourceResult] = []
+        var seen: Set<String> = []
+
+        for block in blocks {
+            guard let href = regexFirstMatch(pattern: #"<a[^>]+href=["']([^"']+)["'][^>]*title=["'][^"']+["']"#, in: block)
+                    ?? regexFirstMatch(pattern: #"<a[^>]+href=["']([^"']+)["'][\s\S]*?<h2[^>]*class=["']pop-tit["']"#, in: block)
+            else { continue }
+
+            let normalizedHref = href.replacingOccurrences(of: "http://www.xbanxia.cc", with: "https://www.xbanxia.cc")
+            guard let url = URL(string: normalizedHref, relativeTo: URL(string: "https://www.xbanxia.cc")) else { continue }
+
+            let rawTitle = regexFirstMatch(pattern: #"<h2[^>]*class=["']pop-tit["'][^>]*>([\s\S]*?)</h2>"#, in: block)
+                ?? regexFirstMatch(pattern: #"title=["']([^"']+)["']"#, in: block)
+                ?? ""
+            let title = DiscoveryTextCleaner.cleanTitle(rawTitle)
+            guard !title.isEmpty else { continue }
+
+            let author = DiscoveryTextCleaner.cleanSummary(
+                regexFirstMatch(pattern: #"<span[^>]*class=["']pop-intro["'][^>]*title=["']([^"']*)["']"#, in: block)
+                ?? regexFirstMatch(pattern: #"<span[^>]*class=["']pop-intro["'][^>]*>([\s\S]*?)</span>"#, in: block)
+                ?? ""
+            )
+
+            let key = "\(title)|\(url.absoluteString)"
+            guard !seen.contains(key) else { continue }
+            seen.insert(key)
+            results.append(ParsedSourceResult(title: title, summary: author, url: url.absoluteURL))
+        }
+
+        return results
+    }
+
+    private func parseBQGLResults(payload: String) -> [ParsedSourceResult] {
+        guard
+            let data = payload.data(using: .utf8),
+            let objects = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]]
+        else {
+            return []
+        }
+
+        var results: [ParsedSourceResult] = []
+        var seen: Set<String> = []
+        let baseURL = URL(string: "https://m.bqgl.cc")
+
+        for object in objects {
+            let rawTitle = (object["articlename"] as? String) ?? ""
+            let title = DiscoveryTextCleaner.cleanTitle(rawTitle)
+            guard !title.isEmpty else { continue }
+
+            guard
+                let href = object["url_list"] as? String,
+                let url = URL(string: href, relativeTo: baseURL)
+            else { continue }
+
+            let author = DiscoveryTextCleaner.cleanSummary((object["author"] as? String) ?? "")
+            let intro = DiscoveryTextCleaner.cleanSummary((object["intro"] as? String) ?? "")
+            let summary = [author, intro]
+                .filter { !$0.isEmpty }
+                .joined(separator: " · ")
+
+            let key = "\(title)|\(url.absoluteString)"
+            guard !seen.contains(key) else { continue }
+            seen.insert(key)
+            results.append(ParsedSourceResult(title: title, summary: summary, url: url.absoluteURL))
+        }
+
+        return results
+    }
+
+    private func parseZhswxResults(html: String) -> [ParsedSourceResult] {
+        let rows = regexMatches(
+            pattern: #"<tr[^>]*class=["'](?:odd|even)["'][^>]*>[\s\S]*?</tr>"#,
+            in: html
+        )
+        var results: [ParsedSourceResult] = []
+        var seen: Set<String> = []
+
+        for row in rows {
+            guard
+                let titleCell = regexFirstMatch(pattern: #"<td[^>]*class=["']td2["'][^>]*>([\s\S]*?)</td>"#, in: row),
+                let href = regexFirstMatch(pattern: #"<a[^>]+href=["']([^"']+)["']"#, in: titleCell),
+                let url = URL(string: href, relativeTo: URL(string: "https://www.zhswx.com"))
+            else { continue }
+
+            let rawTitle = regexFirstMatch(pattern: #"<a[^>]*>([\s\S]*?)</a>"#, in: titleCell)
+                ?? regexFirstMatch(pattern: #"title=["']([^"']+)["']"#, in: titleCell)
+                ?? ""
+            let title = DiscoveryTextCleaner.cleanTitle(rawTitle)
+            guard !title.isEmpty else { continue }
+
+            let author = DiscoveryTextCleaner.cleanSummary(
+                regexFirstMatch(pattern: #"<td[^>]*class=["']td4["'][^>]*>([\s\S]*?)</td>"#, in: row) ?? ""
+            )
+            let latestChapter = DiscoveryTextCleaner.cleanSummary(
+                regexFirstMatch(pattern: #"<td[^>]*class=["']td3["'][^>]*>([\s\S]*?)</td>"#, in: row) ?? ""
+            )
+            let summary = [author, latestChapter]
+                .filter { !$0.isEmpty }
+                .joined(separator: " · ")
+
+            let key = "\(title)|\(url.absoluteString)"
+            guard !seen.contains(key) else { continue }
+            seen.insert(key)
+            results.append(ParsedSourceResult(title: title, summary: summary, url: url.absoluteURL))
+        }
+
+        return results
+    }
+
+    private func parseHJWZWResults(html: String) -> [ParsedSourceResult] {
+        let blocks = regexMatches(
+            pattern: #"<table[^>]*height=["']128px["'][^>]*>[\s\S]*?</table>\s*<hr\s*/?>"#,
+            in: html
+        )
+        var results: [ParsedSourceResult] = []
+        var seen: Set<String> = []
+
+        for block in blocks {
+            guard
+                let href = regexFirstMatch(pattern: #"<span[^>]*class=["']wd10["'][\s\S]*?<a[^>]+href=["']([^"']+)["']"#, in: block)
+                    ?? regexFirstMatch(pattern: #"<a[^>]+href=["'](/Book/\d+)["']"#, in: block),
+                let url = URL(string: href, relativeTo: URL(string: "https://tw.hjwzw.com"))
+            else { continue }
+
+            let rawTitle = regexFirstMatch(pattern: #"<span[^>]*class=["']wd10["'][\s\S]*?<a[^>]*>([\s\S]*?)</a>"#, in: block)
+                ?? regexFirstMatch(pattern: #"<a[^>]+title=["']([^"']+)["']"#, in: block)
+                ?? ""
+            let title = DiscoveryTextCleaner.cleanTitle(rawTitle)
+            guard !title.isEmpty else { continue }
+
+            let author = DiscoveryTextCleaner.cleanSummary(
+                regexFirstMatch(pattern: #"作者[：:]\s*<a[^>]*>([\s\S]*?)</a>"#, in: block) ?? ""
+            )
+            let intro = DiscoveryTextCleaner.cleanSummary(
+                regexFirstMatch(pattern: #"<span[^>]*class=["']wd9["'][^>]*>([\s\S]*?)</span>"#, in: block) ?? ""
+            )
+            let summary = [author, intro]
+                .filter { !$0.isEmpty }
+                .joined(separator: " · ")
+
+            let key = "\(title)|\(url.absoluteString)"
+            guard !seen.contains(key) else { continue }
+            seen.insert(key)
+            results.append(ParsedSourceResult(title: title, summary: summary, url: url.absoluteURL))
+        }
+
+        return results
+    }
+
     private func parseEmpireCMSBookResults(html: String, baseURLString: String) -> [ParsedSourceResult] {
         let blocks = regexMatches(
             pattern: #"<div[^>]*class=["']bk["'][^>]*>[\s\S]*?(?=<div[^>]*class=["']bk["']|<div[^>]*class=["']page["']|</body>)"#,
@@ -1181,7 +1416,7 @@ private actor DiscoverySearchService {
             if seen.contains(key) { continue }
             seen.insert(key)
             results.append(ParsedSourceResult(title: title, summary: "", url: url))
-            if results.count >= 10 { break }
+            if results.count >= 20 { break }
         }
 
         return results
