@@ -34,6 +34,12 @@ struct ReaderView: View {
     @State private var prefetchingChapterKeys: Set<String> = []
     @State private var downloadedChapterKeys: Set<String> = []
     @State private var shouldJumpToLastPageAfterPagination = false
+    /// Cache of paginated page contents keyed by paginationSignature. Lets revisits to a
+    /// chapter (and visits to chapters pre-paginated by the prefetch loop) skip the async
+    /// pagination step entirely so the reader doesn't flash a placeholder.
+    @State private var paginationCache: [String: [String]] = [:]
+    @State private var lastKnownTextSize: CGSize = .zero
+    private let paginationCacheCapacity = 24
 
     private var activeNovel: Novel {
         repairedNovel ?? novel
@@ -73,24 +79,9 @@ struct ReaderView: View {
         repairedNovel == nil && BookImportService.shared.catalogNeedsRepair(for: novel)
     }
 
-    private var pageBackground: Color {
-        switch currentTheme {
-        case .paper:
-            return Color.readerBackground
-        case .warm:
-            return Color(red: 0.98, green: 0.92, blue: 0.82)
-        case .night:
-            return Color(red: 0.08, green: 0.08, blue: 0.075)
-        }
-    }
-
-    private var pageForeground: Color {
-        currentTheme == .night ? Color(red: 0.88, green: 0.85, blue: 0.78) : .readerInk
-    }
-
-    private var secondaryForeground: Color {
-        currentTheme == .night ? Color(red: 0.66, green: 0.63, blue: 0.56) : .readerMuted
-    }
+    private var pageBackground: Color { currentTheme.pageBackground }
+    private var pageForeground: Color { currentTheme.pageForeground }
+    private var secondaryForeground: Color { currentTheme.secondaryForeground }
 
     var body: some View {
         GeometryReader { proxy in
@@ -109,6 +100,12 @@ struct ReaderView: View {
                     }
                 }
                 .tabViewStyle(.page(indexDisplayMode: .never))
+                // Rebuild the page TabView whenever the chapter changes so its underlying
+                // UIPageViewController doesn't animate the selection-index jump (e.g. 5 → 0)
+                // as a backwards swipe. .transition(.identity) ensures the rebuild is
+                // instant rather than fading/sliding.
+                .id(currentChapterIndex)
+                .transition(.identity)
                 .ignoresSafeArea()
 
                 pageTapZones(pages: pages)
@@ -138,6 +135,12 @@ struct ReaderView: View {
             .onAppear {
                 setInitialChapterIfNeeded()
                 persistReadingState(pages: pages)
+                lastKnownTextSize = textSize
+            }
+            .onChange(of: textSize) { _, newValue in
+                if newValue.width > 0, newValue.height > 0 {
+                    lastKnownTextSize = newValue
+                }
             }
             .onChange(of: currentChapterPageIndex) {
                 persistReadingState(pages: activeVisiblePages())
@@ -312,7 +315,7 @@ struct ReaderView: View {
             .padding(.bottom, 14)
             .background(
                 Rectangle()
-                    .fill(currentTheme == .night ? Color(red: 0.12, green: 0.12, blue: 0.11) : pageBackground)
+                    .fill(currentTheme.chromeBackground)
                     .shadow(color: .black.opacity(0.16), radius: 8, x: 0, y: 3)
             )
 
@@ -372,7 +375,7 @@ struct ReaderView: View {
             .padding(.bottom, max(safeBottom + 8, 18))
             .background(
                 Rectangle()
-                    .fill(currentTheme == .night ? Color(red: 0.12, green: 0.12, blue: 0.11) : pageBackground)
+                    .fill(currentTheme.chromeBackground)
                     .shadow(color: .black.opacity(0.16), radius: 8, x: 0, y: -3)
             )
         }
@@ -498,7 +501,7 @@ struct ReaderView: View {
             }
             .padding(16)
             .frame(maxWidth: 330, maxHeight: 430, alignment: .topLeading)
-            .background(currentTheme == .night ? Color(red: 0.13, green: 0.13, blue: 0.12) : Color.readerSurface)
+            .background(currentTheme.surfaceBackground)
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             .shadow(color: .black.opacity(0.18), radius: 24, x: 0, y: 12)
             .padding(.horizontal, 28)
@@ -559,7 +562,14 @@ struct ReaderView: View {
 
         if shouldJumpToLastPageAfterPagination {
             shouldJumpToLastPageAfterPagination = false
-            currentChapterPageIndex = max(pages.count - 1, 0)
+            // After a backward chapter jump (prev-page from page 0), the just-paginated chapter
+            // wants to land on its last page. Snap without animation so the TabView doesn't
+            // slide forward (0 → last) immediately after the chapter swap.
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) {
+                currentChapterPageIndex = max(pages.count - 1, 0)
+            }
         } else {
             currentChapterPageIndex = min(currentChapterPageIndex, pages.count - 1)
         }
@@ -612,8 +622,16 @@ struct ReaderView: View {
 
     private func goToChapter(_ chapterIndex: Int, pageIndex: Int) {
         guard baseChapters.indices.contains(chapterIndex) else { return }
-        currentChapterIndex = chapterIndex
-        currentChapterPageIndex = max(pageIndex, 0)
+        // Suppress TabView animation: changing currentChapterPageIndex (e.g., 5 → 0) while
+        // pages are being swapped to a new chapter would otherwise animate backwards on a
+        // forward jump (and vice versa). Snapping is the right behavior for explicit chapter
+        // navigation.
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            currentChapterIndex = chapterIndex
+            currentChapterPageIndex = max(pageIndex, 0)
+        }
         loadDiskCachedChapterImmediately(at: chapterIndex)
     }
 
@@ -728,16 +746,29 @@ struct ReaderView: View {
 
     private func paginationSignature(textSize: CGSize) -> String {
         let chapter = currentChapter
-        let chapterKey = chapter.map(chapterCacheKey) ?? "\(currentChapterIndex)"
-        let contentCount = chapter?.content.count ?? 0
+        return paginationSignature(
+            chapterIndex: currentChapterIndex,
+            chapter: chapter,
+            contentLength: chapter?.content.count ?? 0,
+            textSize: textSize
+        )
+    }
+
+    private func paginationSignature(
+        chapterIndex: Int,
+        chapter: NovelChapter?,
+        contentLength: Int,
+        textSize: CGSize
+    ) -> String {
+        let chapterKey = chapter.map(chapterCacheKey) ?? "\(chapterIndex)"
         let loadState = loadingChapterKeys.contains(chapterKey) ? "loading" : "idle"
         let errorState = chapterLoadErrors[chapterKey] ?? ""
         let width = Int(textSize.width.rounded())
         let height = Int(textSize.height.rounded())
         return [
-            "\(currentChapterIndex)",
+            "\(chapterIndex)",
             chapterKey,
-            "\(contentCount)",
+            "\(contentLength)",
             loadState,
             errorState,
             "\(width)x\(height)",
@@ -758,6 +789,16 @@ struct ReaderView: View {
 
         let chapterIndex = currentChapterIndex
         let chapterTitle = displayed(chapter.title)
+
+        // Cache hit: apply paginated pages synchronously so the reader doesn't flash a
+        // placeholder while waiting on Task.detached. Covers revisits and chapters that the
+        // prefetch loop has already pre-paginated for the current settings.
+        if let cached = paginationCache[signature], !cached.isEmpty {
+            let items = pageItems(from: cached, chapterIndex: chapterIndex, chapterTitle: chapterTitle)
+            applyVisiblePages(items, signature: signature)
+            return
+        }
+
         let content = displayed(readerContent(for: chapter, chapterIndex: chapterIndex))
         let fontSize = self.fontSize
         let lineSpacing = self.lineSpacing
@@ -773,17 +814,33 @@ struct ReaderView: View {
 
         if Task.isCancelled || pageContents.isEmpty { return }
 
-        let items = pageContents.enumerated().map { pageIndex, content in
+        rememberPaginatedPages(pageContents, for: signature)
+
+        let items = pageItems(from: pageContents, chapterIndex: chapterIndex, chapterTitle: chapterTitle)
+        applyVisiblePages(items, signature: signature)
+    }
+
+    private func pageItems(from contents: [String], chapterIndex: Int, chapterTitle: String) -> [ReaderPageItem] {
+        contents.enumerated().map { pageIndex, pageContent in
             ReaderPageItem(
                 chapterIndex: chapterIndex,
                 pageIndex: pageIndex,
-                chapterPageCount: pageContents.count,
+                chapterPageCount: contents.count,
                 chapterTitle: chapterTitle,
-                content: content
+                content: pageContent
             )
         }
+    }
 
-        applyVisiblePages(items, signature: signature)
+    @MainActor
+    private func rememberPaginatedPages(_ pages: [String], for signature: String) {
+        paginationCache[signature] = pages
+        if paginationCache.count > paginationCacheCapacity {
+            // Drop an arbitrary older entry — fine for our purposes; full LRU is overkill.
+            if let stale = paginationCache.keys.first(where: { $0 != signature }) {
+                paginationCache[stale] = nil
+            }
+        }
     }
 
     @MainActor
@@ -851,8 +908,9 @@ struct ReaderView: View {
     private func prefetchUpcomingChapters(after index: Int) {
         guard cacheEnabled else { return }
 
-        let upcomingChapters = Array(baseChapters.dropFirst(index + 1).prefix(2))
-        for chapter in upcomingChapters {
+        let upcomingChapters = Array(baseChapters.dropFirst(index + 1).prefix(2)).enumerated()
+        for (offset, chapter) in upcomingChapters {
+            let chapterIndex = index + 1 + offset
             guard chapter.sourceURLString != nil,
                   chapter.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 continue
@@ -874,6 +932,7 @@ struct ReaderView: View {
                         downloadedChapterKeys.insert(key)
                         _ = prefetchingChapterKeys.remove(key)
                     }
+                    await prePaginate(chapter: loadedChapter, originalChapter: chapter, chapterIndex: chapterIndex)
                 } catch {
                     await MainActor.run {
                         _ = prefetchingChapterKeys.remove(key)
@@ -881,6 +940,36 @@ struct ReaderView: View {
                 }
             }
         }
+    }
+
+    /// Paginate a prefetched chapter using the most recently observed text size and current
+    /// font/line settings, then stash the result in paginationCache. When the user actually
+    /// navigates to this chapter and the signature matches, the visible-pages rebuild becomes
+    /// a synchronous cache hit — no placeholder flash.
+    @MainActor
+    private func prePaginate(chapter: NovelChapter, originalChapter: NovelChapter, chapterIndex: Int) async {
+        let textSize = lastKnownTextSize
+        guard textSize.width > 0, textSize.height > 0 else { return }
+
+        let displayedContent = displayed(chapter.content)
+        guard !displayedContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+
+        let signature = paginationSignature(
+            chapterIndex: chapterIndex,
+            chapter: chapter,
+            contentLength: chapter.content.count,
+            textSize: textSize
+        )
+        guard paginationCache[signature] == nil else { return }
+
+        let fontSize = self.fontSize
+        let lineSpacing = self.lineSpacing
+        let pages = await Task.detached(priority: .utility) {
+            Self.paginate(content: displayedContent, textSize: textSize, fontSize: fontSize, lineSpacing: lineSpacing)
+        }.value
+
+        guard !pages.isEmpty else { return }
+        rememberPaginatedPages(pages, for: signature)
     }
 
     @MainActor

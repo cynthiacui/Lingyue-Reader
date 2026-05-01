@@ -243,7 +243,9 @@ struct NovelCategory: Identifiable, Hashable {
 
 enum ReadingTheme: String, CaseIterable, Identifiable {
     case paper = "纸张"
-    case warm = "暖光"
+    case warm = "米黄"
+    case mint = "护眼"
+    case sky = "雅蓝"
     case night = "夜读"
 
     var id: String { rawValue }

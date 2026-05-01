@@ -13,22 +13,29 @@ struct SettingsView: View {
 
     @State private var cacheSizeText = "计算中"
     @State private var cacheNotice: String?
+    @State private var previewScrollOffset: CGFloat = 0
+
+    private let previewBaseText = """
+    长安夜色如墨，雨声落在青石板上。沈砚合上残卷，忽然听见城楼方向传来三更鼓。
+    他披衣起身，推开木窗，远处灯火三两，江风拂面，带着早春未散的寒意。
+    案头摊着未写完的家书，墨迹尚新，字句却迟迟未能落下。
+    人在长安，剑在鞘中，少年志气未老，只是离家已远。
+    巷口有人轻声唱着旧时曲，依稀还是江南口音，听得人心下一动。
+    """
+
+    private let previewScrollDistance: CGFloat = 140
 
     private var horizontalMargin: CGFloat {
         if dynamicTypeSize.isAccessibilitySize { return 14 }
         return horizontalSizeClass == .compact ? 16 : 24
     }
 
-    private var themeBinding: Binding<ReadingTheme> {
-        Binding {
-            ReadingTheme(rawValue: themeRawValue) ?? .paper
-        } set: { newValue in
-            themeRawValue = newValue.rawValue
-        }
-    }
-
     private var selectedTheme: ReadingTheme {
         ReadingTheme(rawValue: themeRawValue) ?? .paper
+    }
+
+    private var displayedPreviewText: String {
+        ChineseTextConverter.display(previewBaseText, usesTraditionalChinese: usesTraditionalChinese)
     }
 
     var body: some View {
@@ -59,17 +66,39 @@ struct SettingsView: View {
             SectionHeader(title: "阅读预览")
 
             VStack(alignment: .leading, spacing: 12) {
-                Text("长安夜色如墨，雨声落在青石板上。沈砚合上残卷，忽然听见城楼方向传来三更鼓。")
-                    .font(.system(size: fontSize, weight: .regular, design: .serif))
-                    .foregroundStyle(Color.readerInk)
-                    .lineSpacing(lineSpacing)
-                    .minimumScaleFactor(0.9)
+                ZStack(alignment: .topLeading) {
+                    Text(displayedPreviewText)
+                        .font(.system(size: fontSize, weight: .regular, design: .serif))
+                        .foregroundStyle(selectedTheme.pageForeground)
+                        .lineSpacing(lineSpacing)
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                        .offset(y: previewScrollOffset)
+                }
+                .frame(height: 168, alignment: .topLeading)
+                .clipped()
 
-                Text("当前：\(selectedTheme.rawValue) · \(usesTraditionalChinese ? "繁体" : "简体")")
+                Text("当前：\(selectedTheme.rawValue) · \(usesTraditionalChinese ? "繁体" : "简体") · 字号 \(Int(fontSize)) · 行距 \(Int(lineSpacing))")
                     .font(.caption.weight(.medium))
-                    .foregroundStyle(Color.readerMuted)
+                    .foregroundStyle(selectedTheme.secondaryForeground)
             }
-            .readerCard()
+            .padding(16)
+            .background(selectedTheme.pageBackground)
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .shadow(color: .black.opacity(0.05), radius: 12, x: 0, y: 6)
+        }
+        .onChange(of: autoScroll) { _, newValue in
+            triggerPreviewScroll(enabled: newValue)
+        }
+        .onChange(of: fontSize) { _, _ in
+            previewScrollOffset = 0
+            if autoScroll { triggerPreviewScroll(enabled: true) }
+        }
+        .onChange(of: lineSpacing) { _, _ in
+            previewScrollOffset = 0
+            if autoScroll { triggerPreviewScroll(enabled: true) }
+        }
+        .onAppear {
+            if autoScroll { triggerPreviewScroll(enabled: true) }
         }
     }
 
@@ -87,7 +116,7 @@ struct SettingsView: View {
                     }
                     .font(.headline)
 
-                    Slider(value: $fontSize, in: 16...26, step: 1)
+                    Slider(value: $fontSize, in: 12...32, step: 1)
                         .tint(.readerAccent)
                 }
 
@@ -100,7 +129,7 @@ struct SettingsView: View {
                     }
                     .font(.headline)
 
-                    Slider(value: $lineSpacing, in: 4...14, step: 1)
+                    Slider(value: $lineSpacing, in: 0...24, step: 1)
                         .tint(.readerAccent)
                 }
 
@@ -174,22 +203,57 @@ struct SettingsView: View {
         await refreshCacheSize()
     }
 
-    @ViewBuilder
     private var themePicker: some View {
-        if dynamicTypeSize.isAccessibilitySize {
-            Picker("主题", selection: themeBinding) {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("背景颜色", systemImage: "paintpalette")
+                .font(.headline)
+
+            HStack(alignment: .top, spacing: 6) {
                 ForEach(ReadingTheme.allCases) { theme in
-                    Text(theme.rawValue).tag(theme)
+                    Button {
+                        themeRawValue = theme.rawValue
+                    } label: {
+                        VStack(spacing: 6) {
+                            Circle()
+                                .fill(theme.pageBackground)
+                                .frame(width: 34, height: 34)
+                                .overlay(
+                                    Circle()
+                                        .strokeBorder(
+                                            theme == selectedTheme ? Color.readerAccent : Color.black.opacity(0.12),
+                                            lineWidth: theme == selectedTheme ? 2.5 : 1
+                                        )
+                                )
+                                .overlay(alignment: .center) {
+                                    if theme == selectedTheme {
+                                        Image(systemName: "checkmark")
+                                            .font(.system(size: 13, weight: .bold))
+                                            .foregroundStyle(theme.pageForeground)
+                                    }
+                                }
+
+                            Text(theme.rawValue)
+                                .font(.caption)
+                                .foregroundStyle(theme == selectedTheme ? Color.readerAccent : Color.readerMuted)
+                        }
+                        .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.plain)
                 }
             }
-            .pickerStyle(.menu)
+        }
+    }
+
+    private func triggerPreviewScroll(enabled: Bool) {
+        if enabled {
+            previewScrollOffset = 0
+            withAnimation(.linear(duration: 2.0)) {
+                previewScrollOffset = -previewScrollDistance
+            }
         } else {
-            Picker("主题", selection: themeBinding) {
-                ForEach(ReadingTheme.allCases) { theme in
-                    Text(theme.rawValue).tag(theme)
-                }
+            withAnimation(.easeOut(duration: 0.3)) {
+                previewScrollOffset = 0
             }
-            .pickerStyle(.segmented)
         }
     }
 }

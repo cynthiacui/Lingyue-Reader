@@ -13,6 +13,37 @@ extension Color {
     static let readerAmber = Color(red: 0.70, green: 0.50, blue: 0.22)
 }
 
+extension ReadingTheme {
+    var pageBackground: Color {
+        switch self {
+        case .paper: return Color(red: 0.97, green: 0.96, blue: 0.93)
+        case .warm:  return Color(red: 0.98, green: 0.92, blue: 0.82)
+        case .mint:  return Color(red: 0.83, green: 0.91, blue: 0.83)
+        case .sky:   return Color(red: 0.85, green: 0.91, blue: 0.96)
+        case .night: return Color(red: 0.08, green: 0.08, blue: 0.075)
+        }
+    }
+
+    var pageForeground: Color {
+        self == .night ? Color(red: 0.88, green: 0.85, blue: 0.78) : .readerInk
+    }
+
+    var secondaryForeground: Color {
+        self == .night ? Color(red: 0.66, green: 0.63, blue: 0.56) : .readerMuted
+    }
+
+    /// Background for reader chrome (top/bottom bars). Darker than the page in night mode so
+    /// the bars read as elevated; matches the page in light themes.
+    var chromeBackground: Color {
+        self == .night ? Color(red: 0.12, green: 0.12, blue: 0.11) : pageBackground
+    }
+
+    /// Background for floating panels (e.g., chapter picker overlay).
+    var surfaceBackground: Color {
+        self == .night ? Color(red: 0.13, green: 0.13, blue: 0.12) : .readerSurface
+    }
+}
+
 extension View {
     func readerCard() -> some View {
         self
