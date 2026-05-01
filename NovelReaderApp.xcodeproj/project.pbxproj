@@ -17,6 +17,10 @@
 		010000000000000000000108 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000008 /* SettingsView.swift */; };
 		010000000000000000000109 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000009 /* Assets.xcassets */; };
 		01000000000000000000010A /* ReaderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01000000000000000000000C /* ReaderView.swift */; };
+		01000000000000000000010B /* InAppBrowserView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01000000000000000000000D /* InAppBrowserView.swift */; };
+		01000000000000000000010C /* LibraryStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01000000000000000000000E /* LibraryStore.swift */; };
+		01000000000000000000010D /* BookImportService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01000000000000000000000F /* BookImportService.swift */; };
+		01000000000000000000010E /* WebRenderingService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000010 /* WebRenderingService.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -32,6 +36,10 @@
 		01000000000000000000000A /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		01000000000000000000000B /* NovelReaderApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = NovelReaderApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		01000000000000000000000C /* ReaderView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReaderView.swift; sourceTree = "<group>"; };
+		01000000000000000000000D /* InAppBrowserView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InAppBrowserView.swift; sourceTree = "<group>"; };
+		01000000000000000000000E /* LibraryStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryStore.swift; sourceTree = "<group>"; };
+		01000000000000000000000F /* BookImportService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookImportService.swift; sourceTree = "<group>"; };
+		010000000000000000000010 /* WebRenderingService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebRenderingService.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -87,6 +95,9 @@
 			isa = PBXGroup;
 			children = (
 				010000000000000000000004 /* MockData.swift */,
+				01000000000000000000000E /* LibraryStore.swift */,
+				01000000000000000000000F /* BookImportService.swift */,
+				010000000000000000000010 /* WebRenderingService.swift */,
 			);
 			path = Data;
 			sourceTree = "<group>";
@@ -99,6 +110,7 @@
 				010000000000000000000007 /* DiscoveryView.swift */,
 				010000000000000000000008 /* SettingsView.swift */,
 				01000000000000000000000C /* ReaderView.swift */,
+				01000000000000000000000D /* InAppBrowserView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -190,6 +202,10 @@
 				010000000000000000000107 /* DiscoveryView.swift in Sources */,
 				010000000000000000000108 /* SettingsView.swift in Sources */,
 				01000000000000000000010A /* ReaderView.swift in Sources */,
+				01000000000000000000010B /* InAppBrowserView.swift in Sources */,
+				01000000000000000000010C /* LibraryStore.swift in Sources */,
+				01000000000000000000010D /* BookImportService.swift in Sources */,
+				01000000000000000000010E /* WebRenderingService.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -1,14 +1,24 @@
 import SwiftUI
 
+private let librarySwipeSpring: Animation = .spring(response: 0.32, dampingFraction: 0.86)
+
+private struct LibraryScrollOffsetKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
+    }
+}
+
 struct LibraryView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @EnvironmentObject private var libraryStore: LibraryStore
 
-    @State private var categories = LibraryCategory.seeded(from: MockData.novels)
     @State private var isAddingCategory = false
     @State private var newCategoryName = ""
     @State private var categoryEditBook: Novel?
     @State private var newBookCategoryName = ""
+    @State private var activeSwipeID: UUID?
 
     private var horizontalMargin: CGFloat {
         if dynamicTypeSize.isAccessibilitySize { return 12 }
@@ -33,6 +43,18 @@ struct LibraryView: View {
                 }
                 .padding(.top, 8)
                 .padding(.bottom, 18)
+                .background(
+                    GeometryReader { proxy in
+                        Color.clear.preference(
+                            key: LibraryScrollOffsetKey.self,
+                            value: proxy.frame(in: .named("LibraryScroll")).minY
+                        )
+                    }
+                )
+            }
+            .coordinateSpace(name: "LibraryScroll")
+            .onPreferenceChange(LibraryScrollOffsetKey.self) { _ in
+                closeActiveSwipe()
             }
             .contentMargins(.horizontal, horizontalMargin, for: .scrollContent)
             .safeAreaPadding(.bottom, 12)
@@ -63,6 +85,7 @@ struct LibraryView: View {
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
+                    closeActiveSwipe()
                     newCategoryName = ""
                     isAddingCategory = true
                 } label: {
@@ -71,20 +94,36 @@ struct LibraryView: View {
                 .accessibilityLabel("新建分类")
             }
         }
+        .onChange(of: categoryEditBook?.id) { _, _ in closeActiveSwipe() }
+        .onChange(of: isAddingCategory) { _, _ in closeActiveSwipe() }
+    }
+
+    private func closeActiveSwipe() {
+        guard activeSwipeID != nil else { return }
+        withAnimation(librarySwipeSpring) {
+            activeSwipeID = nil
+        }
     }
 
     private var currentlyReadingSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            CompactSectionHeader(title: "继续阅读")
+            CompactSectionHeader(title: "最近阅读")
 
             LazyVGrid(columns: readingColumns, spacing: 10) {
-                ForEach(Array(MockData.currentlyReading.prefix(2))) { novel in
-                    BookPressableNavigationRow {
+                ForEach(Array(libraryStore.currentlyReading.prefix(2))) { novel in
+                    BookPressableNavigationRow(
+                        rowID: novel.id,
+                        activeSwipeID: $activeSwipeID
+                    ) {
                         ReaderView(novel: novel)
                     } label: {
                         CompactReadingCard(novel: novel)
                     } onLongPress: {
                         presentCategoryEditor(for: novel)
+                    } onClearDownloadData: {
+                        clearDownloadedData(for: novel)
+                    } onDelete: {
+                        libraryStore.deleteBook(novel)
                     }
                 }
             }
@@ -99,6 +138,7 @@ struct LibraryView: View {
                 Spacer()
 
                 Button {
+                    closeActiveSwipe()
                     newCategoryName = ""
                     isAddingCategory = true
                 } label: {
@@ -109,14 +149,15 @@ struct LibraryView: View {
                 .accessibilityLabel("新建分类")
             }
 
-            if categories.isEmpty {
+            if libraryStore.categories.isEmpty {
                 EmptyCategoryCard()
             } else {
                 VStack(alignment: .leading, spacing: 14) {
-                    ForEach(categories) { category in
+                    ForEach(libraryStore.categories) { category in
                         CategoryShelf(
                             category: category,
-                            categories: $categories,
+                            categories: $libraryStore.categories,
+                            activeSwipeID: $activeSwipeID,
                             onBookLongPress: presentCategoryEditor
                         )
                     }
@@ -128,7 +169,7 @@ struct LibraryView: View {
     private func categoryEditOverlay(for novel: Novel) -> some View {
         CategoryEditOverlay(
             novel: novel,
-            categories: $categories,
+            categories: $libraryStore.categories,
             newCategoryName: $newBookCategoryName,
             onDismiss: {
                 categoryEditBook = nil
@@ -146,39 +187,14 @@ struct LibraryView: View {
         let trimmedName = newCategoryName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedName.isEmpty else { return }
 
-        let exists = categories.contains {
-            $0.name.caseInsensitiveCompare(trimmedName) == .orderedSame
-        }
-        guard !exists else {
-            newCategoryName = ""
-            return
-        }
-
-        categories.append(LibraryCategory(name: trimmedName, novels: []))
+        _ = libraryStore.addCategory(named: trimmedName)
         newCategoryName = ""
         isAddingCategory = false
     }
-}
 
-private struct LibraryCategory: Identifiable {
-    let id = UUID()
-    let name: String
-    var novels: [Novel]
-
-    static func seeded(from novels: [Novel]) -> [LibraryCategory] {
-        var categoryNames: [String] = []
-
-        for novel in novels {
-            if !categoryNames.contains(novel.genre) {
-                categoryNames.append(novel.genre)
-            }
-        }
-
-        return categoryNames.map { categoryName in
-            LibraryCategory(
-                name: categoryName,
-                novels: novels.filter { $0.genre == categoryName }
-            )
+    private func clearDownloadedData(for novel: Novel) {
+        Task {
+            await ChapterContentCache.shared.clearCache(for: novel)
         }
     }
 }
@@ -207,38 +223,223 @@ private struct CenteredOverlay<Content: View>: View {
 private struct BookPressableNavigationRow<Destination: View, Label: View>: View {
     @State private var isNavigating = false
     @State private var didLongPress = false
+    @State private var dragOffset: CGFloat = 0
+    @State private var isDragging = false
 
+    let rowID: UUID
+    @Binding var activeSwipeID: UUID?
     let destination: Destination
     let label: Label
     let onLongPress: () -> Void
+    let onClearDownloadData: (() -> Void)?
+    let onDelete: (() -> Void)?
+
+    private let actionWidth: CGFloat = 86
+    private let actionSpacing: CGFloat = 6
+
+    private var actionCount: Int {
+        (onClearDownloadData == nil ? 0 : 1) + (onDelete == nil ? 0 : 1)
+    }
+
+    private var revealedWidth: CGFloat {
+        guard actionCount > 0 else { return 0 }
+        return CGFloat(actionCount) * actionWidth + CGFloat(actionCount - 1) * actionSpacing
+    }
+
+    private var isOpen: Bool {
+        activeSwipeID == rowID
+    }
+
+    private var displayedOffset: CGFloat {
+        guard actionCount > 0 else { return 0 }
+        if isDragging { return dragOffset }
+        return isOpen ? -revealedWidth : 0
+    }
+
+    private var deleteActionOpacity: CGFloat {
+        guard revealedWidth > 0 else { return 0 }
+        let progress = min(1, max(0, abs(displayedOffset) / (revealedWidth * 0.25)))
+        return progress
+    }
 
     init(
+        rowID: UUID,
+        activeSwipeID: Binding<UUID?>,
         @ViewBuilder destination: () -> Destination,
         @ViewBuilder label: () -> Label,
-        onLongPress: @escaping () -> Void
+        onLongPress: @escaping () -> Void,
+        onClearDownloadData: (() -> Void)? = nil,
+        onDelete: (() -> Void)? = nil
     ) {
+        self.rowID = rowID
+        self._activeSwipeID = activeSwipeID
         self.destination = destination()
         self.label = label()
         self.onLongPress = onLongPress
+        self.onClearDownloadData = onClearDownloadData
+        self.onDelete = onDelete
     }
 
     var body: some View {
-        label
-            .contentShape(Rectangle())
-            .navigationDestination(isPresented: $isNavigating) {
-                destination
+        ZStack(alignment: .trailing) {
+            if actionCount > 0 {
+                HStack(spacing: actionSpacing) {
+                    if let onClearDownloadData {
+                        Button {
+                            closeSwipe()
+                            onClearDownloadData()
+                        } label: {
+                            VStack(spacing: 4) {
+                                Image(systemName: "arrow.down.circle")
+                                    .font(.system(size: 17, weight: .bold))
+                                Text("清缓存")
+                                    .font(.system(size: 12, weight: .bold))
+                            }
+                            .foregroundStyle(Color.white)
+                            .frame(width: actionWidth)
+                            .frame(maxHeight: .infinity)
+                            .background(Color.readerAccent)
+                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        }
+                        .buttonStyle(.plain)
+                    }
+
+                    if let onDelete {
+                        Button(role: .destructive) {
+                            withAnimation(librarySwipeSpring) {
+                                onDelete()
+                            }
+                        } label: {
+                            VStack(spacing: 4) {
+                                Image(systemName: "trash")
+                                    .font(.system(size: 17, weight: .bold))
+                                Text("删除")
+                                    .font(.system(size: 12, weight: .bold))
+                            }
+                            .foregroundStyle(Color.white)
+                            .frame(width: actionWidth)
+                            .frame(maxHeight: .infinity)
+                            .background(Color.red)
+                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .frame(width: revealedWidth)
+                .opacity(deleteActionOpacity)
+                .allowsHitTesting(isOpen)
+                .zIndex(1)
             }
-            .onTapGesture {
-                guard !didLongPress else { return }
-                isNavigating = true
+
+            label
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .offset(x: displayedOffset)
+                .contentShape(Rectangle())
+                .navigationDestination(isPresented: $isNavigating) {
+                    destination
+                }
+                .onTapGesture {
+                    guard !didLongPress else { return }
+                    if activeSwipeID != nil {
+                        withAnimation(librarySwipeSpring) {
+                            activeSwipeID = nil
+                        }
+                    } else {
+                        isNavigating = true
+                    }
+                }
+                .onLongPressGesture(minimumDuration: 0.45) {
+                    guard activeSwipeID == nil else {
+                        withAnimation(librarySwipeSpring) {
+                            activeSwipeID = nil
+                        }
+                        return
+                    }
+
+                    didLongPress = true
+                    onLongPress()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                        didLongPress = false
+                    }
+                }
+                .simultaneousGesture(swipeGesture)
+                .zIndex(0)
+        }
+        .clipped()
+        .onChange(of: activeSwipeID) { _, newValue in
+            if newValue != rowID && isDragging {
+                isDragging = false
             }
-            .onLongPressGesture(minimumDuration: 0.45) {
-                didLongPress = true
-                onLongPress()
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                    didLongPress = false
+        }
+    }
+
+    private var swipeGesture: some Gesture {
+        DragGesture(minimumDistance: 20)
+            .onChanged { value in
+                guard actionCount > 0 else { return }
+                guard abs(value.translation.width) > abs(value.translation.height) else { return }
+
+                if !isDragging {
+                    isDragging = true
+                    if let active = activeSwipeID, active != rowID {
+                        withAnimation(librarySwipeSpring) {
+                            activeSwipeID = nil
+                        }
+                    }
+                }
+
+                let baseOffset: CGFloat = isOpen ? -revealedWidth : 0
+                let raw = baseOffset + value.translation.width
+                dragOffset = rubberBanded(raw)
+            }
+            .onEnded { value in
+                guard actionCount > 0 else {
+                    isDragging = false
+                    return
+                }
+                let isHorizontal = abs(value.translation.width) > abs(value.translation.height)
+                guard isHorizontal else {
+                    isDragging = false
+                    return
+                }
+
+                let velocity = value.predictedEndTranslation.width - value.translation.width
+                let projected = dragOffset + velocity * 0.25
+
+                let shouldOpen: Bool
+                if isOpen {
+                    shouldOpen = projected < -revealedWidth * 0.5
+                } else {
+                    shouldOpen = projected < -revealedWidth * 0.4
+                }
+
+                withAnimation(librarySwipeSpring) {
+                    activeSwipeID = shouldOpen ? rowID : (isOpen ? nil : activeSwipeID)
+                    isDragging = false
                 }
             }
+    }
+
+    private func closeSwipe() {
+        withAnimation(librarySwipeSpring) {
+            if isOpen { activeSwipeID = nil }
+            isDragging = false
+        }
+    }
+
+    private func rubberBanded(_ raw: CGFloat) -> CGFloat {
+        if raw <= 0 && raw >= -revealedWidth { return raw }
+        let limit: CGFloat = 140
+        if raw > 0 {
+            return rubberBandValue(raw, range: limit)
+        }
+        let over = -revealedWidth - raw
+        return -revealedWidth - rubberBandValue(over, range: limit)
+    }
+
+    private func rubberBandValue(_ x: CGFloat, range: CGFloat) -> CGFloat {
+        let constant: CGFloat = 0.55
+        return (1 - 1 / (x * constant / range + 1)) * range
     }
 }
 
@@ -326,6 +527,7 @@ private struct CategoryEditOverlay: View {
     @Binding var categories: [LibraryCategory]
     @Binding var newCategoryName: String
     @FocusState private var isNewCategoryFocused: Bool
+    @AppStorage("reader.usesTraditionalChinese") private var usesTraditionalChinese = false
     let onDismiss: () -> Void
 
     var body: some View {
@@ -336,7 +538,7 @@ private struct CategoryEditOverlay: View {
                         .font(.system(size: 18, weight: .bold, design: .rounded))
                         .foregroundStyle(Color.readerInk)
 
-                    Text(novel.title)
+                    Text(displayed(novel.title))
                         .font(.system(size: 13))
                         .foregroundStyle(Color.readerMuted)
                         .lineLimit(1)
@@ -446,6 +648,10 @@ private struct CategoryEditOverlay: View {
         newCategoryName.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    private func displayed(_ text: String) -> String {
+        ChineseTextConverter.display(text, usesTraditionalChinese: usesTraditionalChinese)
+    }
+
     private func move(_ novel: Novel, toCategoryID categoryID: UUID) {
         withAnimation(.easeInOut(duration: 0.18)) {
             for index in categories.indices {
@@ -497,11 +703,12 @@ private struct CompactSectionHeader: View {
 
 private struct CompactReadingCard: View {
     let novel: Novel
+    @AppStorage("reader.usesTraditionalChinese") private var usesTraditionalChinese = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Text(novel.title)
+                Text(displayed(novel.title))
                     .font(.system(size: 15, weight: .semibold, design: .rounded))
                     .foregroundStyle(Color.readerInk)
                     .lineLimit(1)
@@ -515,7 +722,7 @@ private struct CompactReadingCard: View {
                     .fixedSize(horizontal: true, vertical: false)
             }
 
-            Text(novel.lastChapter)
+            Text(displayed(novel.lastChapter))
                 .font(.system(size: 14, design: .serif))
                 .foregroundStyle(Color.readerMuted)
                 .lineLimit(1)
@@ -531,11 +738,16 @@ private struct CompactReadingCard: View {
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .shadow(color: .black.opacity(0.035), radius: 8, x: 0, y: 4)
     }
+
+    private func displayed(_ text: String) -> String {
+        ChineseTextConverter.display(text, usesTraditionalChinese: usesTraditionalChinese)
+    }
 }
 
 private struct CategoryShelf: View {
     let category: LibraryCategory
     @Binding var categories: [LibraryCategory]
+    @Binding var activeSwipeID: UUID?
     let onBookLongPress: (Novel) -> Void
 
     private let previewLimit = 4
@@ -573,16 +785,37 @@ private struct CategoryShelf: View {
             } else {
                 VStack(spacing: 8) {
                     ForEach(Array(category.novels.prefix(previewLimit))) { novel in
-                        BookPressableNavigationRow {
+                        BookPressableNavigationRow(
+                            rowID: novel.id,
+                            activeSwipeID: $activeSwipeID
+                        ) {
                             ReaderView(novel: novel)
                         } label: {
-                            CategoryBookRow(novel: novel, categoryName: category.name)
+                            CategoryBookRow(novel: novel)
                         } onLongPress: {
                             onBookLongPress(novel)
+                        } onClearDownloadData: {
+                            clearDownloadedData(for: novel)
+                        } onDelete: {
+                            delete(novel)
                         }
                     }
                 }
             }
+        }
+    }
+
+    private func delete(_ novel: Novel) {
+        var updatedCategories = categories
+        for index in updatedCategories.indices {
+            updatedCategories[index].novels.removeAll { $0.id == novel.id }
+        }
+        categories = updatedCategories
+    }
+
+    private func clearDownloadedData(for novel: Novel) {
+        Task {
+            await ChapterContentCache.shared.clearCache(for: novel)
         }
     }
 }
@@ -613,11 +846,14 @@ private struct EmptyCategoryRow: View {
 
 private struct CategoryBookRow: View {
     let novel: Novel
-    let categoryName: String?
+    @AppStorage("reader.usesTraditionalChinese") private var usesTraditionalChinese = false
 
-    init(novel: Novel, categoryName: String? = nil) {
-        self.novel = novel
-        self.categoryName = categoryName
+    private var metadataLine: String {
+        let author = displayed(novel.author)
+        guard let source = BookSourceRegistry.displayName(for: novel.sourceURLString) else {
+            return author
+        }
+        return "\(author) · \(displayed(source))"
     }
 
     var body: some View {
@@ -625,17 +861,17 @@ private struct CategoryBookRow: View {
             BookCover(novel: novel, width: 44, height: 62)
 
             VStack(alignment: .leading, spacing: 4) {
-                Text(novel.title)
+                Text(displayed(novel.title))
                     .font(.system(size: 15, weight: .semibold, design: .rounded))
                     .foregroundStyle(Color.readerInk)
                     .lineLimit(1)
 
-                Text("\(novel.author) · \(categoryName ?? novel.genre)")
+                Text(metadataLine)
                     .font(.system(size: 12))
                     .foregroundStyle(Color.readerMuted)
                     .lineLimit(1)
 
-                Text(novel.lastChapter)
+                Text(displayed(novel.lastChapter))
                     .font(.system(size: 13, design: .serif))
                     .foregroundStyle(Color.readerMuted)
                     .lineLimit(2)
@@ -652,6 +888,10 @@ private struct CategoryBookRow: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.readerSurface.opacity(0.78))
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+
+    private func displayed(_ text: String) -> String {
+        ChineseTextConverter.display(text, usesTraditionalChinese: usesTraditionalChinese)
     }
 }
 
@@ -673,6 +913,7 @@ private struct CategoryDetailView: View {
     @State private var sortMode: CategorySortMode = .recent
     @State private var categoryEditBook: Novel?
     @State private var newBookCategoryName = ""
+    @State private var activeSwipeID: UUID?
 
     private var horizontalMargin: CGFloat {
         if dynamicTypeSize.isAccessibilitySize { return 12 }
@@ -707,7 +948,14 @@ private struct CategoryDetailView: View {
 
         switch sortMode {
         case .recent:
-            return filtered.sorted { $0.readMinutes > $1.readMinutes }
+            return filtered.sorted { lhs, rhs in
+                let lhsOpenedAt = lhs.lastOpenedAt ?? .distantPast
+                let rhsOpenedAt = rhs.lastOpenedAt ?? .distantPast
+                if lhsOpenedAt != rhsOpenedAt {
+                    return lhsOpenedAt > rhsOpenedAt
+                }
+                return lhs.readMinutes > rhs.readMinutes
+            }
         case .title:
             return filtered.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
         case .author:
@@ -733,12 +981,19 @@ private struct CategoryDetailView: View {
                     } else {
                         LazyVStack(spacing: 8) {
                             ForEach(visibleNovels) { novel in
-                                BookPressableNavigationRow {
+                                BookPressableNavigationRow(
+                                    rowID: novel.id,
+                                    activeSwipeID: $activeSwipeID
+                                ) {
                                     ReaderView(novel: novel)
                                 } label: {
-                                    CategoryBookRow(novel: novel, categoryName: categoryName)
+                                    CategoryBookRow(novel: novel)
                                 } onLongPress: {
                                     presentCategoryEditor(for: novel)
+                                } onClearDownloadData: {
+                                    clearDownloadedData(for: novel)
+                                } onDelete: {
+                                    delete(novel)
                                 }
                             }
                         }
@@ -746,6 +1001,18 @@ private struct CategoryDetailView: View {
                 }
                 .padding(.top, 8)
                 .padding(.bottom, 18)
+                .background(
+                    GeometryReader { proxy in
+                        Color.clear.preference(
+                            key: LibraryScrollOffsetKey.self,
+                            value: proxy.frame(in: .named("CategoryDetailScroll")).minY
+                        )
+                    }
+                )
+            }
+            .coordinateSpace(name: "CategoryDetailScroll")
+            .onPreferenceChange(LibraryScrollOffsetKey.self) { _ in
+                closeActiveSwipe()
             }
             .contentMargins(.horizontal, horizontalMargin, for: .scrollContent)
             .safeAreaPadding(.bottom, 12)
@@ -768,14 +1035,39 @@ private struct CategoryDetailView: View {
         .navigationTitle(categoryName)
         .navigationBarTitleDisplayMode(.inline)
         .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .always), prompt: "搜索书名、作者或章节")
+        .onChange(of: categoryEditBook?.id) { _, _ in closeActiveSwipe() }
+        .onChange(of: searchText) { _, _ in closeActiveSwipe() }
+        .onChange(of: sortMode) { _, _ in closeActiveSwipe() }
+    }
+
+    private func closeActiveSwipe() {
+        guard activeSwipeID != nil else { return }
+        withAnimation(librarySwipeSpring) {
+            activeSwipeID = nil
+        }
     }
 
     private func presentCategoryEditor(for novel: Novel) {
         newBookCategoryName = ""
         categoryEditBook = novel
     }
+
+    private func delete(_ novel: Novel) {
+        var updatedCategories = categories
+        for index in updatedCategories.indices {
+            updatedCategories[index].novels.removeAll { $0.id == novel.id }
+        }
+        categories = updatedCategories
+    }
+
+    private func clearDownloadedData(for novel: Novel) {
+        Task {
+            await ChapterContentCache.shared.clearCache(for: novel)
+        }
+    }
 }
 
 #Preview {
     LibraryView()
+        .environmentObject(LibraryStore())
 }

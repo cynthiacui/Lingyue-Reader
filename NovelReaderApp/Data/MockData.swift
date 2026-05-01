@@ -10,7 +10,7 @@ enum MockData {
             lastChapter: "第 48 章 玄武门外",
             progress: 0.72,
             readMinutes: 326,
-            coverColor: .readerIndigo,
+            coverPalette: .indigo,
             isFeatured: true
         ),
         Novel(
@@ -21,7 +21,7 @@ enum MockData {
             lastChapter: "第 21 章 旧磁带",
             progress: 0.38,
             readMinutes: 142,
-            coverColor: .readerTeal,
+            coverPalette: .teal,
             isFeatured: true
         ),
         Novel(
@@ -32,7 +32,7 @@ enum MockData {
             lastChapter: "第 64 章 春雨",
             progress: 0.91,
             readMinutes: 481,
-            coverColor: .readerRose,
+            coverPalette: .rose,
             isFeatured: false
         ),
         Novel(
@@ -43,7 +43,7 @@ enum MockData {
             lastChapter: "第 17 章 沙盒城市",
             progress: 0.24,
             readMinutes: 95,
-            coverColor: .readerBlue,
+            coverPalette: .blue,
             isFeatured: true
         ),
         Novel(
@@ -54,7 +54,7 @@ enum MockData {
             lastChapter: "第 35 章 桂花糖藕",
             progress: 0.56,
             readMinutes: 233,
-            coverColor: .readerAmber,
+            coverPalette: .amber,
             isFeatured: false
         )
     ]

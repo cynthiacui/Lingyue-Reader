@@ -1,6 +1,9 @@
 import SwiftUI
 
 struct ContentView: View {
+    @StateObject private var libraryStore = LibraryStore()
+    @Environment(\.scenePhase) private var scenePhase
+
     var body: some View {
         TabView {
             NavigationStack {
@@ -25,6 +28,12 @@ struct ContentView: View {
                 }
         }
         .tint(.readerAccent)
+        .environmentObject(libraryStore)
+        .onChange(of: scenePhase) { _, newPhase in
+            if newPhase == .background {
+                Task { await libraryStore.flush() }
+            }
+        }
     }
 }
 

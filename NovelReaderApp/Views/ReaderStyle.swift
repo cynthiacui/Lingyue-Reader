@@ -27,16 +27,13 @@ struct BookCover: View {
     let novel: Novel
     var width: CGFloat = 72
     var height: CGFloat = 104
+    @AppStorage("reader.usesTraditionalChinese") private var usesTraditionalChinese = false
 
     var body: some View {
         ZStack(alignment: .bottomLeading) {
-            LinearGradient(
-                colors: [novel.coverColor.opacity(0.96), novel.coverColor.opacity(0.68)],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
+            coverBackground
 
-            Text(novel.title)
+            Text(displayed(novel.title))
                 .font(.system(size: 16, weight: .semibold, design: .serif))
                 .foregroundStyle(.white)
                 .lineSpacing(4)
@@ -50,6 +47,38 @@ struct BookCover: View {
             RoundedRectangle(cornerRadius: 7, style: .continuous)
                 .stroke(.white.opacity(0.18), lineWidth: 1)
         )
+    }
+
+    @ViewBuilder
+    private var coverBackground: some View {
+        if let coverImageURLString = novel.coverImageURLString,
+           let url = URL(string: coverImageURLString) {
+            AsyncImage(url: url) { phase in
+                switch phase {
+                case .success(let image):
+                    image
+                        .resizable()
+                        .scaledToFill()
+                        .overlay(Color.black.opacity(0.24))
+                default:
+                    fallbackCover
+                }
+            }
+        } else {
+            fallbackCover
+        }
+    }
+
+    private var fallbackCover: some View {
+        LinearGradient(
+            colors: [novel.coverColor.opacity(0.96), novel.coverColor.opacity(0.68)],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+    }
+
+    private func displayed(_ text: String) -> String {
+        ChineseTextConverter.display(text, usesTraditionalChinese: usesTraditionalChinese)
     }
 }
 

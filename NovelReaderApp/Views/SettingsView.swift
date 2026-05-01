@@ -11,6 +11,9 @@ struct SettingsView: View {
     @AppStorage("reader.autoScroll") private var autoScroll = false
     @AppStorage("reader.cacheEnabled") private var cacheEnabled = true
 
+    @State private var cacheSizeText = "计算中"
+    @State private var cacheNotice: String?
+
     private var horizontalMargin: CGFloat {
         if dynamicTypeSize.isAccessibilitySize { return 14 }
         return horizontalSizeClass == .compact ? 16 : 24
@@ -46,6 +49,9 @@ struct SettingsView: View {
         }
         .navigationTitle("设置")
         .navigationBarTitleDisplayMode(.large)
+        .task {
+            await refreshCacheSize()
+        }
     }
 
     private var previewSection: some View {
@@ -119,27 +125,53 @@ struct SettingsView: View {
 
             VStack(spacing: 14) {
                 Toggle(isOn: $cacheEnabled) {
-                    Label("自动缓存最近章节", systemImage: "externaldrive")
+                    Label("自动预载后续章节", systemImage: "externaldrive")
                 }
 
                 HStack {
-                    Label("缓存空间", systemImage: "internaldrive")
+                    Label("下载数据", systemImage: "internaldrive")
                     Spacer()
-                    Text("128 MB")
+                    Text(cacheSizeText)
                         .foregroundStyle(Color.readerMuted)
                 }
 
                 Button(role: .destructive) {
+                    Task {
+                        await clearAllCache()
+                    }
                 } label: {
-                    Label("清理缓存", systemImage: "trash")
+                    Label("清理全部下载数据", systemImage: "trash.slash")
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.large)
+
+                if let cacheNotice {
+                    Text(cacheNotice)
+                        .font(.caption)
+                        .foregroundStyle(Color.readerMuted)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
             }
             .foregroundStyle(Color.readerInk)
             .readerCard()
         }
+    }
+
+    @MainActor
+    private func refreshCacheSize() async {
+        let sizeBytes = await ChapterContentCache.shared.cacheSizeBytes()
+        let formatter = ByteCountFormatter()
+        formatter.countStyle = .file
+        formatter.allowsNonnumericFormatting = false
+        cacheSizeText = formatter.string(fromByteCount: sizeBytes)
+    }
+
+    @MainActor
+    private func clearAllCache() async {
+        await ChapterContentCache.shared.clearAll()
+        cacheNotice = "已清理全部下载数据"
+        await refreshCacheSize()
     }
 
     @ViewBuilder

@@ -4,11 +4,10 @@ import Foundation
 struct DiscoveryView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-    @Environment(\.openURL) private var openURL
 
     @State private var searchText = ""
     @State private var activeSearchQuery: String?
-    @State private var openingSourceID: String?
+    @State private var browserDestination: DiscoveryBrowserDestination?
 
     private var horizontalMargin: CGFloat {
         if dynamicTypeSize.isAccessibilitySize { return 14 }
@@ -50,6 +49,9 @@ struct DiscoveryView: View {
                     sources: DiscoverySourceCatalog.searchableSources
                 )
             }
+        }
+        .navigationDestination(item: $browserDestination) { destination in
+            InAppBrowserView(url: destination.url, title: destination.title)
         }
     }
 
@@ -147,12 +149,6 @@ struct DiscoveryView: View {
                     .lineLimit(2)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
-                if openingSourceID == source.id {
-                    ProgressView()
-                        .controlSize(.small)
-                        .tint(Color.readerMuted)
-                }
-
                 Text(source.tagline)
                     .font(.system(size: 15))
                     .foregroundStyle(Color.readerMuted)
@@ -173,26 +169,34 @@ struct DiscoveryView: View {
 
     private func openSource(_ source: DiscoverySource) {
         if let homepageURL = source.homepageURL {
-            openURL(homepageURL)
+            browserDestination = DiscoveryBrowserDestination(url: homepageURL, title: source.name)
             return
         }
 
-        openingSourceID = source.id
-        let fallback = source.fallbackSourceURL
-        openURL(fallback)
-        openingSourceID = nil
+        browserDestination = DiscoveryBrowserDestination(url: source.fallbackSourceURL, title: source.name)
+    }
+}
+
+private struct DiscoveryBrowserDestination: Identifiable, Hashable {
+    let id: String
+    let url: URL
+    let title: String
+
+    init(url: URL, title: String) {
+        self.id = "\(title)|\(url.absoluteString)"
+        self.url = url
+        self.title = title
     }
 }
 
 private struct DiscoverySearchResultsView: View {
-    @Environment(\.openURL) private var openURL
-
     let query: String
     let sources: [DiscoverySource]
 
     @State private var isLoading = true
     @State private var groupedResults: [DiscoveryGroupedResult] = []
     @State private var failedMessage: String?
+    @State private var browserDestination: DiscoveryBrowserDestination?
 
     var body: some View {
         ZStack {
@@ -212,6 +216,9 @@ private struct DiscoverySearchResultsView: View {
         .navigationBarTitleDisplayMode(.inline)
         .task(id: query) {
             await runSearch()
+        }
+        .navigationDestination(item: $browserDestination) { destination in
+            InAppBrowserView(url: destination.url, title: destination.title)
         }
     }
 
@@ -258,7 +265,7 @@ private struct DiscoverySearchResultsView: View {
                     ForEach(sources) { source in
                         Button {
                             if let url = source.searchURL(for: query) {
-                                openURL(url)
+                                browserDestination = DiscoveryBrowserDestination(url: url, title: source.name)
                             }
                         } label: {
                             Text(source.name)
@@ -307,7 +314,12 @@ private struct DiscoverySearchResultsView: View {
                         ScrollView(.horizontal, showsIndicators: false) {
                             HStack(spacing: 8) {
                                 ForEach(result.sourceLinks) { sourceLink in
-                                    Link(destination: sourceLink.url) {
+                                    Button {
+                                        browserDestination = DiscoveryBrowserDestination(
+                                            url: sourceLink.url,
+                                            title: sourceLink.source.name
+                                        )
+                                    } label: {
                                         Text(sourceLink.source.name)
                                             .font(.caption.weight(.semibold))
                                             .foregroundStyle(Color.readerInk)
@@ -318,6 +330,7 @@ private struct DiscoverySearchResultsView: View {
                                                     .fill(Color.readerSurface)
                                             )
                                     }
+                                    .buttonStyle(.plain)
                                 }
                             }
                         }

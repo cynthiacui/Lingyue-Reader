@@ -6,20 +6,58 @@ struct ReaderView: View {
     let novel: Novel
 
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var libraryStore: LibraryStore
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @AppStorage("reader.fontSize") private var fontSize = 18.0
     @AppStorage("reader.lineSpacing") private var lineSpacing = 8.0
     @AppStorage("reader.theme") private var themeRawValue = ReadingTheme.paper.rawValue
     @AppStorage("reader.usesTraditionalChinese") private var usesTraditionalChinese = false
+    @AppStorage("reader.cacheEnabled") private var cacheEnabled = true
 
-    @State private var currentPageIndex = 0
+    @State private var currentChapterIndex = 0
+    @State private var currentChapterPageIndex = 0
+    @State private var visiblePages: [ReaderPageItem] = []
+    @State private var visiblePageSignature: String?
     @State private var showControls = false
     @State private var showChapterPicker = false
     @State private var didSetInitialPage = false
+    @State private var loadedChapterOverrides: [String: NovelChapter] = [:]
+    @State private var loadingChapterKeys: Set<String> = []
+    @State private var chapterLoadErrors: [String: String] = [:]
+    @State private var repairedNovel: Novel?
+    @State private var isRepairingCatalog = false
+    @State private var catalogRepairError: String?
+    @State private var lastPersistedReadingState: String?
+    @State private var pendingRestoreChapterKey: String?
+    @State private var pendingRestoreChapterPageIndex: Int?
+    @State private var prefetchingChapterKeys: Set<String> = []
+    @State private var downloadedChapterKeys: Set<String> = []
+    @State private var shouldJumpToLastPageAfterPagination = false
+
+    private var activeNovel: Novel {
+        repairedNovel ?? novel
+    }
+
+    private var baseChapters: [NovelChapter] {
+        if catalogNeedsRepair {
+            let message = catalogRepairError.map { "目录修复失败：\($0)" } ?? "正在修复章节目录..."
+            return [NovelChapter(title: activeNovel.title, content: message)]
+        }
+
+        return activeNovel.chapters.isEmpty ? MockData.chapters(for: activeNovel) : activeNovel.chapters
+    }
 
     private var chapters: [NovelChapter] {
-        MockData.chapters(for: novel)
+        baseChapters.map { chapter in
+            loadedChapterOverrides[chapterCacheKey(chapter)] ?? chapter
+        }
+    }
+
+    private var currentChapter: NovelChapter? {
+        guard baseChapters.indices.contains(currentChapterIndex) else { return nil }
+        let chapter = baseChapters[currentChapterIndex]
+        return loadedChapterOverrides[chapterCacheKey(chapter)] ?? chapter
     }
 
     private var horizontalMargin: CGFloat {
@@ -29,6 +67,10 @@ struct ReaderView: View {
 
     private var currentTheme: ReadingTheme {
         ReadingTheme(rawValue: themeRawValue) ?? .paper
+    }
+
+    private var catalogNeedsRepair: Bool {
+        repairedNovel == nil && BookImportService.shared.catalogNeedsRepair(for: novel)
     }
 
     private var pageBackground: Color {
@@ -53,13 +95,14 @@ struct ReaderView: View {
     var body: some View {
         GeometryReader { proxy in
             let textSize = readerTextSize(containerSize: proxy.size, safeAreaInsets: proxy.safeAreaInsets)
-            let pages = readerPages(textSize: textSize)
+            let pages = activeVisiblePages()
             let currentPage = currentPage(in: pages)
+            let pageSignature = paginationSignature(textSize: textSize)
 
             ZStack {
                 pageBackground.ignoresSafeArea()
 
-                TabView(selection: $currentPageIndex) {
+                TabView(selection: $currentChapterPageIndex) {
                     ForEach(pages.indices, id: \.self) { index in
                         pageView(for: pages[index], safeAreaInsets: proxy.safeAreaInsets, textSize: textSize)
                             .tag(index)
@@ -86,10 +129,31 @@ struct ReaderView: View {
                 }
             }
             .onAppear {
-                setInitialPageIfNeeded(pages: pages)
+                setInitialChapterIfNeeded()
+                persistReadingState(pages: pages)
             }
-            .onChange(of: pages.count) {
-                clampCurrentPage(to: pages)
+            .onChange(of: currentChapterPageIndex) {
+                persistReadingState(pages: activeVisiblePages())
+            }
+            .onChange(of: visiblePages.count) {
+                let activePages = activeVisiblePages()
+                clampCurrentPage(to: activePages)
+                applyPendingPageRestoreIfNeeded(pages: activePages)
+                persistReadingState(pages: activePages)
+            }
+            .task(id: pageSignature) {
+                await rebuildVisiblePagesIfNeeded(textSize: textSize, signature: pageSignature)
+            }
+            .task(id: currentChapterIndex) {
+                persistReadingState(pages: activeVisiblePages())
+                await prepareChapter(at: currentChapterIndex)
+            }
+            .task {
+                await repairCatalogIfNeeded()
+            }
+            .task(id: showChapterPicker) {
+                guard showChapterPicker else { return }
+                await refreshDownloadedChapterKeys()
             }
         }
         .ignoresSafeArea()
@@ -187,7 +251,7 @@ struct ReaderView: View {
 
                 Spacer()
 
-                Text(displayed(novel.title))
+                Text(displayed(activeNovel.title))
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
                     .frame(alignment: .trailing)
@@ -280,7 +344,10 @@ struct ReaderView: View {
                         LazyVStack(spacing: 4) {
                             ForEach(chapters.indices, id: \.self) { index in
                                 Button {
-                                    currentPageIndex = firstPageIndex(forChapterAt: index, in: pages)
+                                    goToChapter(index, pageIndex: 0)
+                                    Task {
+                                        await prepareChapter(at: index)
+                                    }
                                     withAnimation(.easeInOut(duration: 0.18)) {
                                         showChapterPicker = false
                                         showControls = false
@@ -290,6 +357,12 @@ struct ReaderView: View {
                                         Text(displayed(chapters[index].title))
                                             .font(.system(size: 15, weight: currentPage.chapterIndex == index ? .bold : .regular))
                                             .lineLimit(1)
+
+                                        if isChapterDownloaded(chapters[index]) {
+                                            Image(systemName: "arrow.down.circle.fill")
+                                                .font(.system(size: 12, weight: .semibold))
+                                                .accessibilityLabel("已下载")
+                                        }
 
                                         Spacer()
 
@@ -313,6 +386,9 @@ struct ReaderView: View {
                     }
                     .onAppear {
                         proxy.scrollTo(currentPage.chapterIndex, anchor: .center)
+                        Task {
+                            await refreshDownloadedChapterKeys()
+                        }
                     }
                 }
             }
@@ -327,35 +403,62 @@ struct ReaderView: View {
 
     private func currentPage(in pages: [ReaderPageItem]) -> ReaderPageItem {
         guard !pages.isEmpty else {
-            return ReaderPageItem(
-                chapterIndex: 0,
-                pageIndex: 0,
-                chapterPageCount: 1,
-                chapterTitle: novel.title,
-                content: ""
-            )
+            return placeholderPage(forChapterAt: currentChapterIndex)
         }
 
-        return pages[min(currentPageIndex, pages.count - 1)]
+        return pages[min(currentChapterPageIndex, pages.count - 1)]
     }
 
-    private func firstPageIndex(forChapterAt chapterIndex: Int, in pages: [ReaderPageItem]) -> Int {
-        pages.firstIndex { $0.chapterIndex == chapterIndex } ?? 0
+    private func activeVisiblePages() -> [ReaderPageItem] {
+        guard visiblePages.first?.chapterIndex == currentChapterIndex else {
+            return [placeholderPage(forChapterAt: currentChapterIndex)]
+        }
+
+        return visiblePages.isEmpty ? [placeholderPage(forChapterAt: currentChapterIndex)] : visiblePages
     }
 
-    private func setInitialPageIfNeeded(pages: [ReaderPageItem]) {
-        guard !didSetInitialPage, !pages.isEmpty else { return }
-        currentPageIndex = min(max(Int(Double(pages.count) * novel.progress), 0), pages.count - 1)
+    private func placeholderPage(forChapterAt chapterIndex: Int) -> ReaderPageItem {
+        let chapter = baseChapters.indices.contains(chapterIndex) ? baseChapters[chapterIndex] : nil
+        let title = displayed(chapter?.title ?? activeNovel.title)
+        return ReaderPageItem(
+            chapterIndex: max(0, chapterIndex),
+            pageIndex: 0,
+            chapterPageCount: 1,
+            chapterTitle: title,
+            content: displayed(readerContent(for: chapter, chapterIndex: chapterIndex))
+        )
+    }
+
+    private func setInitialChapterIfNeeded() {
+        guard !didSetInitialPage else { return }
+
+        if let chapterIndex = restoredChapterIndex() {
+            let chapterPageIndex = max(activeNovel.currentChapterPageIndex ?? 0, 0)
+            pendingRestoreChapterKey = chapterCacheKey(baseChapters[chapterIndex])
+            pendingRestoreChapterPageIndex = chapterPageIndex
+            currentChapterIndex = chapterIndex
+            currentChapterPageIndex = chapterPageIndex
+        } else {
+            currentChapterIndex = fallbackChapterIndexFromProgress()
+            currentChapterPageIndex = 0
+        }
+
+        loadDiskCachedChapterImmediately(at: currentChapterIndex)
         didSetInitialPage = true
     }
 
     private func clampCurrentPage(to pages: [ReaderPageItem]) {
         guard !pages.isEmpty else {
-            currentPageIndex = 0
+            currentChapterPageIndex = 0
             return
         }
 
-        currentPageIndex = min(currentPageIndex, pages.count - 1)
+        if shouldJumpToLastPageAfterPagination {
+            shouldJumpToLastPageAfterPagination = false
+            currentChapterPageIndex = max(pages.count - 1, 0)
+        } else {
+            currentChapterPageIndex = min(currentChapterPageIndex, pages.count - 1)
+        }
     }
 
     private func toggleControls() {
@@ -381,8 +484,11 @@ struct ReaderView: View {
         }
 
         guard !showChapterPicker else { return }
-        if currentPageIndex > 0 {
-            currentPageIndex -= 1
+        if currentChapterPageIndex > 0 {
+            currentChapterPageIndex -= 1
+        } else if currentChapterIndex > 0 {
+            shouldJumpToLastPageAfterPagination = true
+            goToChapter(currentChapterIndex - 1, pageIndex: 0)
         }
     }
 
@@ -393,26 +499,374 @@ struct ReaderView: View {
         }
 
         guard !showChapterPicker else { return }
-        if currentPageIndex < pages.count - 1 {
-            currentPageIndex += 1
+        if currentChapterPageIndex < pages.count - 1 {
+            currentChapterPageIndex += 1
+        } else if currentChapterIndex < baseChapters.count - 1 {
+            goToChapter(currentChapterIndex + 1, pageIndex: 0)
         }
     }
 
-    private func readerPages(textSize: CGSize) -> [ReaderPageItem] {
-        return chapters.enumerated().flatMap { chapterIndex, chapter in
-            let chapterTitle = displayed(chapter.title)
-            let chapterPages = splitIntoPages(displayed(chapter.content), textSize: textSize)
+    private func goToChapter(_ chapterIndex: Int, pageIndex: Int) {
+        guard baseChapters.indices.contains(chapterIndex) else { return }
+        currentChapterIndex = chapterIndex
+        currentChapterPageIndex = max(pageIndex, 0)
+        loadDiskCachedChapterImmediately(at: chapterIndex)
+    }
 
-            return chapterPages.enumerated().map { pageIndex, content in
-                ReaderPageItem(
-                    chapterIndex: chapterIndex,
-                    pageIndex: pageIndex,
-                    chapterPageCount: chapterPages.count,
-                    chapterTitle: chapterTitle,
-                    content: content
-                )
+    private func loadDiskCachedChapterImmediately(at index: Int) {
+        guard baseChapters.indices.contains(index) else { return }
+
+        let chapter = baseChapters[index]
+        guard chapter.sourceURLString != nil,
+              chapter.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return
+        }
+
+        let key = chapterCacheKey(chapter)
+        guard loadedChapterOverrides[key] == nil,
+              let cachedChapter = ChapterContentCache.diskCachedChapter(for: chapter) else {
+            return
+        }
+
+        loadedChapterOverrides[key] = cachedChapter
+        downloadedChapterKeys.insert(key)
+    }
+
+    @MainActor
+    private func persistReadingState(pages: [ReaderPageItem]) {
+        guard didSetInitialPage, !catalogNeedsRepair, !pages.isEmpty else { return }
+        guard pendingRestoreChapterKey == nil else { return }
+
+        let currentPage = currentPage(in: pages)
+        guard baseChapters.indices.contains(currentPage.chapterIndex) else { return }
+
+        let currentChapter = baseChapters[currentPage.chapterIndex]
+        let progress = readingProgress(for: currentPage)
+        let stateKey = "\(activeNovel.id.uuidString)-\(currentPage.chapterIndex)-\(currentPage.pageIndex)-\(pages.count)"
+        guard stateKey != lastPersistedReadingState else { return }
+
+        lastPersistedReadingState = stateKey
+        libraryStore.updateReadingState(
+            for: activeNovel.id,
+            chapterTitle: currentChapter.title,
+            progress: progress,
+            chapterIndex: currentPage.chapterIndex,
+            chapterPageIndex: currentPage.pageIndex,
+            chapterSourceURLString: currentChapter.sourceURLString
+        )
+    }
+
+    private func restoredChapterIndex() -> Int? {
+        if let sourceURLString = activeNovel.currentChapterSourceURLString,
+           let sourceIndex = baseChapters.firstIndex(where: { $0.sourceURLString == sourceURLString }) {
+            return sourceIndex
+        }
+
+        if let chapterIndex = activeNovel.currentChapterIndex,
+           baseChapters.indices.contains(chapterIndex) {
+            return chapterIndex
+        }
+
+        let trimmedLastChapter = activeNovel.lastChapter.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedLastChapter.isEmpty,
+           let titleIndex = baseChapters.firstIndex(where: {
+               $0.title.trimmingCharacters(in: .whitespacesAndNewlines) == trimmedLastChapter
+           }) {
+            return titleIndex
+        }
+
+        return nil
+    }
+
+    private func fallbackChapterIndexFromProgress() -> Int {
+        guard !baseChapters.isEmpty else { return 0 }
+        let maxChapterIndex = max(baseChapters.count - 1, 0)
+        return min(max(Int((Double(maxChapterIndex) * activeNovel.progress).rounded()), 0), maxChapterIndex)
+    }
+
+    private func applyPendingPageRestoreIfNeeded(pages: [ReaderPageItem]) {
+        guard let chapterKey = pendingRestoreChapterKey,
+              let chapterPageIndex = pendingRestoreChapterPageIndex,
+              let chapterIndex = baseChapters.firstIndex(where: { chapterCacheKey($0) == chapterKey }),
+              chapterIndex == currentChapterIndex,
+              !pages.isEmpty else {
+            return
+        }
+
+        let targetPageIndex = min(max(chapterPageIndex, 0), max(pages.count - 1, 0))
+        if currentChapterPageIndex != targetPageIndex {
+            currentChapterPageIndex = targetPageIndex
+        }
+
+        let chapter = baseChapters[chapterIndex]
+        let chapterIsLoaded = loadedChapterOverrides[chapterKey] != nil
+            || !chapter.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || chapter.sourceURLString == nil
+            || chapterLoadErrors[chapterKey] != nil
+
+        if chapterPageIndex == 0 || chapterIsLoaded {
+            pendingRestoreChapterKey = nil
+            pendingRestoreChapterPageIndex = nil
+        }
+    }
+
+    private func readingProgress(for page: ReaderPageItem) -> Double {
+        guard baseChapters.count > 1 else {
+            return page.chapterPageCount <= 1 ? 0 : Double(page.pageIndex) / Double(max(page.chapterPageCount - 1, 1))
+        }
+
+        let chapterFraction = page.chapterPageCount <= 1
+            ? 0
+            : Double(page.pageIndex) / Double(max(page.chapterPageCount - 1, 1))
+        let rawProgress = (Double(page.chapterIndex) + chapterFraction) / Double(baseChapters.count - 1)
+        return min(max(rawProgress, 0), 1)
+    }
+
+    private func paginationSignature(textSize: CGSize) -> String {
+        let chapter = currentChapter
+        let chapterKey = chapter.map(chapterCacheKey) ?? "\(currentChapterIndex)"
+        let contentCount = chapter?.content.count ?? 0
+        let loadState = loadingChapterKeys.contains(chapterKey) ? "loading" : "idle"
+        let errorState = chapterLoadErrors[chapterKey] ?? ""
+        let width = Int(textSize.width.rounded())
+        let height = Int(textSize.height.rounded())
+        return [
+            "\(currentChapterIndex)",
+            chapterKey,
+            "\(contentCount)",
+            loadState,
+            errorState,
+            "\(width)x\(height)",
+            "\(fontSize)",
+            "\(lineSpacing)",
+            "\(usesTraditionalChinese)"
+        ].joined(separator: "|")
+    }
+
+    @MainActor
+    private func rebuildVisiblePagesIfNeeded(textSize: CGSize, signature: String) async {
+        guard visiblePageSignature != signature else { return }
+
+        guard let chapter = currentChapter else {
+            applyVisiblePages([placeholderPage(forChapterAt: currentChapterIndex)], signature: signature)
+            return
+        }
+
+        let chapterIndex = currentChapterIndex
+        let chapterTitle = displayed(chapter.title)
+        let content = displayed(readerContent(for: chapter, chapterIndex: chapterIndex))
+        let fontSize = self.fontSize
+        let lineSpacing = self.lineSpacing
+
+        let work = Task.detached(priority: .userInitiated) {
+            Self.paginate(content: content, textSize: textSize, fontSize: fontSize, lineSpacing: lineSpacing)
+        }
+        let pageContents = await withTaskCancellationHandler {
+            await work.value
+        } onCancel: {
+            work.cancel()
+        }
+
+        if Task.isCancelled || pageContents.isEmpty { return }
+
+        let items = pageContents.enumerated().map { pageIndex, content in
+            ReaderPageItem(
+                chapterIndex: chapterIndex,
+                pageIndex: pageIndex,
+                chapterPageCount: pageContents.count,
+                chapterTitle: chapterTitle,
+                content: content
+            )
+        }
+
+        applyVisiblePages(items, signature: signature)
+    }
+
+    @MainActor
+    private func applyVisiblePages(_ items: [ReaderPageItem], signature: String) {
+        visiblePages = items
+        visiblePageSignature = signature
+        clampCurrentPage(to: items)
+        applyPendingPageRestoreIfNeeded(pages: items)
+        persistReadingState(pages: items)
+    }
+
+    private func readerContent(for chapter: NovelChapter?, chapterIndex: Int) -> String {
+        guard let chapter else {
+            return activeNovel.title
+        }
+
+        if !chapter.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return chapter.content
+        }
+
+        guard chapter.sourceURLString != nil else {
+            return chapter.title
+        }
+
+        let key = chapterCacheKey(chapter)
+        if let errorMessage = chapterLoadErrors[key] {
+            return "\(chapter.title)\n\n章节加载失败：\(errorMessage)"
+        }
+
+        if loadingChapterKeys.contains(key) {
+            return "\(chapter.title)\n\n正在加载章节内容..."
+        }
+
+        return "\(chapter.title)\n\n正在加载章节内容..."
+    }
+
+    @MainActor
+    private func prepareChapter(at index: Int) async {
+        guard baseChapters.indices.contains(index) else { return }
+        await loadCachedChapterIfAvailable(at: index)
+        prefetchUpcomingChapters(after: index)
+        await loadChapterIfNeeded(at: index)
+    }
+
+    @MainActor
+    private func loadCachedChapterIfAvailable(at index: Int) async {
+        guard baseChapters.indices.contains(index) else { return }
+
+        let chapter = baseChapters[index]
+        guard chapter.sourceURLString != nil,
+              chapter.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return
+        }
+
+        let key = chapterCacheKey(chapter)
+        guard loadedChapterOverrides[key] == nil else { return }
+
+        if let cachedChapter = await ChapterContentCache.shared.cachedChapter(for: chapter) {
+            loadedChapterOverrides[key] = cachedChapter
+            downloadedChapterKeys.insert(key)
+        }
+    }
+
+    @MainActor
+    private func prefetchUpcomingChapters(after index: Int) {
+        guard cacheEnabled else { return }
+
+        let upcomingChapters = Array(baseChapters.dropFirst(index + 1).prefix(2))
+        for chapter in upcomingChapters {
+            guard chapter.sourceURLString != nil,
+                  chapter.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                continue
+            }
+
+            let key = chapterCacheKey(chapter)
+            guard loadedChapterOverrides[key] == nil,
+                  !loadingChapterKeys.contains(key),
+                  !prefetchingChapterKeys.contains(key) else {
+                continue
+            }
+
+            prefetchingChapterKeys.insert(key)
+            Task {
+                do {
+                    let loadedChapter = try await ChapterContentCache.shared.chapter(for: chapter)
+                    await MainActor.run {
+                        loadedChapterOverrides[key] = loadedChapter
+                        downloadedChapterKeys.insert(key)
+                        _ = prefetchingChapterKeys.remove(key)
+                    }
+                } catch {
+                    await MainActor.run {
+                        _ = prefetchingChapterKeys.remove(key)
+                    }
+                }
             }
         }
+    }
+
+    @MainActor
+    private func loadChapterIfNeeded(at index: Int) async {
+        guard baseChapters.indices.contains(index) else { return }
+
+        let chapter = baseChapters[index]
+        guard chapter.sourceURLString != nil,
+              chapter.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return
+        }
+
+        let key = chapterCacheKey(chapter)
+        guard loadedChapterOverrides[key] == nil, !loadingChapterKeys.contains(key) else {
+            return
+        }
+
+        loadingChapterKeys.insert(key)
+        chapterLoadErrors[key] = nil
+
+        do {
+            let loadedChapter = try await ChapterContentCache.shared.chapter(for: chapter)
+            loadedChapterOverrides[key] = loadedChapter
+            downloadedChapterKeys.insert(key)
+        } catch {
+            chapterLoadErrors[key] = error.localizedDescription
+        }
+
+        loadingChapterKeys.remove(key)
+    }
+
+    @MainActor
+    private func repairCatalogIfNeeded() async {
+        guard !isRepairingCatalog,
+              repairedNovel == nil,
+              BookImportService.shared.catalogNeedsRepair(for: novel),
+              let sourceURLString = novel.sourceURLString,
+              let sourceURL = URL(string: sourceURLString) else {
+            return
+        }
+
+        isRepairingCatalog = true
+        catalogRepairError = nil
+
+        do {
+            let repaired = try await BookImportService.shared.importBook(from: sourceURL, fallbackTitle: novel.title)
+            repairedNovel = repaired
+            loadedChapterOverrides.removeAll()
+            loadingChapterKeys.removeAll()
+            chapterLoadErrors.removeAll()
+            prefetchingChapterKeys.removeAll()
+            downloadedChapterKeys.removeAll()
+            currentChapterIndex = 0
+            currentChapterPageIndex = 0
+            visiblePages.removeAll()
+            visiblePageSignature = nil
+            didSetInitialPage = true
+            libraryStore.addImportedNovel(repaired)
+            libraryStore.updateReadingState(
+                for: repaired.id,
+                chapterTitle: repaired.chapters.first?.title ?? repaired.title,
+                progress: 0,
+                chapterIndex: 0,
+                chapterPageIndex: 0,
+                chapterSourceURLString: repaired.chapters.first?.sourceURLString
+            )
+        } catch {
+            catalogRepairError = error.localizedDescription
+        }
+
+        isRepairingCatalog = false
+    }
+
+    private func chapterCacheKey(_ chapter: NovelChapter) -> String {
+        chapter.sourceURLString ?? chapter.id.uuidString
+    }
+
+    private func isChapterDownloaded(_ chapter: NovelChapter) -> Bool {
+        guard chapter.sourceURLString != nil else { return false }
+
+        let key = chapterCacheKey(chapter)
+        return downloadedChapterKeys.contains(key)
+            || loadedChapterOverrides[key] != nil
+            || !chapter.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    @MainActor
+    private func refreshDownloadedChapterKeys() async {
+        let cachedKeys = await ChapterContentCache.shared.cachedKeys(for: baseChapters)
+        downloadedChapterKeys = cachedKeys.union(loadedChapterOverrides.keys)
     }
 
     private func readerTextSize(containerSize: CGSize, safeAreaInsets: EdgeInsets) -> CGSize {
@@ -436,36 +890,48 @@ struct ReaderView: View {
         return ceil(font.lineHeight)
     }
 
-    private func splitIntoPages(_ content: String, textSize: CGSize) -> [String] {
+    nonisolated private static func paginate(
+        content: String,
+        textSize: CGSize,
+        fontSize: CGFloat,
+        lineSpacing: CGFloat
+    ) -> [String] {
         var remaining = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        if remaining.isEmpty { return [""] }
+
+        let attributes = readerAttributes(fontSize: fontSize, lineSpacing: lineSpacing)
         var result: [String] = []
 
         while !remaining.isEmpty {
-            let splitIndex = fittingSplitIndex(in: remaining, textSize: textSize)
+            if Task.isCancelled { return [] }
+            let splitIndex = fittingSplitIndex(in: remaining, textSize: textSize, attributes: attributes)
             let pageText = String(remaining[..<splitIndex]).trimmingCharacters(in: .whitespacesAndNewlines)
-
             result.append(pageText.isEmpty ? String(remaining[..<splitIndex]) : pageText)
             remaining = String(remaining[splitIndex...]).trimmingCharacters(in: .whitespacesAndNewlines)
         }
 
-        return result.isEmpty ? [""] : result
+        return result
     }
 
-    private func fittingSplitIndex(in text: String, textSize: CGSize) -> String.Index {
+    nonisolated private static func fittingSplitIndex(
+        in text: String,
+        textSize: CGSize,
+        attributes: [NSAttributedString.Key: Any]
+    ) -> String.Index {
         guard !text.isEmpty else { return text.startIndex }
 
         let nsText = text as NSString
         let totalLength = nsText.length
-        let textView = measuringTextView(width: textSize.width)
 
         var lowerBound = 1
         var upperBound = totalLength
         var bestLength = 1
 
         while lowerBound <= upperBound {
+            if Task.isCancelled { break }
             let midpoint = (lowerBound + upperBound) / 2
             let candidate = nsText.substring(to: midpoint)
-            let candidateHeight = measuredTextHeight(candidate, using: textView, width: textSize.width)
+            let candidateHeight = measuredHeight(candidate, width: textSize.width, attributes: attributes)
 
             if candidateHeight <= textSize.height + 0.5 {
                 bestLength = midpoint
@@ -483,37 +949,24 @@ struct ReaderView: View {
         return Range(nsRange, in: text)?.upperBound ?? text.index(after: text.startIndex)
     }
 
-    private func measuringTextView(width: CGFloat) -> UITextView {
-        let textView = UITextView(frame: CGRect(x: 0, y: 0, width: width, height: 1))
-        textView.isEditable = false
-        textView.isSelectable = false
-        textView.isScrollEnabled = false
-        textView.isUserInteractionEnabled = false
-        textView.backgroundColor = .clear
-        textView.clipsToBounds = true
-        textView.contentInset = .zero
-        textView.contentInsetAdjustmentBehavior = .never
-        textView.textContainerInset = .zero
-        textView.textContainer.lineFragmentPadding = 0
-        textView.textContainer.maximumNumberOfLines = 0
-        textView.textContainer.lineBreakMode = .byWordWrapping
-        return textView
-    }
-
-    private func measuredTextHeight(_ text: String, using textView: UITextView, width: CGFloat) -> CGFloat {
-        textView.attributedText = attributedReaderText(text, color: .label)
-        let fittingSize = textView.sizeThatFits(CGSize(width: width, height: CGFloat.greatestFiniteMagnitude))
-        return ceil(fittingSize.height)
-    }
-
-    private func attributedReaderText(_ text: String, color: UIColor) -> NSAttributedString {
-        NSAttributedString(
-            string: text,
-            attributes: readerTextAttributes(color: color)
+    nonisolated private static func measuredHeight(
+        _ text: String,
+        width: CGFloat,
+        attributes: [NSAttributedString.Key: Any]
+    ) -> CGFloat {
+        let attributed = NSAttributedString(string: text, attributes: attributes)
+        let bounds = attributed.boundingRect(
+            with: CGSize(width: width, height: .greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin],
+            context: nil
         )
+        return ceil(bounds.height)
     }
 
-    private func readerTextAttributes(color: UIColor) -> [NSAttributedString.Key: Any] {
+    nonisolated private static func readerAttributes(
+        fontSize: CGFloat,
+        lineSpacing: CGFloat
+    ) -> [NSAttributedString.Key: Any] {
         let paragraphStyle = NSMutableParagraphStyle()
         paragraphStyle.alignment = .justified
         paragraphStyle.baseWritingDirection = .leftToRight
@@ -523,17 +976,13 @@ struct ReaderView: View {
 
         return [
             .font: UIFont.systemFont(ofSize: fontSize, weight: .regular),
-            .foregroundColor: color,
+            .foregroundColor: UIColor.label,
             .paragraphStyle: paragraphStyle
         ]
     }
 
     private func displayed(_ text: String) -> String {
-        usesTraditionalChinese ? simplifiedToTraditional(text) : text
-    }
-
-    private func simplifiedToTraditional(_ text: String) -> String {
-        text.applyingTransform(StringTransform(rawValue: "Hans-Hant"), reverse: false) ?? text
+        ChineseTextConverter.display(text, usesTraditionalChinese: usesTraditionalChinese)
     }
 
     private func timeString(from date: Date) -> String {
@@ -619,4 +1068,5 @@ private final class ReaderTextView: UITextView {
     NavigationStack {
         ReaderView(novel: MockData.novels[0])
     }
+    .environmentObject(LibraryStore())
 }
