@@ -13,6 +13,8 @@ struct ReaderView: View {
     @AppStorage("reader.lineSpacing") private var lineSpacing = 8.0
     @AppStorage("reader.theme") private var themeRawValue = ReadingTheme.paper.rawValue
     @AppStorage("reader.usesTraditionalChinese") private var usesTraditionalChinese = false
+    @AppStorage("reader.autoScroll") private var autoScroll = false
+    @AppStorage("reader.autoScrollSeconds") private var autoScrollSeconds = 6.0
     @AppStorage("reader.cacheEnabled") private var cacheEnabled = true
 
     @State private var currentChapterIndex = 0
@@ -21,6 +23,7 @@ struct ReaderView: View {
     @State private var visiblePageSignature: String?
     @State private var showControls = false
     @State private var showChapterPicker = false
+    @State private var showPreferences = false
     @State private var didSetInitialPage = false
     @State private var loadedChapterOverrides: [String: NovelChapter] = [:]
     @State private var loadingChapterKeys: Set<String> = []
@@ -39,6 +42,7 @@ struct ReaderView: View {
     /// pagination step entirely so the reader doesn't flash a placeholder.
     @State private var paginationCache: [String: [String]] = [:]
     @State private var lastKnownTextSize: CGSize = .zero
+    @State private var autoScrollTask: Task<Void, Never>?
     private let paginationCacheCapacity = 24
 
     private var activeNovel: Novel {
@@ -131,16 +135,35 @@ struct ReaderView: View {
                     chapterPickerOverlay(pages: pages, currentPage: currentPage)
                         .transition(.opacity.combined(with: .scale(scale: 0.96)))
                 }
+
+                if showPreferences {
+                    preferencesOverlay(safeBottom: proxy.safeAreaInsets.bottom)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
             }
             .onAppear {
                 setInitialChapterIfNeeded()
                 persistReadingState(pages: pages)
                 lastKnownTextSize = textSize
+                if autoScroll { startAutoScroll() }
+            }
+            .onDisappear {
+                stopAutoScroll()
             }
             .onChange(of: textSize) { _, newValue in
                 if newValue.width > 0, newValue.height > 0 {
                     lastKnownTextSize = newValue
                 }
+            }
+            .onChange(of: autoScroll) { _, newValue in
+                if newValue {
+                    startAutoScroll()
+                } else {
+                    stopAutoScroll()
+                }
+            }
+            .onChange(of: autoScrollSeconds) { _, _ in
+                if autoScroll { startAutoScroll() }
             }
             .onChange(of: currentChapterPageIndex) {
                 persistReadingState(pages: activeVisiblePages())
@@ -300,12 +323,25 @@ struct ReaderView: View {
 
                 Button {
                     withAnimation(.easeInOut(duration: 0.18)) {
+                        showPreferences = true
+                        showChapterPicker = false
+                    }
+                } label: {
+                    Image(systemName: "textformat.size")
+                        .font(.system(size: 19, weight: .semibold))
+                        .frame(width: 44, height: 50)
+                }
+                .buttonStyle(.plain)
+
+                Button {
+                    withAnimation(.easeInOut(duration: 0.18)) {
                         showChapterPicker = true
+                        showPreferences = false
                     }
                 } label: {
                     Image(systemName: "list.bullet")
                         .font(.system(size: 19, weight: .semibold))
-                        .frame(width: 50, height: 50)
+                        .frame(width: 44, height: 50)
                 }
                 .buttonStyle(.plain)
             }
@@ -508,6 +544,159 @@ struct ReaderView: View {
         }
     }
 
+    private func preferencesOverlay(safeBottom: CGFloat) -> some View {
+        ZStack {
+            Color.black.opacity(currentTheme == .night ? 0.35 : 0.18)
+                .ignoresSafeArea()
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    withAnimation(.easeInOut(duration: 0.18)) {
+                        showPreferences = false
+                    }
+                }
+
+            VStack {
+                Spacer()
+
+                VStack(alignment: .leading, spacing: 16) {
+                    preferenceStepperRow(
+                        title: "字号",
+                        value: $fontSize,
+                        range: 12...32,
+                        step: 1,
+                        format: { "\(Int($0))" }
+                    )
+
+                    preferenceStepperRow(
+                        title: "行距",
+                        value: $lineSpacing,
+                        range: 0...24,
+                        step: 1,
+                        format: { "\(Int($0))" }
+                    )
+
+                    preferenceThemeRow
+
+                    HStack(spacing: 10) {
+                        preferenceTogglePill(
+                            label: "繁体",
+                            systemImage: "character.book.closed",
+                            isOn: $usesTraditionalChinese
+                        )
+                        preferenceTogglePill(
+                            label: "滚读",
+                            systemImage: "arrow.down.to.line.compact",
+                            isOn: $autoScroll
+                        )
+                    }
+
+                    if autoScroll {
+                        preferenceStepperRow(
+                            title: "停留",
+                            value: $autoScrollSeconds,
+                            range: 2...30,
+                            step: 1,
+                            format: { "\(Int($0))秒" }
+                        )
+                    }
+                }
+                .padding(.horizontal, 18)
+                .padding(.top, 18)
+                .padding(.bottom, max(safeBottom + 16, 22))
+                .background(
+                    Rectangle()
+                        .fill(currentTheme.chromeBackground)
+                        .shadow(color: .black.opacity(0.16), radius: 8, x: 0, y: -3)
+                )
+            }
+        }
+        .ignoresSafeArea(edges: .bottom)
+    }
+
+    private func preferenceStepperRow(
+        title: String,
+        value: Binding<Double>,
+        range: ClosedRange<Double>,
+        step: Double,
+        format: @escaping (Double) -> String
+    ) -> some View {
+        HStack(spacing: 12) {
+            Text(title)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(secondaryForeground)
+                .frame(width: 36, alignment: .leading)
+
+            Spacer(minLength: 0)
+
+            CompactStepper(
+                value: value,
+                range: range,
+                step: step,
+                format: format,
+                background: currentTheme.surfaceBackground,
+                foreground: pageForeground,
+                dividerColor: secondaryForeground.opacity(0.18)
+            )
+        }
+    }
+
+    private var preferenceThemeRow: some View {
+        HStack(spacing: 12) {
+            Text("背景")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(secondaryForeground)
+                .frame(width: 36, alignment: .leading)
+
+            HStack(spacing: 10) {
+                ForEach(ReadingTheme.allCases) { theme in
+                    Button {
+                        themeRawValue = theme.rawValue
+                    } label: {
+                        Circle()
+                            .fill(theme.pageBackground)
+                            .frame(width: 28, height: 28)
+                            .overlay(
+                                Circle()
+                                    .strokeBorder(
+                                        theme == currentTheme ? Color.readerAccent : Color.black.opacity(0.18),
+                                        lineWidth: theme == currentTheme ? 2.5 : 1
+                                    )
+                            )
+                            .overlay(alignment: .center) {
+                                if theme == currentTheme {
+                                    Image(systemName: "checkmark")
+                                        .font(.system(size: 11, weight: .bold))
+                                        .foregroundStyle(theme.pageForeground)
+                                }
+                            }
+                    }
+                    .buttonStyle(.plain)
+                }
+                Spacer(minLength: 0)
+            }
+        }
+    }
+
+    private func preferenceTogglePill(label: String, systemImage: String, isOn: Binding<Bool>) -> some View {
+        Button {
+            isOn.wrappedValue.toggle()
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 12, weight: .semibold))
+                Text(label)
+                    .font(.system(size: 13, weight: .medium))
+            }
+            .frame(maxWidth: .infinity, minHeight: 36)
+            .foregroundStyle(isOn.wrappedValue ? Color.white : pageForeground)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(isOn.wrappedValue ? Color.readerAccent : currentTheme.surfaceBackground)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
     private func currentPage(in pages: [ReaderPageItem]) -> ReaderPageItem {
         guard !pages.isEmpty else {
             return placeholderPage(forChapterAt: currentChapterIndex)
@@ -580,6 +769,7 @@ struct ReaderView: View {
             showControls.toggle()
             if !showControls {
                 showChapterPicker = false
+                showPreferences = false
             }
         }
     }
@@ -588,6 +778,7 @@ struct ReaderView: View {
         withAnimation(.easeInOut(duration: 0.18)) {
             showControls = false
             showChapterPicker = false
+            showPreferences = false
         }
     }
 
@@ -617,6 +808,44 @@ struct ReaderView: View {
             currentChapterPageIndex += 1
         } else if currentChapterIndex < baseChapters.count - 1 {
             goToChapter(currentChapterIndex + 1, pageIndex: 0)
+        }
+    }
+
+    @MainActor
+    private func startAutoScroll() {
+        stopAutoScroll()
+        autoScrollTask = Task { @MainActor in
+            while !Task.isCancelled, autoScroll {
+                let seconds = max(autoScrollSeconds, 1)
+                try? await Task.sleep(for: .seconds(seconds))
+                guard !Task.isCancelled, autoScroll else { return }
+                // Pause whenever any overlay is showing — gives the user breathing room
+                // to interact with controls without losing their place.
+                if showControls || showChapterPicker || showPreferences { continue }
+                advanceAutoScrollPage()
+            }
+        }
+    }
+
+    @MainActor
+    private func stopAutoScroll() {
+        autoScrollTask?.cancel()
+        autoScrollTask = nil
+    }
+
+    @MainActor
+    private func advanceAutoScrollPage() {
+        let pages = activeVisiblePages()
+        if currentChapterPageIndex < pages.count - 1 {
+            withAnimation(.easeInOut(duration: 0.45)) {
+                currentChapterPageIndex += 1
+            }
+        } else if currentChapterIndex < baseChapters.count - 1 {
+            goToChapter(currentChapterIndex + 1, pageIndex: 0)
+        } else {
+            // Reached the end of the book — turn the toggle off so the task exits and the
+            // user sees the preference reflected.
+            autoScroll = false
         }
     }
 

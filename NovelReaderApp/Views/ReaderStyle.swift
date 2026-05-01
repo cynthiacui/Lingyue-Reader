@@ -113,6 +113,72 @@ struct BookCover: View {
     }
 }
 
+/// Compact `[ − ] value [ ＋ ]` stepper used in Settings and the reader preferences popup.
+/// Tap targets are fixed-width cells with hairline dividers so taps near the value text
+/// don't accidentally change it.
+struct CompactStepper: View {
+    @Binding var value: Double
+    let range: ClosedRange<Double>
+    let step: Double
+    let format: (Double) -> String
+    var background: Color = Color(.tertiarySystemFill)
+    var foreground: Color = Color.readerInk
+    var dividerColor: Color = Color.readerMuted.opacity(0.2)
+
+    var body: some View {
+        let canDecrement = value > range.lowerBound
+        let canIncrement = value < range.upperBound
+
+        HStack(spacing: 0) {
+            Button {
+                guard canDecrement else { return }
+                value = max(range.lowerBound, value - step)
+            } label: {
+                Image(systemName: "minus")
+                    .font(.system(size: 13, weight: .bold))
+                    .frame(width: 44, height: 32)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(!canDecrement)
+            .opacity(canDecrement ? 1 : 0.35)
+
+            Rectangle()
+                .fill(dividerColor)
+                .frame(width: 1, height: 18)
+
+            Text(format(value))
+                .font(.system(size: 14, weight: .semibold).monospacedDigit())
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+                .padding(.horizontal, 6)
+                .frame(minWidth: 52, minHeight: 32)
+
+            Rectangle()
+                .fill(dividerColor)
+                .frame(width: 1, height: 18)
+
+            Button {
+                guard canIncrement else { return }
+                value = min(range.upperBound, value + step)
+            } label: {
+                Image(systemName: "plus")
+                    .font(.system(size: 13, weight: .bold))
+                    .frame(width: 44, height: 32)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(!canIncrement)
+            .opacity(canIncrement ? 1 : 0.35)
+        }
+        .foregroundStyle(foreground)
+        .background(
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(background)
+        )
+    }
+}
+
 struct SectionHeader: View {
     let title: String
     var actionTitle: String?

@@ -9,21 +9,16 @@ struct SettingsView: View {
     @AppStorage("reader.theme") private var themeRawValue = ReadingTheme.paper.rawValue
     @AppStorage("reader.usesTraditionalChinese") private var usesTraditionalChinese = false
     @AppStorage("reader.autoScroll") private var autoScroll = false
+    @AppStorage("reader.autoScrollSeconds") private var autoScrollSeconds = 6.0
     @AppStorage("reader.cacheEnabled") private var cacheEnabled = true
 
     @State private var cacheSizeText = "计算中"
     @State private var cacheNotice: String?
-    @State private var previewScrollOffset: CGFloat = 0
 
     private let previewBaseText = """
     长安夜色如墨，雨声落在青石板上。沈砚合上残卷，忽然听见城楼方向传来三更鼓。
-    他披衣起身，推开木窗，远处灯火三两，江风拂面，带着早春未散的寒意。
-    案头摊着未写完的家书，墨迹尚新，字句却迟迟未能落下。
-    人在长安，剑在鞘中，少年志气未老，只是离家已远。
-    巷口有人轻声唱着旧时曲，依稀还是江南口音，听得人心下一动。
+    他披衣起身，推开木窗，江风拂面，带着早春未散的寒意。
     """
-
-    private let previewScrollDistance: CGFloat = 140
 
     private var horizontalMargin: CGFloat {
         if dynamicTypeSize.isAccessibilitySize { return 14 }
@@ -66,16 +61,11 @@ struct SettingsView: View {
             SectionHeader(title: "阅读预览")
 
             VStack(alignment: .leading, spacing: 12) {
-                ZStack(alignment: .topLeading) {
-                    Text(displayedPreviewText)
-                        .font(.system(size: fontSize, weight: .regular, design: .serif))
-                        .foregroundStyle(selectedTheme.pageForeground)
-                        .lineSpacing(lineSpacing)
-                        .frame(maxWidth: .infinity, alignment: .topLeading)
-                        .offset(y: previewScrollOffset)
-                }
-                .frame(height: 168, alignment: .topLeading)
-                .clipped()
+                Text(displayedPreviewText)
+                    .font(.system(size: fontSize, weight: .regular, design: .serif))
+                    .foregroundStyle(selectedTheme.pageForeground)
+                    .lineSpacing(lineSpacing)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
 
                 Text("当前：\(selectedTheme.rawValue) · \(usesTraditionalChinese ? "繁体" : "简体") · 字号 \(Int(fontSize)) · 行距 \(Int(lineSpacing))")
                     .font(.caption.weight(.medium))
@@ -85,20 +75,6 @@ struct SettingsView: View {
             .background(selectedTheme.pageBackground)
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             .shadow(color: .black.opacity(0.05), radius: 12, x: 0, y: 6)
-        }
-        .onChange(of: autoScroll) { _, newValue in
-            triggerPreviewScroll(enabled: newValue)
-        }
-        .onChange(of: fontSize) { _, _ in
-            previewScrollOffset = 0
-            if autoScroll { triggerPreviewScroll(enabled: true) }
-        }
-        .onChange(of: lineSpacing) { _, _ in
-            previewScrollOffset = 0
-            if autoScroll { triggerPreviewScroll(enabled: true) }
-        }
-        .onAppear {
-            if autoScroll { triggerPreviewScroll(enabled: true) }
         }
     }
 
@@ -141,6 +117,20 @@ struct SettingsView: View {
 
                 Toggle(isOn: $autoScroll) {
                     Label("自动滚读", systemImage: "arrow.down.to.line.compact")
+                }
+
+                if autoScroll {
+                    HStack {
+                        Label("每页停留", systemImage: "timer")
+                            .font(.headline)
+                        Spacer()
+                        CompactStepper(
+                            value: $autoScrollSeconds,
+                            range: 2...30,
+                            step: 1,
+                            format: { "\(Int($0))秒" }
+                        )
+                    }
                 }
             }
             .foregroundStyle(Color.readerInk)
@@ -244,18 +234,6 @@ struct SettingsView: View {
         }
     }
 
-    private func triggerPreviewScroll(enabled: Bool) {
-        if enabled {
-            previewScrollOffset = 0
-            withAnimation(.linear(duration: 2.0)) {
-                previewScrollOffset = -previewScrollDistance
-            }
-        } else {
-            withAnimation(.easeOut(duration: 0.3)) {
-                previewScrollOffset = 0
-            }
-        }
-    }
 }
 
 #Preview {
