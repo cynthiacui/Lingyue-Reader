@@ -116,6 +116,13 @@ struct ReaderView: View {
                 if showControls {
                     controlsTopBar(safeTop: proxy.safeAreaInsets.top, currentPage: currentPage)
                         .transition(.move(edge: .top).combined(with: .opacity))
+
+                    controlsBottomBar(
+                        safeBottom: proxy.safeAreaInsets.bottom,
+                        pages: pages,
+                        currentPage: currentPage
+                    )
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
 
                 if !showControls {
@@ -312,6 +319,103 @@ struct ReaderView: View {
             Spacer()
         }
         .ignoresSafeArea(edges: .top)
+    }
+
+    private func controlsBottomBar(
+        safeBottom: CGFloat,
+        pages: [ReaderPageItem],
+        currentPage: ReaderPageItem
+    ) -> some View {
+        let pageCount = max(currentPage.chapterPageCount, 1)
+        let canGoPrevChapter = currentChapterIndex > 0
+        let canGoNextChapter = currentChapterIndex < baseChapters.count - 1
+
+        return VStack {
+            Spacer()
+
+            VStack(spacing: 6) {
+                Text("本章进度")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(secondaryForeground)
+
+                HStack(spacing: 12) {
+                    Button {
+                        guard canGoPrevChapter else { return }
+                        goToChapter(currentChapterIndex - 1, pageIndex: 0)
+                    } label: {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 18, weight: .semibold))
+                            .frame(width: 44, height: 44)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!canGoPrevChapter)
+                    .opacity(canGoPrevChapter ? 1 : 0.35)
+
+                    pageProgressSlider(pageCount: pageCount)
+
+                    Button {
+                        guard canGoNextChapter else { return }
+                        goToChapter(currentChapterIndex + 1, pageIndex: 0)
+                    } label: {
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 18, weight: .semibold))
+                            .frame(width: 44, height: 44)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!canGoNextChapter)
+                    .opacity(canGoNextChapter ? 1 : 0.35)
+                }
+            }
+            .foregroundStyle(pageForeground)
+            .padding(.horizontal, 18)
+            .padding(.top, 12)
+            .padding(.bottom, max(safeBottom + 8, 18))
+            .background(
+                Rectangle()
+                    .fill(currentTheme == .night ? Color(red: 0.12, green: 0.12, blue: 0.11) : pageBackground)
+                    .shadow(color: .black.opacity(0.16), radius: 8, x: 0, y: -3)
+            )
+        }
+        .ignoresSafeArea(edges: .bottom)
+    }
+
+    @ViewBuilder
+    private func pageProgressSlider(pageCount: Int) -> some View {
+        if pageCount > 1 {
+            let upperBound = Double(pageCount - 1)
+            let clampedIndex = min(max(currentChapterPageIndex, 0), pageCount - 1)
+            let sliderValue = Binding<Double>(
+                get: { Double(clampedIndex) },
+                set: { newValue in
+                    let next = min(max(Int(newValue.rounded()), 0), pageCount - 1)
+                    if next != currentChapterPageIndex {
+                        currentChapterPageIndex = next
+                    }
+                }
+            )
+            GeometryReader { proxy in
+                Slider(value: sliderValue, in: 0...upperBound, step: 1)
+                    .tint(Color.readerAccent)
+                    .simultaneousGesture(
+                        SpatialTapGesture(coordinateSpace: .local)
+                            .onEnded { event in
+                                guard proxy.size.width > 0 else { return }
+                                let fraction = max(0, min(1, event.location.x / proxy.size.width))
+                                let target = Int((fraction * upperBound).rounded())
+                                let clamped = min(max(target, 0), pageCount - 1)
+                                if clamped != currentChapterPageIndex {
+                                    currentChapterPageIndex = clamped
+                                }
+                            }
+                    )
+            }
+            .frame(height: 32)
+        } else {
+            Capsule()
+                .fill(secondaryForeground.opacity(0.25))
+                .frame(height: 4)
+                .padding(.vertical, 14)
+        }
     }
 
     private func chapterPickerOverlay(pages: [ReaderPageItem], currentPage: ReaderPageItem) -> some View {
