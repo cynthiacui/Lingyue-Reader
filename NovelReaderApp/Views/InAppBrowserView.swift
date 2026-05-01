@@ -257,9 +257,9 @@ struct InAppBrowserView: View {
                 importStatus = nil
                 importResult = BrowserImportResult(
                     message: isReplacing
-                        ? "《\(novel.title)》已替换书架中的旧记录，共 \(novel.chapters.count) 章。打开章节时会联网加载正文。"
+                        ? "《\(novel.title)》已替换书架中的旧记录。打开章节时会联网加载正文。"
                         : inserted
-                        ? "《\(novel.title)》已加入「\(LibraryStore.uncategorizedName)」，共 \(novel.chapters.count) 章。打开章节时会联网加载正文。"
+                        ? "《\(novel.title)》已加入「\(LibraryStore.uncategorizedName)」。打开章节时会联网加载正文。"
                         : "《\(novel.title)》已经在书架中。"
                 )
             } catch {

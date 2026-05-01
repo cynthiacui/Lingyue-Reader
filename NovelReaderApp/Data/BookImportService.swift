@@ -80,8 +80,17 @@ final class BookImportService: Sendable {
     private let maxChapterCount = 2_000
     private let biqugeAPIHosts = ["apiqu.cc", "apige.cc"]
     private let catalogRepairCache = OSAllocatedUnfairLock<[UUID: Bool]>(initialState: [:])
+    private let httpSession: URLSession
 
-    private init() {}
+    private init() {
+        let configuration = URLSessionConfiguration.default
+        configuration.timeoutIntervalForRequest = 20
+        self.httpSession = URLSession(
+            configuration: configuration,
+            delegate: HTTPSUpgradingRedirectDelegate(),
+            delegateQueue: nil
+        )
+    }
 
     func detectBook(html: String, url: URL, pageTitle: String?) -> WebBookCandidate? {
         let metadata = parseMetadata(html: html, url: url, fallbackTitle: pageTitle)
@@ -226,6 +235,12 @@ final class BookImportService: Sendable {
         if isSiteBrandTitle(cachedChapter.title) {
             return false
         }
+        // Reject cached chapters whose body begins with a breadcrumb signature — indicates the
+        // old extractor matched a page-level wrapper (e.g. 52书库's `<div class="content-wrap">`)
+        // instead of the real chapter container.
+        if startsWithBreadcrumb(cachedChapter.content) {
+            return false
+        }
 
         guard let sourceURLString = originalChapter.sourceURLString,
               let sourceURL = URL(string: sourceURLString),
@@ -244,6 +259,40 @@ final class BookImportService: Sendable {
         ]
         let shellHitCount = leakedShellFragments.filter { content.contains($0) }.count
         return shellHitCount < 2
+    }
+
+    private func startsWithBreadcrumb(_ content: String) -> Bool {
+        let lines = content
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        let firstChunk = lines.prefix(5).joined(separator: " ")
+        let breadcrumbSignals = [
+            "52书库 >", "52書庫 >", "半夏小说 >", "半夏小說 >",
+            "笔趣阁 >", "筆趣閣 >", "宙斯小说网 >", "宙斯小說網 >",
+            "同人圈 >", "同人小说网 >", "破万卷 >",
+            "首页 >", "首頁 >"
+        ]
+        if breadcrumbSignals.contains(where: { firstChunk.contains($0) }) { return true }
+
+        // Detect a nav-menu-style body (the old 宙斯小说 bug captured the menubar — many
+        // short single-token lines like 最新入库 / 宙斯小说网 / 繁体版 / 都市 / 言情 / 仙侠).
+        // If the cached body opens with several very short lines AND the total is small, it's
+        // almost certainly menu cruft, not a chapter.
+        if !lines.isEmpty {
+            let head = lines.prefix(8)
+            let shortHeadCount = head.filter { $0.count <= 8 }.count
+            let cleanedTotal = lines.joined(separator: "").count
+            if shortHeadCount >= 5 && cleanedTotal < 400 { return true }
+        }
+
+        let menuSignatures = [
+            "宙斯小说网", "宙斯小說網", "最新入库", "最新入庫", "繁體版", "繁体版",
+            "玄幻列表", "都市言情列表"
+        ]
+        if menuSignatures.contains(where: { firstChunk.contains($0) }) { return true }
+
+        return false
     }
 
     private func isSiteBrandTitle(_ title: String) -> Bool {
@@ -430,40 +479,93 @@ final class BookImportService: Sendable {
 
     private func bestChapterLinks(from html: String, sourceURL: URL) async throws -> [ChapterLink] {
         let sourceBookID = authoritativeBookID(in: html, url: sourceURL)
-        var candidateLists = [
-            await chapterLinksAcrossPagination(
-                startingHTML: html,
+        let primaryLinks = await chapterLinksAcrossPagination(
+            startingHTML: html,
+            startingURL: sourceURL,
+            sourceBookID: sourceBookID
+        )
+
+        // Always fetch the canonical server HTML in parallel and treat it as another candidate.
+        // WKWebView's outerHTML can serialize attributes differently or omit late-rendered DOM
+        // (e.g. 破万卷小说 sometimes returns a snapshot missing the chapter list). The candidate
+        // with the most chapters wins via chapterListScore below.
+        var candidateLists = [primaryLinks]
+        var freshLinks: [ChapterLink] = []
+        var freshHTMLForCatalog: String?
+        if let freshHTML = try? await fetchHTML(from: sourceURL) {
+            freshHTMLForCatalog = freshHTML
+            freshLinks = await chapterLinksAcrossPagination(
+                startingHTML: freshHTML,
                 startingURL: sourceURL,
                 sourceBookID: sourceBookID
             )
-        ]
+            if !freshLinks.isEmpty {
+                candidateLists.append(freshLinks)
+            }
+#if DEBUG
+            print("[ChapterImport] URLSession canonical fetch -> \(freshLinks.count) chapters")
+#endif
+        }
 
         let apiLinks = await biqugeAPICatalogLinks(for: sourceURL, sourceBookID: sourceBookID)
         if !apiLinks.isEmpty {
             candidateLists.append(apiLinks)
         }
 
-        for catalogURL in findCatalogURLs(in: html, baseURL: sourceURL, sourceBookID: sourceBookID).prefix(8) {
-            guard catalogURL != sourceURL else { continue }
+        // Probe catalog URLs unless the source page already gave us a contiguous chapter list
+        // starting at 第1章. For 努努书坊 / 破万卷小说 / 黄金屋中文 the book detail page lists every
+        // chapter inline, so probing wastes HTTP requests. For 宙斯小说 the book detail page lists
+        // only the latest 30 chapters — count is high but the list starts at 第330章, so we still
+        // need /chapter/<id>.html.
+        let alreadyComplete = looksContiguousFromOne(primaryLinks)
+            || looksContiguousFromOne(freshLinks)
+            || looksContiguousFromOne(apiLinks)
 
-            do {
-                let catalogHTML = try await fetchHTML(from: catalogURL)
-                let links = await chapterLinksAcrossPagination(
-                    startingHTML: catalogHTML,
-                    startingURL: catalogURL,
-                    sourceBookID: sourceBookID
-                )
-                if !links.isEmpty {
-                    candidateLists.append(links)
+#if DEBUG
+        print("[ChapterImport] source=\(sourceURL.absoluteString) primary=\(primaryLinks.count) fresh=\(freshLinks.count) api=\(apiLinks.count) alreadyComplete=\(alreadyComplete)")
+#endif
+
+        if !alreadyComplete {
+            let catalogSourceHTML = freshHTMLForCatalog ?? html
+            for catalogURL in findCatalogURLs(in: catalogSourceHTML, baseURL: sourceURL, sourceBookID: sourceBookID).prefix(8) {
+                guard catalogURL != sourceURL else { continue }
+
+                do {
+                    let catalogHTML = try await fetchHTML(from: catalogURL)
+                    let links = await chapterLinksAcrossPagination(
+                        startingHTML: catalogHTML,
+                        startingURL: catalogURL,
+                        sourceBookID: sourceBookID
+                    )
+                    if !links.isEmpty {
+                        candidateLists.append(links)
+#if DEBUG
+                        print("[ChapterImport] catalog \(catalogURL.absoluteString) -> \(links.count) chapters")
+#endif
+                        // Stop probing once a catalog gives us the full sequence.
+                        if looksContiguousFromOne(links) {
+                            break
+                        }
+                    }
+                } catch {
+                    continue
                 }
-            } catch {
-                continue
             }
         }
 
         return candidateLists.max { lhs, rhs in
             chapterListScore(lhs) < chapterListScore(rhs)
         } ?? []
+    }
+
+    /// True when the chapter list starts at 第1章 with at least ~90% coverage of the 1..max range.
+    /// Used to decide whether the source page already has the full catalog inline.
+    private func looksContiguousFromOne(_ links: [ChapterLink]) -> Bool {
+        let numbers = links.compactMap { chapterNumber(from: $0.title) }
+        guard numbers.count >= 5 else { return false }
+        let sorted = Set(numbers).sorted()
+        guard sorted.first == 1, let max = sorted.last else { return false }
+        return sorted.count >= Int(Double(max) * 0.9)
     }
 
     /// Walks `下一页 / 下一頁 / next` links from the given catalog page, fetching each subsequent
@@ -583,10 +685,11 @@ final class BookImportService: Sendable {
                 || text.contains("查看")
                 || text.contains("更多")
                 || text.contains("完整")
+            let listLooksLikeCategory = lowerHref.range(of: #"/list/[^0-9]"#, options: .regularExpression) != nil
             let looksLikeCatalogURL = lowerHref.contains("chapter")
                 || lowerHref.contains("catalog")
                 || lowerHref.contains("dir")
-                || lowerHref.contains("list")
+                || (lowerHref.contains("list") && !listLooksLikeCategory)
                 || lowerHref.contains("/index.html")
 
             guard looksLikeCatalogText || looksLikeCatalogURL else { continue }
@@ -735,7 +838,21 @@ final class BookImportService: Sendable {
                 ?? firstMatch(#"<h1[^>]*>([\s\S]*?)</h1>"#, in: html)
                 ?? link.title
         )
-        let title = parsedTitle.isEmpty ? link.title : parsedTitle
+        // If the parsed h1/h2 looks like just the book name (no 第N章/节/页/回 marker)
+        // but the catalog gave us a real chapter label (link.title has a marker), prefer
+        // the catalog one. 52书库 puts "<book name>(N)" in the chapter <h1>, but the catalog
+        // links read "第N页", which is what the user actually wants to see.
+        let chapterMarkerRegex = #"第\s*[\d一二三四五六七八九十百千万零〇两]+\s*[章节節回卷页頁]"#
+        let parsedHasMarker = parsedTitle.range(of: chapterMarkerRegex, options: .regularExpression) != nil
+        let linkHasMarker = link.title.range(of: chapterMarkerRegex, options: .regularExpression) != nil
+        let title: String
+        if !parsedHasMarker, linkHasMarker {
+            title = link.title
+        } else if parsedTitle.isEmpty {
+            title = link.title
+        } else {
+            title = parsedTitle
+        }
         let bodyHTML: String
         if allowDynamicTextEndpoint {
             bodyHTML = try await dynamicChapterBodyHTML(from: html, chapterURL: link.url)
@@ -845,7 +962,7 @@ final class BookImportService: Sendable {
     }
 
     private func chapterBodyHTML(from html: String) -> String {
-        let containerKeywords = "chaptercontent|chapter-content|chapter_content|read-content|readcontent|read_content|read_chapter|read_chapterdetail|bookcontent|booktxt|textcontent|article-content|articlecontent|nr1|txtnav"
+        let containerKeywords = "chaptercontent|chapter-content|chapter_content|read-content|readcontent|read_content|read_chapter|read_chapterdetail|bookcontent|booktxt|textcontent|article-content|articlecontent|nr1|txtnav|mycontent"
 
         // Sibling-bound capture (txtnav … page1) stays a regex — no balanced walking needed.
         if let match = firstMatch(
@@ -858,13 +975,28 @@ final class BookImportService: Sendable {
         // Find the opening tag, then walk balanced to find the matching close.
         // Non-greedy regex like ([\s\S]*?)</div> stops at the FIRST </div>, which can
         // be a nested noise wrapper (e.g., 努努书坊's <div class="posterror">).
+        //
+        // Specific content selectors come first. Generic alternatives like `class*="content"`
+        // are intentionally LAST because page wrappers like 52书库's `<div class="content-wrap">`
+        // and `<div class="content contentmargin">` share the substring and would steal the match
+        // away from the precise chapter container.
         let containers: [(String, String)] = [
-            (#"<div[^>]+style=["'][^"']*(?:word-wrap:\s*break-word|text-indent:\s*2em|width:\s*700px)[^"']*["'][^>]*>"#, "div"),
+            // 1. Inline-styled chapter body (黄金屋中文 / 宙斯小说). Drop the standalone `width: 700px`
+            //    signal — 宙斯小说's header bar uses `position: absolute; ...; width: 700px;`.
+            (#"<div[^>]+style=["'][^"']*(?:word-wrap:\s*break-word|text-indent:\s*2em)[^"']*["'][^>]*>"#, "div"),
+            // 2. Specific id/class selectors.
             (#"<div[^>]+id=["']content["'][^>]*>"#, "div"),
             (#"<div[^>]+id=["']chaptercontent["'][^>]*>"#, "div"),
-            (#"<div[^>]+(?:id|class)\s*=\s*["'][^"']*(?:\#(containerKeywords)|content|txt)[^"']*["'][^>]*>"#, "div"),
+            // 3. Article/Section with a content-specific class — must come BEFORE the generic
+            //    div-with-content selector so 52书库's `<article class="article-content" id="nr1">`
+            //    wins over its outer `<div class="content contentmargin">`.
             (#"<article[^>]+(?:id|class)\s*=\s*["'][^"']*(?:\#(containerKeywords))[^"']*["'][^>]*>"#, "article"),
-            (#"<section[^>]+(?:id|class)\s*=\s*["'][^"']*(?:\#(containerKeywords)|content|chapter|read|article)[^"']*["'][^>]*>"#, "section"),
+            (#"<section[^>]+(?:id|class)\s*=\s*["'][^"']*(?:\#(containerKeywords))[^"']*["'][^>]*>"#, "section"),
+            // 4. Div with a specific keyword (no loose `content|txt` fallback that would catch wrappers).
+            (#"<div[^>]+(?:id|class)\s*=\s*["'][^"']*(?:\#(containerKeywords))[^"']*["'][^>]*>"#, "div"),
+            // 5. Generic fallbacks — match wider classes, but only if nothing more specific landed.
+            (#"<div[^>]+(?:id|class)\s*=\s*["'][^"']*(?:acontent|contenttxt|chapter)[^"']*["'][^>]*>"#, "div"),
+            (#"<section[^>]+(?:id|class)\s*=\s*["'][^"']*(?:content|chapter|read|article)[^"']*["'][^>]*>"#, "section"),
             (#"<main[^>]*>"#, "main"),
             (#"<article[^>]*>"#, "article")
         ]
@@ -980,13 +1112,26 @@ final class BookImportService: Sendable {
     }
 
     private func fetchHTML(from url: URL) async throws -> String {
-        var request = URLRequest(url: url)
+        // App Transport Security blocks plain http for URLSession even though WKWebView is allowed
+        // arbitrary loads in web content. Several sources (e.g. 破万卷小说) issue 301s that drop
+        // from https to http, leaving us with an http URL we can't fetch directly. Upgrade the
+        // scheme back to https — every source we've encountered serves both schemes equivalently.
+        let secureURL: URL = {
+            guard url.scheme?.lowercased() == "http",
+                  var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+                return url
+            }
+            components.scheme = "https"
+            return components.url ?? url
+        }()
+
+        var request = URLRequest(url: secureURL)
         request.timeoutInterval = 20
         request.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1", forHTTPHeaderField: "User-Agent")
         request.setValue("text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", forHTTPHeaderField: "Accept")
         request.setValue("zh-CN,zh-Hans;q=0.9,zh;q=0.8,en;q=0.6", forHTTPHeaderField: "Accept-Language")
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await httpSession.data(for: request)
         if let httpResponse = response as? HTTPURLResponse,
            !(200..<400).contains(httpResponse.statusCode) {
             throw WebBookImportError.badStatus(httpResponse.statusCode)
@@ -1071,7 +1216,34 @@ final class BookImportService: Sendable {
                 return !blockedFragments.contains { line.localizedCaseInsensitiveContains($0) }
             }
 
-        return lines.joined(separator: "\n\n")
+        return stripLeadingBookMetadata(lines).joined(separator: "\n\n")
+    }
+
+    /// Strips leading book-metadata noise that some sources wedge before the actual chapter
+    /// content — e.g. 破万卷小说 prefaces every chapter page with the book title, "作者：xxx",
+    /// "简介：" and a few summary paragraphs before the real "第N章 ..." heading. If we see
+    /// metadata markers (作者[:：] / 简介[:：]) within the first ~12 lines AND a chapter heading
+    /// appears later, drop everything up through that first chapter heading.
+    private func stripLeadingBookMetadata(_ lines: [String]) -> [String] {
+        guard !lines.isEmpty else { return lines }
+        let prefixWindow = lines.prefix(12)
+        let metadataPattern = #"^(?:作者|簡介|简介|內容簡介|内容简介)\s*[:：]"#
+        let hasMetadata = prefixWindow.contains { line in
+            line.range(of: metadataPattern, options: .regularExpression) != nil
+        }
+        guard hasMetadata else { return lines }
+
+        let chapterMarker = #"^第\s*[\d一二三四五六七八九十百千万零〇两]+\s*[章节節回卷页頁]"#
+        guard let firstMarkerIndex = lines.firstIndex(where: {
+            $0.range(of: chapterMarker, options: .regularExpression) != nil
+        }) else {
+            return lines
+        }
+
+        // Drop everything up to AND including the first chapter heading — the chapter title is
+        // already prepended separately by chapterFromHTML.
+        let trimmed = Array(lines.suffix(from: lines.index(after: firstMarkerIndex)))
+        return trimmed.isEmpty ? lines : trimmed
     }
 
     private func htmlToText(_ html: String) -> String {
@@ -1136,7 +1308,14 @@ final class BookImportService: Sendable {
         } else {
             path = rawPath
         }
+        // Order matters: more specific patterns must come first. The biquge-style
+        // /(?:htm|html|index|kan|look)/(\d+)... patterns aren't anchored to start, so on a
+        // chapter URL like /tongren/20104/index/1.html they would otherwise match the trailing
+        // /index/1.html and capture "1" — the chapter number — instead of the book id "20104".
         let patterns = [
+            // 破万卷小说: /<category>/<bookid> (book detail) and /<category>/<bookid>/index/<n>.html (chapter)
+            #"^/[a-z]+\d*/(\d+)/index/\d+\.html?$"#,
+            #"^/[a-z]+\d*/(\d+)/?$"#,
             #"/book/(\d+)(?:/index)?\.html$"#,
             #"/book/(\d+)/\d+(?:\.html?)?$"#,
             #"/book/(\d+)/?$"#,
@@ -1412,6 +1591,34 @@ private extension String.Encoding {
             CFStringEncoding(CFStringEncodings.big5.rawValue)
         )
     )
+}
+
+/// URLSession delegate that rewrites http://… redirect targets to https://… so App Transport
+/// Security doesn't block sites that 301 from https to http (e.g. 破万卷小说).
+final class HTTPSUpgradingRedirectDelegate: NSObject, URLSessionTaskDelegate, Sendable {
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest,
+        completionHandler: @escaping (URLRequest?) -> Void
+    ) {
+        guard let url = request.url,
+              url.scheme?.lowercased() == "http",
+              var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        else {
+            completionHandler(request)
+            return
+        }
+        components.scheme = "https"
+        guard let upgraded = components.url else {
+            completionHandler(request)
+            return
+        }
+        var rewritten = request
+        rewritten.url = upgraded
+        completionHandler(rewritten)
+    }
 }
 
 actor ChapterContentCache {

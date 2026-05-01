@@ -25,8 +25,8 @@ final class WebRenderingService: NSObject {
 
     func renderHTML(
         at url: URL,
-        settleAfter: TimeInterval = 1.5,
-        timeout: TimeInterval = 12
+        settleAfter: TimeInterval = 0.8,
+        timeout: TimeInterval = 6
     ) async -> String? {
         let previous = serializer
         let work = Task<String?, Never> { @MainActor [weak self] in
