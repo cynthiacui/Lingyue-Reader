@@ -19,6 +19,10 @@ struct LibraryView: View {
     @State private var categoryEditBook: Novel?
     @State private var newBookCategoryName = ""
     @State private var activeSwipeID: UUID?
+    @State private var expandedCategoryID: UUID?
+    @State private var bookToOpen: Novel?
+    @State private var isManagingCategories = false
+    @Namespace private var stackNamespace
 
     private var horizontalMargin: CGFloat {
         if dynamicTypeSize.isAccessibilitySize { return 12 }
@@ -59,6 +63,31 @@ struct LibraryView: View {
             .contentMargins(.horizontal, horizontalMargin, for: .scrollContent)
             .safeAreaPadding(.bottom, 12)
 
+            if let expandedCategory = libraryStore.categories.first(where: { $0.id == expandedCategoryID }) {
+                ExpandedCategoryOverlay(
+                    category: expandedCategory,
+                    namespace: stackNamespace,
+                    onDismiss: collapseExpandedCategory,
+                    onSelect: { novel in
+                        collapseExpandedCategory()
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
+                            bookToOpen = novel
+                        }
+                    },
+                    onLongPress: { novel in
+                        collapseExpandedCategory()
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
+                            presentCategoryEditor(for: novel)
+                        }
+                    },
+                    onDelete: { novel in
+                        deleteFromCategories(novel)
+                    },
+                    onClearDownloadData: clearDownloadedData
+                )
+                .zIndex(10)
+            }
+
             if let categoryEditBook {
                 categoryEditOverlay(for: categoryEditBook)
                     .transition(.opacity.combined(with: .scale(scale: 0.96)))
@@ -78,22 +107,22 @@ struct LibraryView: View {
                 .zIndex(12)
             }
         }
+        .navigationDestination(item: $bookToOpen) { novel in
+            ReaderView(novel: novel)
+        }
+        .sheet(isPresented: $isManagingCategories) {
+            NavigationStack {
+                CategoryManagementView()
+                    .environmentObject(libraryStore)
+            }
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
+        }
+        .animation(.spring(response: 0.42, dampingFraction: 0.82), value: expandedCategoryID)
         .animation(.easeInOut(duration: 0.18), value: categoryEditBook?.id)
         .animation(.easeInOut(duration: 0.18), value: isAddingCategory)
         .navigationTitle("书架")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    closeActiveSwipe()
-                    newCategoryName = ""
-                    isAddingCategory = true
-                } label: {
-                    Image(systemName: "plus")
-                }
-                .accessibilityLabel("新建分类")
-            }
-        }
         .onChange(of: categoryEditBook?.id) { _, _ in closeActiveSwipe() }
         .onChange(of: isAddingCategory) { _, _ in closeActiveSwipe() }
     }
@@ -137,33 +166,65 @@ struct LibraryView: View {
 
                 Spacer()
 
-                Button {
-                    closeActiveSwipe()
-                    newCategoryName = ""
-                    isAddingCategory = true
+                Menu {
+                    Button {
+                        closeActiveSwipe()
+                        newCategoryName = ""
+                        isAddingCategory = true
+                    } label: {
+                        Label("新建分类", systemImage: "plus")
+                    }
+
+                    Button {
+                        closeActiveSwipe()
+                        isManagingCategories = true
+                    } label: {
+                        Label("管理分类", systemImage: "slider.horizontal.3")
+                    }
+                    .disabled(libraryStore.categories.isEmpty)
                 } label: {
-                    Image(systemName: "plus.circle.fill")
+                    Image(systemName: "ellipsis.circle.fill")
                         .font(.system(size: 17, weight: .semibold))
                         .foregroundStyle(Color.readerAccent)
                 }
-                .accessibilityLabel("新建分类")
+                .accessibilityLabel("分类操作")
             }
 
             if libraryStore.categories.isEmpty {
                 EmptyCategoryCard()
             } else {
-                VStack(alignment: .leading, spacing: 14) {
+                VStack(alignment: .leading, spacing: 22) {
                     ForEach(libraryStore.categories) { category in
-                        CategoryShelf(
+                        StackedCategoryShelf(
                             category: category,
-                            categories: $libraryStore.categories,
-                            activeSwipeID: $activeSwipeID,
-                            onBookLongPress: presentCategoryEditor
+                            namespace: stackNamespace,
+                            isExpanded: expandedCategoryID == category.id,
+                            onTopTap: { novel in
+                                bookToOpen = novel
+                            },
+                            onExpand: {
+                                expandedCategoryID = category.id
+                            },
+                            onMoveCategory: presentCategoryEditor,
+                            onClearDownloadData: clearDownloadedData,
+                            onDelete: deleteFromCategories
                         )
                     }
                 }
             }
         }
+    }
+
+    private func collapseExpandedCategory() {
+        expandedCategoryID = nil
+    }
+
+    private func deleteFromCategories(_ novel: Novel) {
+        var updatedCategories = libraryStore.categories
+        for index in updatedCategories.indices {
+            updatedCategories[index].novels.removeAll { $0.id == novel.id }
+        }
+        libraryStore.categories = updatedCategories
     }
 
     private func categoryEditOverlay(for novel: Novel) -> some View {
@@ -744,6 +805,255 @@ private struct CompactReadingCard: View {
     }
 }
 
+private struct StackedCategoryShelf: View {
+    let category: LibraryCategory
+    let namespace: Namespace.ID
+    let isExpanded: Bool
+    let onTopTap: (Novel) -> Void
+    let onExpand: () -> Void
+    let onMoveCategory: (Novel) -> Void
+    let onClearDownloadData: (Novel) -> Void
+    let onDelete: (Novel) -> Void
+
+    private let cardHeight: CGFloat = 88
+    private let peekOffset: CGFloat = 22
+    private let maxVisible = 5
+
+    private var sortedNovels: [Novel] {
+        category.novels.sorted { lhs, rhs in
+            let lhsOpened = lhs.lastOpenedAt ?? .distantPast
+            let rhsOpened = rhs.lastOpenedAt ?? .distantPast
+            if lhsOpened != rhsOpened {
+                return lhsOpened > rhsOpened
+            }
+            return lhs.readMinutes > rhs.readMinutes
+        }
+    }
+
+    var body: some View {
+        let visible = Array(sortedNovels.prefix(maxVisible))
+
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(category.name)
+                    .font(.system(size: 16, weight: .bold, design: .rounded))
+                    .foregroundStyle(Color.readerInk)
+                    .lineLimit(1)
+
+                Spacer()
+
+                Text("\(category.novels.count) 本")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(Color.readerMuted)
+            }
+
+            if visible.isEmpty {
+                EmptyCategoryRow()
+            } else {
+                // Negative spacing makes the cards overlap *in layout* — not just visually —
+                // so SwiftUI's hit-testing routes a tap on the visible peek sliver to the
+                // correct card (.offset() alone keeps every card at y=0 in the layout system,
+                // so taps always go to the topmost zIndex card no matter where you actually
+                // press).
+                VStack(spacing: -(cardHeight - peekOffset)) {
+                    ForEach(Array(visible.enumerated()), id: \.element.id) { index, novel in
+                        StackBookCard(novel: novel)
+                            .frame(height: cardHeight)
+                            .matchedGeometryEffect(id: novel.id, in: namespace, isSource: !isExpanded)
+                            .scaleEffect(1 - CGFloat(index) * 0.012, anchor: .top)
+                            .zIndex(Double(maxVisible - index))
+                            .opacity(isExpanded ? 0 : 1)
+                            .allowsHitTesting(!isExpanded)
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                if index == 0 {
+                                    onTopTap(novel)
+                                } else {
+                                    onExpand()
+                                }
+                            }
+                            .contextMenu {
+                                bookContextMenuButtons(for: novel)
+                            }
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func bookContextMenuButtons(for novel: Novel) -> some View {
+        Button {
+            onMoveCategory(novel)
+        } label: {
+            Label("移动到分类", systemImage: "folder")
+        }
+
+        Button {
+            onClearDownloadData(novel)
+        } label: {
+            Label("清缓存", systemImage: "arrow.down.circle")
+        }
+
+        Button(role: .destructive) {
+            onDelete(novel)
+        } label: {
+            Label("删除", systemImage: "trash")
+        }
+    }
+}
+
+private struct StackBookCard: View {
+    let novel: Novel
+    @AppStorage("reader.usesTraditionalChinese") private var usesTraditionalChinese = false
+
+    private var metadataLine: String {
+        let author = displayed(novel.author)
+        guard let source = BookSourceRegistry.displayName(for: novel.sourceURLString) else {
+            return author
+        }
+        return "\(author) · \(displayed(source))"
+    }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            BookCover(novel: novel, width: 48, height: 68)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(displayed(novel.title))
+                    .font(.system(size: 15, weight: .semibold, design: .rounded))
+                    .foregroundStyle(Color.readerInk)
+                    .lineLimit(1)
+
+                Text(metadataLine)
+                    .font(.system(size: 12))
+                    .foregroundStyle(Color.readerMuted)
+                    .lineLimit(1)
+
+                Text(displayed(novel.lastChapter))
+                    .font(.system(size: 12, design: .serif))
+                    .foregroundStyle(Color.readerMuted)
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 6)
+
+            Text("\(Int(novel.progress * 100))%")
+                .font(.system(size: 12, weight: .bold, design: .rounded))
+                .foregroundStyle(Color.readerAccent)
+                .fixedSize(horizontal: true, vertical: false)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.readerSurface)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .shadow(color: .black.opacity(0.10), radius: 8, x: 0, y: 4)
+    }
+
+    private func displayed(_ text: String) -> String {
+        ChineseTextConverter.display(text, usesTraditionalChinese: usesTraditionalChinese)
+    }
+}
+
+private struct ExpandedCategoryOverlay: View {
+    let category: LibraryCategory
+    let namespace: Namespace.ID
+    let onDismiss: () -> Void
+    let onSelect: (Novel) -> Void
+    let onLongPress: (Novel) -> Void
+    let onDelete: (Novel) -> Void
+    let onClearDownloadData: (Novel) -> Void
+
+    private var sortedNovels: [Novel] {
+        category.novels.sorted { lhs, rhs in
+            let lhsOpened = lhs.lastOpenedAt ?? .distantPast
+            let rhsOpened = rhs.lastOpenedAt ?? .distantPast
+            if lhsOpened != rhsOpened {
+                return lhsOpened > rhsOpened
+            }
+            return lhs.readMinutes > rhs.readMinutes
+        }
+    }
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.45)
+                .ignoresSafeArea()
+                .contentShape(Rectangle())
+                .onTapGesture { onDismiss() }
+                .transition(.opacity)
+
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .firstTextBaseline) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(category.name)
+                            .font(.system(size: 20, weight: .bold, design: .rounded))
+                            .foregroundStyle(Color.readerInk)
+                        Text("\(category.novels.count) 本")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(Color.readerMuted)
+                    }
+
+                    Spacer()
+
+                    Button {
+                        onDismiss()
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 22, weight: .semibold))
+                            .foregroundStyle(Color.readerMuted)
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.horizontal, 18)
+                .padding(.top, 16)
+
+                ScrollView {
+                    LazyVStack(spacing: 8) {
+                        ForEach(sortedNovels) { novel in
+                            StackBookCard(novel: novel)
+                                .matchedGeometryEffect(id: novel.id, in: namespace, isSource: true)
+                                .contentShape(Rectangle())
+                                .onTapGesture {
+                                    onSelect(novel)
+                                }
+                                .contextMenu {
+                                    Button {
+                                        onLongPress(novel)
+                                    } label: {
+                                        Label("移动到分类", systemImage: "folder")
+                                    }
+
+                                    Button {
+                                        onClearDownloadData(novel)
+                                    } label: {
+                                        Label("清缓存", systemImage: "arrow.down.circle")
+                                    }
+
+                                    Button(role: .destructive) {
+                                        onDelete(novel)
+                                    } label: {
+                                        Label("删除", systemImage: "trash")
+                                    }
+                                }
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .background(Color.readerBackground)
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .shadow(color: .black.opacity(0.18), radius: 30, x: 0, y: 14)
+            .padding(.horizontal, 16)
+            .padding(.top, 60)
+            .padding(.bottom, 32)
+        }
+    }
+}
+
 private struct CategoryShelf: View {
     let category: LibraryCategory
     @Binding var categories: [LibraryCategory]
@@ -1064,6 +1374,111 @@ private struct CategoryDetailView: View {
         Task {
             await ChapterContentCache.shared.clearCache(for: novel)
         }
+    }
+}
+
+private struct CategoryManagementView: View {
+    @EnvironmentObject private var libraryStore: LibraryStore
+    @AppStorage("reader.usesTraditionalChinese") private var usesTraditionalChinese = false
+    @Environment(\.dismiss) private var dismiss
+    @State private var pendingDeletion: LibraryCategory?
+
+    var body: some View {
+        List {
+            ForEach(libraryStore.categories) { category in
+                HStack(spacing: 12) {
+                    Image(systemName: "folder.fill")
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(Color.readerAccent)
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(displayed(category.name))
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(Color.readerInk)
+                            .lineLimit(1)
+
+                        Text("\(category.novels.count) 本")
+                            .font(.system(size: 12))
+                            .foregroundStyle(Color.readerMuted)
+                    }
+
+                    Spacer()
+
+                    // Explicit, always-visible delete control. No swipe needed — taps the
+                    // trash icon to bring up the confirmation alert.
+                    Button {
+                        pendingDeletion = category
+                    } label: {
+                        Image(systemName: "trash.circle.fill")
+                            .font(.system(size: 22))
+                            .foregroundStyle(.red, Color.red.opacity(0.12))
+                            .symbolRenderingMode(.palette)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("删除分类")
+                }
+                .padding(.vertical, 4)
+            }
+            .onMove { source, destination in
+                libraryStore.categories.move(fromOffsets: source, toOffset: destination)
+            }
+        }
+        .listStyle(.insetGrouped)
+        .environment(\.editMode, .constant(.active))
+        .navigationTitle("管理分类")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("完成") { dismiss() }
+                    .font(.body.weight(.semibold))
+            }
+        }
+        .alert(
+            "删除分类",
+            isPresented: Binding(
+                get: { pendingDeletion != nil },
+                set: { if !$0 { pendingDeletion = nil } }
+            ),
+            presenting: pendingDeletion
+        ) { category in
+            Button("删除", role: .destructive) {
+                deleteCategory(category)
+                pendingDeletion = nil
+            }
+            Button("取消", role: .cancel) {
+                pendingDeletion = nil
+            }
+        } message: { category in
+            if category.novels.isEmpty {
+                Text("确定要删除「\(displayed(category.name))」吗？")
+            } else {
+                Text("「\(displayed(category.name))」中包含 \(category.novels.count) 本书，删除分类会同时删除其中的全部书籍，且无法恢复。")
+            }
+        }
+        .overlay {
+            if libraryStore.categories.isEmpty {
+                Text("还没有分类")
+                    .font(.system(size: 14))
+                    .foregroundStyle(Color.readerMuted)
+            }
+        }
+    }
+
+    private func deleteCategory(_ category: LibraryCategory) {
+        let removedNovels = category.novels
+        libraryStore.categories.removeAll { $0.id == category.id }
+
+        // Books inside the deleted category are removed with it. Wipe their cached chapter
+        // content too — orphaned cache entries are wasted disk.
+        Task {
+            for novel in removedNovels {
+                await ChapterContentCache.shared.clearCache(for: novel)
+            }
+        }
+    }
+
+    private func displayed(_ text: String) -> String {
+        ChineseTextConverter.display(text, usesTraditionalChinese: usesTraditionalChinese)
     }
 }
 
