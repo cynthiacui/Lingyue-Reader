@@ -137,17 +137,19 @@ struct InAppBrowserView: View {
         }
 
         return CustomAlertView(
-            type: .warning,
-            title: "替换已有书籍",
+            type: .info,
+            title: "书籍已存在",
             bookTitle: candidate.title,
-            message: "已在书架中，替换会用当前网页重新导入信息和章节目录。",
-            primaryButton: .destructive("替换") {
+            message: "书架里已经有这本书啦。\n要用当前页面的内容更新一下吗？",
+            primaryButton: .primary("更新书籍") {
                 withAnimation(ModalStyle.presentationAnimation) {
                     replacementCandidate = nil
                 }
                 promptForCategory(candidate, isReplacing: true)
             },
-            secondaryButton: .secondary("取消", action: dismiss),
+            secondaryButton: .secondary("先不了", action: dismiss),
+            iconOverride: "books.vertical.circle.fill",
+            tintOverride: Color.readerAccent,
             onDismiss: dismiss
         )
     }

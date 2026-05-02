@@ -52,6 +52,8 @@ struct CustomAlertView: View {
     let secondaryButton: CustomAlertButton?
     let onDismiss: (() -> Void)?
     let showsIcon: Bool
+    let iconOverride: String?
+    let tintOverride: Color?
 
     @ScaledMetric(relativeTo: .title2) private var iconSize: CGFloat = 30
 
@@ -63,6 +65,8 @@ struct CustomAlertView: View {
         primaryButton: CustomAlertButton,
         secondaryButton: CustomAlertButton? = nil,
         showsIcon: Bool = true,
+        iconOverride: String? = nil,
+        tintOverride: Color? = nil,
         onDismiss: (() -> Void)? = nil
     ) {
         self.type = type
@@ -72,8 +76,13 @@ struct CustomAlertView: View {
         self.primaryButton = primaryButton
         self.secondaryButton = secondaryButton
         self.showsIcon = showsIcon
+        self.iconOverride = iconOverride
+        self.tintOverride = tintOverride
         self.onDismiss = onDismiss
     }
+
+    private var resolvedIcon: String { iconOverride ?? type.iconName }
+    private var resolvedTint: Color { tintOverride ?? type.tintColor }
 
     static var presentationAnimation: Animation { ModalStyle.presentationAnimation }
     static var transition: AnyTransition { ModalStyle.transition }
@@ -93,16 +102,16 @@ struct CustomAlertView: View {
     }
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 12) {
             if showsIcon {
-                Image(systemName: type.iconName)
+                Image(systemName: resolvedIcon)
                     .font(.system(size: iconSize, weight: .semibold))
-                    .foregroundStyle(type.tintColor)
+                    .foregroundStyle(resolvedTint)
                     .symbolRenderingMode(.hierarchical)
                     .accessibilityHidden(true)
             }
 
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 10) {
                 Text(title)
                     .font(.headline)
                     .fontWeight(.bold)

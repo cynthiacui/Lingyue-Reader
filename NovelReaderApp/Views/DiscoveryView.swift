@@ -173,6 +173,7 @@ struct DiscoveryView: View {
                     .frame(width: dynamicTypeSize.isAccessibilitySize ? 150 : 172, alignment: .trailing)
             }
             .padding(.vertical, 14)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }
