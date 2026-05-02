@@ -1,0 +1,194 @@
+import SwiftUI
+
+enum ModalStyle {
+    static let presentationAnimation: Animation = .spring(response: 0.42, dampingFraction: 0.84)
+
+    static let transition: AnyTransition = .asymmetric(
+        insertion: .scale(scale: 0.95).combined(with: .opacity),
+        removal: .scale(scale: 0.96).combined(with: .opacity)
+    )
+}
+
+struct ModalContainer<Content: View>: View {
+    let dismissOnTapOutside: Bool
+    let onDismiss: () -> Void
+    let content: Content
+
+    init(
+        dismissOnTapOutside: Bool = true,
+        onDismiss: @escaping () -> Void = {},
+        @ViewBuilder content: () -> Content
+    ) {
+        self.dismissOnTapOutside = dismissOnTapOutside
+        self.onDismiss = onDismiss
+        self.content = content()
+    }
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.40)
+                .ignoresSafeArea()
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    if dismissOnTapOutside { onDismiss() }
+                }
+                .accessibilityHidden(true)
+
+            content
+                .padding(.horizontal, 24)
+        }
+        .accessibilityAddTraits(.isModal)
+    }
+}
+
+struct ModalCard<Content: View>: View {
+    var maxWidth: CGFloat = 360
+    var horizontalPadding: CGFloat = 22
+    var verticalPadding: CGFloat = 22
+    var cornerRadius: CGFloat = 22
+    let content: Content
+
+    @Environment(\.colorScheme) private var colorScheme
+
+    init(
+        maxWidth: CGFloat = 360,
+        horizontalPadding: CGFloat = 22,
+        verticalPadding: CGFloat = 22,
+        cornerRadius: CGFloat = 22,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.maxWidth = maxWidth
+        self.horizontalPadding = horizontalPadding
+        self.verticalPadding = verticalPadding
+        self.cornerRadius = cornerRadius
+        self.content = content()
+    }
+
+    var body: some View {
+        content
+            .padding(.horizontal, horizontalPadding)
+            .padding(.vertical, verticalPadding)
+            .frame(maxWidth: maxWidth, alignment: .leading)
+            .background(cardBackground)
+            .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .stroke(
+                        Color.primary.opacity(colorScheme == .dark ? 0.10 : 0.05),
+                        lineWidth: 1
+                    )
+            }
+            .shadow(
+                color: Color.black.opacity(colorScheme == .dark ? 0.40 : 0.14),
+                radius: 24, x: 0, y: 12
+            )
+    }
+
+    private var cardBackground: some View {
+        ZStack {
+            Rectangle()
+                .fill(.regularMaterial)
+
+            Color.readerSurface.opacity(colorScheme == .dark ? 0.0 : 0.32)
+
+            LinearGradient(
+                colors: [
+                    Color.white.opacity(colorScheme == .dark ? 0.06 : 0.20),
+                    Color.white.opacity(0.0)
+                ],
+                startPoint: .top,
+                endPoint: .center
+            )
+            .blendMode(.softLight)
+        }
+    }
+}
+
+enum ModalButtonRole {
+    case primary
+    case secondary
+    case destructive
+}
+
+struct ModalButton: View {
+    let title: String
+    let role: ModalButtonRole
+    let action: () -> Void
+    var isDisabled: Bool = false
+
+    @Environment(\.colorScheme) private var colorScheme
+    @ScaledMetric(relativeTo: .callout) private var minHeight: CGFloat = 44
+
+    var body: some View {
+        Button(action: action) {
+            Text(title)
+                .font(.callout.weight(.semibold))
+                .foregroundStyle(foregroundColor)
+                .frame(maxWidth: .infinity, minHeight: minHeight)
+                .background(backgroundLayer)
+                .overlay {
+                    if role == .secondary {
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .stroke(
+                                Color.primary.opacity(colorScheme == .dark ? 0.16 : 0.10),
+                                lineWidth: 1
+                            )
+                    }
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .opacity(isDisabled ? 0.45 : 1.0)
+                .contentShape(Rectangle())
+        }
+        .disabled(isDisabled)
+        .buttonStyle(ModalPressableButtonStyle())
+    }
+
+    private var foregroundColor: Color {
+        switch role {
+        case .primary: return Color.white
+        case .secondary: return Color.primary
+        case .destructive: return Color.white
+        }
+    }
+
+    private var destructiveColor: Color {
+        Color(red: 0.90, green: 0.45, blue: 0.45)
+    }
+
+    @ViewBuilder
+    private var backgroundLayer: some View {
+        switch role {
+        case .primary:
+            LinearGradient(
+                colors: [
+                    Color.readerAccent,
+                    Color.readerAccent.opacity(0.86)
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+        case .secondary:
+            Color.primary.opacity(colorScheme == .dark ? 0.10 : 0.04)
+        case .destructive:
+            LinearGradient(
+                colors: [
+                    destructiveColor,
+                    destructiveColor.opacity(0.86)
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+        }
+    }
+}
+
+struct ModalPressableButtonStyle: ButtonStyle {
+    var pressedScale: CGFloat = 0.97
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? pressedScale : 1.0)
+            .opacity(configuration.isPressed ? 0.92 : 1.0)
+            .animation(.easeOut(duration: 0.16), value: configuration.isPressed)
+    }
+}

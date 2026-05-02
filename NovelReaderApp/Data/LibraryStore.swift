@@ -80,6 +80,18 @@ final class LibraryStore: ObservableObject {
         }
     }
 
+    func categoryName(forBookWith sourceURLString: String?, title: String) -> String? {
+        let normalizedTitle = normalized(title)
+        for category in categories {
+            if category.novels.contains(where: {
+                matches($0, sourceURLString: sourceURLString, normalizedTitle: normalizedTitle)
+            }) {
+                return category.name
+            }
+        }
+        return nil
+    }
+
     func importedBookNeedsRepair(sourceURLString: String?, title: String) -> Bool {
         let normalizedTitle = normalized(title)
         guard let novel = allNovels.first(where: {

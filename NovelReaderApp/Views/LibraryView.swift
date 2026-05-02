@@ -95,15 +95,22 @@ struct LibraryView: View {
             }
 
             if isAddingCategory {
-                NewCategoryOverlay(
-                    categoryName: $newCategoryName,
-                    onAdd: addCategory,
+                InputModalView(
+                    title: "新建分类",
+                    helperText: "分类会先创建为空，可以稍后加入书籍。",
+                    placeholder: "分类名称",
+                    text: $newCategoryName,
+                    confirmTitle: "添加",
+                    cancelTitle: "取消",
+                    onConfirm: addCategory,
                     onDismiss: {
-                        newCategoryName = ""
-                        isAddingCategory = false
+                        withAnimation(InputModalView.presentationAnimation) {
+                            newCategoryName = ""
+                            isAddingCategory = false
+                        }
                     }
                 )
-                .transition(.opacity.combined(with: .scale(scale: 0.96)))
+                .transition(InputModalView.transition)
                 .zIndex(12)
             }
         }
@@ -120,7 +127,7 @@ struct LibraryView: View {
         }
         .animation(.spring(response: 0.42, dampingFraction: 0.82), value: expandedCategoryID)
         .animation(.easeInOut(duration: 0.18), value: categoryEditBook?.id)
-        .animation(.easeInOut(duration: 0.18), value: isAddingCategory)
+        .animation(InputModalView.presentationAnimation, value: isAddingCategory)
         .navigationTitle("书架")
         .navigationBarTitleDisplayMode(.inline)
         .onChange(of: categoryEditBook?.id) { _, _ in closeActiveSwipe() }
@@ -249,8 +256,10 @@ struct LibraryView: View {
         guard !trimmedName.isEmpty else { return }
 
         _ = libraryStore.addCategory(named: trimmedName)
-        newCategoryName = ""
-        isAddingCategory = false
+        withAnimation(InputModalView.presentationAnimation) {
+            newCategoryName = ""
+            isAddingCategory = false
+        }
     }
 
     private func clearDownloadedData(for novel: Novel) {
@@ -501,85 +510,6 @@ private struct BookPressableNavigationRow<Destination: View, Label: View>: View 
     private func rubberBandValue(_ x: CGFloat, range: CGFloat) -> CGFloat {
         let constant: CGFloat = 0.55
         return (1 - 1 / (x * constant / range + 1)) * range
-    }
-}
-
-private struct NewCategoryOverlay: View {
-    @Binding var categoryName: String
-    @FocusState private var isNameFocused: Bool
-
-    let onAdd: () -> Void
-    let onDismiss: () -> Void
-
-    var body: some View {
-        CenteredOverlay {
-            VStack(alignment: .leading, spacing: 14) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("新建分类")
-                        .font(.system(size: 18, weight: .bold, design: .rounded))
-                        .foregroundStyle(Color.readerInk)
-
-                    Text("分类会先创建为空，可以稍后加入书籍。")
-                        .font(.system(size: 13))
-                        .foregroundStyle(Color.readerMuted)
-                }
-
-                TextField("分类名称", text: $categoryName)
-                    .focused($isNameFocused)
-                    .textInputAutocapitalization(.never)
-                    .submitLabel(.done)
-                    .font(.system(size: 15))
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 11)
-                    .background(Color.readerBackground)
-                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                    .onSubmit(addIfPossible)
-
-                HStack(spacing: 10) {
-                    Button("取消") {
-                        onDismiss()
-                    }
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(Color.readerMuted)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 10)
-                    .background(Color.readerBackground)
-                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-
-                    Button("添加") {
-                        addIfPossible()
-                    }
-                    .font(.system(size: 14, weight: .bold))
-                    .foregroundStyle(Color.readerSurface)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 10)
-                    .background(trimmedCategoryName.isEmpty ? Color.readerMuted.opacity(0.45) : Color.readerAccent)
-                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                    .disabled(trimmedCategoryName.isEmpty)
-                }
-            }
-            .padding(16)
-            .frame(maxWidth: 340, alignment: .leading)
-            .background(Color.readerSurface)
-            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .shadow(color: .black.opacity(0.16), radius: 24, x: 0, y: 12)
-            .onAppear {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                    isNameFocused = true
-                }
-            }
-        } onDismiss: {
-            onDismiss()
-        }
-    }
-
-    private var trimmedCategoryName: String {
-        categoryName.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    private func addIfPossible() {
-        guard !trimmedCategoryName.isEmpty else { return }
-        onAdd()
     }
 }
 

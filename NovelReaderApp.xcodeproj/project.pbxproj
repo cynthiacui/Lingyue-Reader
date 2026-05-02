@@ -21,6 +21,9 @@
 		01000000000000000000010C /* LibraryStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01000000000000000000000E /* LibraryStore.swift */; };
 		01000000000000000000010D /* BookImportService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01000000000000000000000F /* BookImportService.swift */; };
 		01000000000000000000010E /* WebRenderingService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000010 /* WebRenderingService.swift */; };
+		01000000000000000000010F /* CustomAlertView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000011 /* CustomAlertView.swift */; };
+		010000000000000000000110 /* ModalContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000012 /* ModalContainer.swift */; };
+		010000000000000000000111 /* InputModalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000013 /* InputModalView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -40,6 +43,9 @@
 		01000000000000000000000E /* LibraryStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryStore.swift; sourceTree = "<group>"; };
 		01000000000000000000000F /* BookImportService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookImportService.swift; sourceTree = "<group>"; };
 		010000000000000000000010 /* WebRenderingService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebRenderingService.swift; sourceTree = "<group>"; };
+		010000000000000000000011 /* CustomAlertView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CustomAlertView.swift; sourceTree = "<group>"; };
+		010000000000000000000012 /* ModalContainer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModalContainer.swift; sourceTree = "<group>"; };
+		010000000000000000000013 /* InputModalView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InputModalView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -111,6 +117,9 @@
 				010000000000000000000008 /* SettingsView.swift */,
 				01000000000000000000000C /* ReaderView.swift */,
 				01000000000000000000000D /* InAppBrowserView.swift */,
+				010000000000000000000011 /* CustomAlertView.swift */,
+				010000000000000000000012 /* ModalContainer.swift */,
+				010000000000000000000013 /* InputModalView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -206,6 +215,9 @@
 				01000000000000000000010C /* LibraryStore.swift in Sources */,
 				01000000000000000000010D /* BookImportService.swift in Sources */,
 				01000000000000000000010E /* WebRenderingService.swift in Sources */,
+				01000000000000000000010F /* CustomAlertView.swift in Sources */,
+				010000000000000000000110 /* ModalContainer.swift in Sources */,
+				010000000000000000000111 /* InputModalView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

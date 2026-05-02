@@ -11,12 +11,18 @@ struct InAppBrowserView: View {
     @StateObject private var browserState = InAppBrowserState()
     @State private var detectedBook: WebBookCandidate?
     @State private var replacementCandidate: WebBookCandidate?
+    @State private var categoryPrompt: CategoryPromptState?
     @State private var ignoredBookURLs: Set<String> = []
     @State private var importStatus: BrowserImportStatus?
     @State private var importResult: BrowserImportResult?
+    @State private var bookToOpen: Novel?
 
     private var hasBlockingOverlay: Bool {
-        detectedBook != nil || replacementCandidate != nil || importStatus != nil || importResult != nil
+        detectedBook != nil
+            || replacementCandidate != nil
+            || categoryPrompt != nil
+            || importStatus != nil
+            || importResult != nil
     }
 
     var body: some View {
@@ -43,28 +49,42 @@ struct InAppBrowserView: View {
 
             if let importStatus {
                 importOverlay(status: importStatus)
-                    .transition(.opacity.combined(with: .scale(scale: 0.96)))
+                    .transition(ModalStyle.transition)
                     .zIndex(3)
             }
 
             if let detectedBook {
                 importPromptOverlay(candidate: detectedBook)
-                    .transition(.opacity.combined(with: .scale(scale: 0.96)))
+                    .transition(ModalStyle.transition)
                     .zIndex(4)
             }
 
             if let replacementCandidate {
                 replacementPromptOverlay(candidate: replacementCandidate)
-                    .transition(.opacity.combined(with: .scale(scale: 0.96)))
+                    .transition(ModalStyle.transition)
                     .zIndex(5)
+            }
+
+            if let categoryPrompt {
+                categoryPromptOverlay(prompt: categoryPrompt)
+                    .transition(BrandedPopupStyle.bottomTransition)
+                    .zIndex(6)
             }
 
             if let importResult {
                 importResultOverlay(result: importResult)
-                    .transition(.opacity.combined(with: .scale(scale: 0.96)))
-                    .zIndex(6)
+                    .transition(ModalStyle.transition)
+                    .zIndex(7)
             }
         }
+        .navigationDestination(item: $bookToOpen) { novel in
+            ReaderView(novel: novel)
+        }
+        .animation(ModalStyle.presentationAnimation, value: detectedBook?.sourceURL)
+        .animation(ModalStyle.presentationAnimation, value: replacementCandidate?.sourceURL)
+        .animation(ModalStyle.presentationAnimation, value: categoryPrompt?.id)
+        .animation(ModalStyle.presentationAnimation, value: importStatus)
+        .animation(ModalStyle.presentationAnimation, value: importResult?.id)
         .background(Color.readerBackground.ignoresSafeArea())
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
@@ -85,93 +105,51 @@ struct InAppBrowserView: View {
     }
 
     private func importPromptOverlay(candidate: WebBookCandidate) -> some View {
-        ZStack {
-            Color.black.opacity(0.22)
-                .ignoresSafeArea()
-                .contentShape(Rectangle())
-
-            VStack(alignment: .leading, spacing: 14) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("发现书籍")
-                        .font(.system(size: 18, weight: .bold, design: .rounded))
-                        .foregroundStyle(Color.readerInk)
-
-                    Text(importPromptMessage(for: candidate))
-                        .font(.system(size: 13))
-                        .foregroundStyle(Color.readerMuted)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-
-                HStack(spacing: 10) {
-                    Button {
-                        ignoredBookURLs.insert(candidate.sourceURL.absoluteString)
-                        detectedBook = nil
-                    } label: {
-                        OverlayActionLabel(title: "暂不", style: .secondary)
-                    }
-                    .buttonStyle(.plain)
-
-                    Button {
-                        detectedBook = nil
-                        requestImport(candidate)
-                    } label: {
-                        OverlayActionLabel(title: "导入到书架", style: .primary)
-                    }
-                    .buttonStyle(.plain)
-                }
+        let dismiss = {
+            withAnimation(ModalStyle.presentationAnimation) {
+                ignoredBookURLs.insert(candidate.sourceURL.absoluteString)
+                detectedBook = nil
             }
-            .padding(16)
-            .frame(maxWidth: 340, alignment: .leading)
-            .background(Color.readerSurface)
-            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .shadow(color: .black.opacity(0.16), radius: 24, x: 0, y: 12)
-            .padding(.horizontal, 28)
         }
+
+        return CustomAlertView(
+            type: .info,
+            title: "发现书籍",
+            bookTitle: candidate.title,
+            message: "是否将此书导入到书架？",
+            primaryButton: .primary("导入") {
+                withAnimation(ModalStyle.presentationAnimation) {
+                    detectedBook = nil
+                }
+                requestImport(candidate)
+            },
+            secondaryButton: .secondary("暂不", action: dismiss),
+            onDismiss: dismiss
+        )
     }
 
     private func replacementPromptOverlay(candidate: WebBookCandidate) -> some View {
-        ZStack {
-            Color.black.opacity(0.22)
-                .ignoresSafeArea()
-                .contentShape(Rectangle())
-
-            VStack(alignment: .leading, spacing: 14) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("替换已有书籍？")
-                        .font(.system(size: 18, weight: .bold, design: .rounded))
-                        .foregroundStyle(Color.readerInk)
-
-                    Text("《\(candidate.title)》已经在书架中。替换后会用当前网页重新导入书籍信息和章节目录。")
-                        .font(.system(size: 13))
-                        .foregroundStyle(Color.readerMuted)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-
-                HStack(spacing: 10) {
-                    Button {
-                        ignoredBookURLs.insert(candidate.sourceURL.absoluteString)
-                        replacementCandidate = nil
-                    } label: {
-                        OverlayActionLabel(title: "取消", style: .secondary)
-                    }
-                    .buttonStyle(.plain)
-
-                    Button {
-                        replacementCandidate = nil
-                        startImport(candidate, isReplacing: true)
-                    } label: {
-                        OverlayActionLabel(title: "替换", style: .primary)
-                    }
-                    .buttonStyle(.plain)
-                }
+        let dismiss = {
+            withAnimation(ModalStyle.presentationAnimation) {
+                ignoredBookURLs.insert(candidate.sourceURL.absoluteString)
+                replacementCandidate = nil
             }
-            .padding(16)
-            .frame(maxWidth: 340, alignment: .leading)
-            .background(Color.readerSurface)
-            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .shadow(color: .black.opacity(0.16), radius: 24, x: 0, y: 12)
-            .padding(.horizontal, 28)
         }
+
+        return CustomAlertView(
+            type: .warning,
+            title: "替换已有书籍",
+            bookTitle: candidate.title,
+            message: "已在书架中，替换会用当前网页重新导入信息和章节目录。",
+            primaryButton: .destructive("替换") {
+                withAnimation(ModalStyle.presentationAnimation) {
+                    replacementCandidate = nil
+                }
+                promptForCategory(candidate, isReplacing: true)
+            },
+            secondaryButton: .secondary("取消", action: dismiss),
+            onDismiss: dismiss
+        )
     }
 
     private func inspectPageForBook(url: URL, pageTitle: String?, html: String) {
@@ -242,10 +220,22 @@ struct InAppBrowserView: View {
             return
         }
 
-        startImport(candidate, isReplacing: false)
+        promptForCategory(candidate, isReplacing: false)
     }
 
-    private func startImport(_ candidate: WebBookCandidate, isReplacing: Bool) {
+    private func promptForCategory(_ candidate: WebBookCandidate, isReplacing: Bool) {
+        let existing = libraryStore.categoryName(
+            forBookWith: candidate.sourceURL.absoluteString,
+            title: candidate.title
+        )
+        categoryPrompt = CategoryPromptState(
+            candidate: candidate,
+            isReplacing: isReplacing,
+            initialCategory: existing
+        )
+    }
+
+    private func startImport(_ candidate: WebBookCandidate, isReplacing: Bool, categoryName: String) {
         ignoredBookURLs.insert(candidate.sourceURL.absoluteString)
         importStatus = BrowserImportStatus(title: candidate.title)
 
@@ -253,18 +243,35 @@ struct InAppBrowserView: View {
             do {
                 let enrichedCandidate = await enrichedCandidateForImport(candidate)
                 let novel = try await BookImportService.shared.importBook(from: enrichedCandidate)
-                let inserted = libraryStore.addImportedNovel(novel)
+                let inserted = libraryStore.addImportedNovel(novel, categoryName: categoryName)
                 importStatus = nil
+                let resultType: CustomAlertType = inserted ? .success : .info
+                let title = inserted ? "导入成功" : "已在书架"
+                let message: String
+                if isReplacing {
+                    message = "已替换旧记录，加入「\(categoryName)」。打开章节时会联网加载正文。"
+                } else if inserted {
+                    message = "已加入「\(categoryName)」。打开章节时会联网加载正文。"
+                } else {
+                    message = "这本书已经在你的书架中了。"
+                }
+
                 importResult = BrowserImportResult(
-                    message: isReplacing
-                        ? "《\(novel.title)》已替换书架中的旧记录。打开章节时会联网加载正文。"
-                        : inserted
-                        ? "《\(novel.title)》已加入「\(LibraryStore.uncategorizedName)」。打开章节时会联网加载正文。"
-                        : "《\(novel.title)》已经在书架中。"
+                    type: resultType,
+                    title: title,
+                    bookTitle: novel.title,
+                    message: message,
+                    novel: inserted ? novel : nil
                 )
             } catch {
                 importStatus = nil
-                importResult = BrowserImportResult(message: error.localizedDescription)
+                importResult = BrowserImportResult(
+                    type: .error,
+                    title: "导入失败",
+                    bookTitle: candidate.title,
+                    message: error.localizedDescription,
+                    novel: nil
+                )
             }
         }
     }
@@ -306,68 +313,105 @@ struct InAppBrowserView: View {
         )
     }
 
-    private func importPromptMessage(for candidate: WebBookCandidate) -> String {
-        "是否将《\(candidate.title)》导入到书架的「\(LibraryStore.uncategorizedName)」分类？"
-    }
-
     private func importOverlay(status: BrowserImportStatus) -> some View {
-        ZStack {
-            Color.black.opacity(0.22)
-                .ignoresSafeArea()
-                .contentShape(Rectangle())
+        ModalContainer(dismissOnTapOutside: false) {
+            ModalCard(maxWidth: 320) {
+                VStack(spacing: 14) {
+                    ZStack {
+                        Circle()
+                            .fill(Color.readerAccent.opacity(0.14))
+                            .frame(width: 56, height: 56)
+                        ProgressView()
+                            .tint(Color.readerAccent)
+                            .scaleEffect(1.1)
+                    }
+                    .frame(maxWidth: .infinity)
 
-            VStack(spacing: 12) {
-                ProgressView()
-                    .tint(Color.readerAccent)
+                    VStack(spacing: 6) {
+                        Text("正在导入")
+                            .font(.headline)
+                            .fontWeight(.bold)
+                            .foregroundStyle(.primary)
+                            .multilineTextAlignment(.center)
 
-                Text("正在导入《\(status.title)》")
-                    .font(.system(size: 16, weight: .bold, design: .rounded))
-                    .foregroundStyle(Color.readerInk)
-                    .multilineTextAlignment(.center)
+                        Text("《\(status.title)》")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.primary)
+                            .multilineTextAlignment(.center)
+                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
 
-                Text("正在保存书籍信息和章节目录。正文会在阅读时加载。")
-                    .font(.system(size: 13))
-                    .foregroundStyle(Color.readerMuted)
-                    .multilineTextAlignment(.center)
+                        Text("正在保存书籍信息和章节目录，正文会在阅读时加载。")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                            .lineLimit(3)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .frame(maxWidth: .infinity)
+                }
             }
-            .padding(18)
-            .frame(maxWidth: 320)
-            .background(Color.readerSurface)
-            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .shadow(color: .black.opacity(0.16), radius: 24, x: 0, y: 12)
-            .padding(.horizontal, 28)
         }
     }
 
     private func importResultOverlay(result: BrowserImportResult) -> some View {
-        ZStack {
-            Color.black.opacity(0.22)
-                .ignoresSafeArea()
-                .contentShape(Rectangle())
-
-            VStack(alignment: .leading, spacing: 14) {
-                Text("导入结果")
-                    .font(.system(size: 18, weight: .bold, design: .rounded))
-                    .foregroundStyle(Color.readerInk)
-
-                Text(result.message)
-                    .font(.system(size: 13))
-                    .foregroundStyle(Color.readerMuted)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                Button {
-                    importResult = nil
-                } label: {
-                    OverlayActionLabel(title: "好", style: .primary)
-                }
-                .buttonStyle(.plain)
+        let dismiss = {
+            withAnimation(ModalStyle.presentationAnimation) {
+                self.importResult = nil
             }
-            .padding(16)
-            .frame(maxWidth: 340, alignment: .leading)
-            .background(Color.readerSurface)
-            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .shadow(color: .black.opacity(0.16), radius: 24, x: 0, y: 12)
-            .padding(.horizontal, 28)
+        }
+
+        let primary: CustomAlertButton
+        let secondary: CustomAlertButton?
+        if let novel = result.novel, result.type == .success {
+            primary = .primary("打开阅读") {
+                withAnimation(ModalStyle.presentationAnimation) {
+                    self.importResult = nil
+                }
+                bookToOpen = novel
+            }
+            secondary = .secondary("好的", action: dismiss)
+        } else {
+            primary = .primary("好的", action: dismiss)
+            secondary = nil
+        }
+
+        return CustomAlertView(
+            type: result.type,
+            title: result.title,
+            bookTitle: result.bookTitle,
+            message: result.message,
+            primaryButton: primary,
+            secondaryButton: secondary,
+            onDismiss: dismiss
+        )
+    }
+
+    private func categoryPromptOverlay(prompt: CategoryPromptState) -> some View {
+        BrandedPopupContainer(alignment: .bottom, dismissOnScrim: true) {
+            withAnimation(ModalStyle.presentationAnimation) {
+                categoryPrompt = nil
+            }
+        } content: {
+            BrandedCategoryCard(
+                prompt: prompt,
+                existingCategoryNames: libraryStore.categories.map(\.name),
+                onCancel: {
+                    withAnimation(ModalStyle.presentationAnimation) {
+                        categoryPrompt = nil
+                    }
+                },
+                onConfirm: { name in
+                    let chosen = name.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let categoryName = chosen.isEmpty ? LibraryStore.uncategorizedName : chosen
+                    let candidate = prompt.candidate
+                    let isReplacing = prompt.isReplacing
+                    withAnimation(ModalStyle.presentationAnimation) {
+                        categoryPrompt = nil
+                    }
+                    startImport(candidate, isReplacing: isReplacing, categoryName: categoryName)
+                }
+            )
         }
     }
 
@@ -546,21 +590,95 @@ private struct InAppWebView: UIViewRepresentable {
     }
 }
 
-private struct OverlayActionLabel: View {
-    enum Style { case primary, secondary }
+private enum BrandedPopupStyle {
+    static var bottomTransition: AnyTransition {
+        .asymmetric(
+            insertion: .move(edge: .bottom).combined(with: .opacity),
+            removal: .move(edge: .bottom).combined(with: .opacity)
+        )
+    }
+}
 
-    let title: String
-    let style: Style
+private struct BrandedPopupContainer<Content: View>: View {
+    enum Alignment { case center, bottom }
+
+    let alignment: Alignment
+    let dismissOnScrim: Bool
+    let onScrimTap: () -> Void
+    let content: Content
+
+    init(
+        alignment: Alignment,
+        dismissOnScrim: Bool,
+        onScrimTap: @escaping () -> Void,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.alignment = alignment
+        self.dismissOnScrim = dismissOnScrim
+        self.onScrimTap = onScrimTap
+        self.content = content()
+    }
 
     var body: some View {
-        Text(title)
-            .font(.system(size: 14, weight: style == .primary ? .bold : .semibold))
-            .foregroundStyle(style == .primary ? Color.readerSurface : Color.readerMuted)
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 12)
-            .background(style == .primary ? Color.readerAccent : Color.readerBackground)
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        ZStack {
+            scrim
+
+            switch alignment {
+            case .center:
+                content
+                    .padding(.horizontal, 28)
+            case .bottom:
+                VStack(spacing: 0) {
+                    Spacer(minLength: 0)
+                    content
+                        .padding(.horizontal, 14)
+                        .padding(.bottom, 12)
+                }
+            }
+        }
+    }
+
+    private var scrim: some View {
+        Color.black.opacity(0.40)
+            .ignoresSafeArea()
             .contentShape(Rectangle())
+            .onTapGesture {
+                if dismissOnScrim { onScrimTap() }
+            }
+            .accessibilityHidden(true)
+    }
+}
+
+private struct BrandedSurface: View {
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        ZStack {
+            Rectangle()
+                .fill(.regularMaterial)
+
+            Color.readerSurface.opacity(colorScheme == .dark ? 0.0 : 0.32)
+
+            LinearGradient(
+                colors: [
+                    Color.white.opacity(colorScheme == .dark ? 0.06 : 0.20),
+                    Color.white.opacity(0.0)
+                ],
+                startPoint: .top,
+                endPoint: .center
+            )
+            .blendMode(.softLight)
+        }
+    }
+}
+
+private struct BrandedPressableButtonStyle: ButtonStyle {
+    var pressedScale: CGFloat = 0.97
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? pressedScale : 1.0)
+            .animation(.easeOut(duration: 0.16), value: configuration.isPressed)
     }
 }
 
@@ -570,7 +688,247 @@ private struct BrowserImportStatus: Equatable {
 
 private struct BrowserImportResult: Identifiable {
     let id = UUID()
+    let type: CustomAlertType
+    let title: String
+    let bookTitle: String?
     let message: String
+    let novel: Novel?
+}
+
+private struct CategoryPromptState: Identifiable {
+    let id = UUID()
+    let candidate: WebBookCandidate
+    let isReplacing: Bool
+    let initialCategory: String?
+}
+
+private struct BrandedCategoryRow: View {
+    let name: String
+    let isSelected: Bool
+    let onTap: () -> Void
+
+    var body: some View {
+        Button(action: onTap) {
+            HStack(spacing: 10) {
+                Text(name)
+                    .font(.subheadline)
+                    .fontWeight(isSelected ? .semibold : .regular)
+                    .foregroundStyle(isSelected ? Color.readerAccent : Color.primary)
+                    .lineLimit(1)
+
+                Spacer(minLength: 0)
+
+                if isSelected {
+                    Image(systemName: "checkmark")
+                        .font(.subheadline.weight(.bold))
+                        .foregroundStyle(Color.readerAccent)
+                        .transition(.scale.combined(with: .opacity))
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(
+                        isSelected
+                            ? Color.readerAccent.opacity(0.12)
+                            : Color.clear
+                    )
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(BrandedPressableButtonStyle(pressedScale: 0.985))
+    }
+}
+
+private struct BrandedNewCategoryField: View {
+    @Binding var text: String
+    var isFocused: FocusState<Bool>.Binding
+    let trimmedDraft: String
+    let onCommit: () -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "plus.circle.fill")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(Color.readerAccent)
+                .symbolRenderingMode(.hierarchical)
+
+            TextField("新建分类", text: $text)
+                .focused(isFocused)
+                .submitLabel(.done)
+                .onSubmit(onCommit)
+                .autocorrectionDisabled()
+                .textInputAutocapitalization(.never)
+                .font(.subheadline)
+                .foregroundStyle(.primary)
+                .tint(Color.readerAccent)
+
+            if !trimmedDraft.isEmpty {
+                Button(action: onCommit) {
+                    Text("添加")
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(Color.readerAccent)
+                }
+                .buttonStyle(.plain)
+                .transition(.opacity.combined(with: .scale(scale: 0.92)))
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+    }
+}
+
+private struct BrandedCategoryCard: View {
+    let prompt: CategoryPromptState
+    let existingCategoryNames: [String]
+    let onCancel: () -> Void
+    let onConfirm: (String) -> Void
+
+    @State private var selectedName: String
+    @State private var newCategoryDraft: String = ""
+    @State private var locallyCreatedNames: [String] = []
+    @State private var lastCreatedName: String?
+    @FocusState private var newFieldFocused: Bool
+
+    init(
+        prompt: CategoryPromptState,
+        existingCategoryNames: [String],
+        onCancel: @escaping () -> Void,
+        onConfirm: @escaping (String) -> Void
+    ) {
+        self.prompt = prompt
+        self.existingCategoryNames = existingCategoryNames
+        self.onCancel = onCancel
+        self.onConfirm = onConfirm
+
+        let initial = prompt.initialCategory
+            ?? existingCategoryNames.first
+            ?? LibraryStore.uncategorizedName
+        _selectedName = State(initialValue: initial)
+    }
+
+    private var allCategoryNames: [String] {
+        var names: [String] = []
+        if !existingCategoryNames.contains(LibraryStore.uncategorizedName) {
+            names.append(LibraryStore.uncategorizedName)
+        }
+        names.append(contentsOf: existingCategoryNames)
+        for name in locallyCreatedNames where !names.contains(name) {
+            names.append(name)
+        }
+        return names
+    }
+
+    private var trimmedDraft: String {
+        newCategoryDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                Capsule(style: .continuous)
+                    .fill(Color.primary.opacity(0.18))
+                    .frame(width: 36, height: 5)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.top, 2)
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("选择分类")
+                    .font(.headline)
+                    .fontWeight(.bold)
+                    .foregroundStyle(.primary)
+
+                Text("《\(prompt.candidate.title)》")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+            }
+
+            ScrollViewReader { proxy in
+                ScrollView(showsIndicators: false) {
+                    VStack(spacing: 2) {
+                        ForEach(allCategoryNames, id: \.self) { name in
+                            BrandedCategoryRow(
+                                name: name,
+                                isSelected: selectedName == name
+                            ) {
+                                withAnimation(.spring(response: 0.32, dampingFraction: 0.78)) {
+                                    selectedName = name
+                                }
+                            }
+                            .id(name)
+                        }
+
+                        BrandedNewCategoryField(
+                            text: $newCategoryDraft,
+                            isFocused: $newFieldFocused,
+                            trimmedDraft: trimmedDraft,
+                            onCommit: commitNewCategory
+                        )
+                        .animation(.easeInOut(duration: 0.18), value: trimmedDraft.isEmpty)
+                    }
+                    .animation(.spring(response: 0.42, dampingFraction: 0.84), value: allCategoryNames)
+                }
+                .frame(maxHeight: 280)
+                .onChange(of: lastCreatedName) { _, newValue in
+                    guard let target = newValue else { return }
+                    withAnimation(.spring(response: 0.42, dampingFraction: 0.84)) {
+                        proxy.scrollTo(target, anchor: .bottom)
+                    }
+                }
+            }
+
+            HStack(spacing: 10) {
+                ModalButton(title: "取消", role: .secondary, action: onCancel)
+                ModalButton(title: "加入", role: .primary) {
+                    onConfirm(selectedName)
+                }
+            }
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, 10)
+        .padding(.bottom, 20)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(BrandedSurface())
+        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .stroke(Color.primary.opacity(0.06), lineWidth: 1)
+        }
+        .shadow(color: Color.black.opacity(0.18), radius: 24, x: 0, y: 12)
+    }
+
+    private func commitNewCategory() {
+        let trimmed = trimmedDraft
+        guard !trimmed.isEmpty else { return }
+
+        let resolvedName: String
+        if let existing = allCategoryNames.first(where: {
+            $0.caseInsensitiveCompare(trimmed) == .orderedSame
+        }) {
+            withAnimation(.easeInOut(duration: 0.18)) {
+                selectedName = existing
+            }
+            resolvedName = existing
+        } else {
+            withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
+                locallyCreatedNames.append(trimmed)
+                selectedName = trimmed
+            }
+            resolvedName = trimmed
+        }
+
+        newCategoryDraft = ""
+        newFieldFocused = false
+
+        // Trigger scroll-to even if user re-creates the same name in succession.
+        lastCreatedName = nil
+        DispatchQueue.main.async {
+            lastCreatedName = resolvedName
+        }
+    }
 }
 
 private final class InAppBrowserState: ObservableObject {

@@ -333,6 +333,15 @@ final class BookImportService: Sendable {
         let txt: String?
     }
 
+    private struct FivedxsCatalogResponse: Decodable {
+        let items: [Item]?
+
+        struct Item: Decodable {
+            let chaptername: String
+            let url: String
+        }
+    }
+
     private func parseMetadata(html: String, url: URL, fallbackTitle: String?) -> BookMetadata {
         let title = cleanBookTitle(
             metaContent(named: "og:novel:book_name", in: html)
@@ -541,6 +550,14 @@ final class BookImportService: Sendable {
             candidateLists.append(apiLinks)
         }
 
+        let fivedxsLinks = await fivedxsCatalogLinks(for: sourceURL, sourceBookID: sourceBookID)
+        if !fivedxsLinks.isEmpty {
+            candidateLists.append(fivedxsLinks)
+#if DEBUG
+            print("[ChapterImport] 5dxs ajax catalog -> \(fivedxsLinks.count) chapters")
+#endif
+        }
+
         // Probe catalog URLs unless the source page already gave us a contiguous chapter list
         // starting at 第1章. For 努努书坊 / 破万卷小说 / 黄金屋中文 the book detail page lists every
         // chapter inline, so probing wastes HTTP requests. For 宙斯小说 the book detail page lists
@@ -638,6 +655,8 @@ final class BookImportService: Sendable {
             let lowered = text.lowercased()
             let isNext = text.contains("下一页")
                 || text.contains("下一頁")
+                || text.contains("下页")
+                || text.contains("下頁")
                 || lowered == "next"
                 || lowered == "next page"
                 || lowered == "next ›"
@@ -689,6 +708,49 @@ final class BookImportService: Sendable {
             }
             return ChapterLink(title: title, url: url)
         }
+    }
+
+    /// 就爱读小说 (5dxs.net / adxs.net) paginates the chapter catalog 10-per-page on the book
+    /// detail page. The site's wap UI uses an /ajaxService endpoint that returns a JSON list
+    /// — calling it once with size=2000 retrieves the entire catalog in a single request,
+    /// avoiding the need to walk dozens of pages.
+    private func fivedxsCatalogLinks(for sourceURL: URL, sourceBookID: String?) async -> [ChapterLink] {
+        guard let host = sourceURL.host(percentEncoded: false)?.lowercased(),
+              host.contains("5dxs.net") || host.contains("adxs.net") else {
+            return []
+        }
+        guard let bookID = sourceBookID ?? bookID(from: sourceURL),
+              !bookID.isEmpty else {
+            return []
+        }
+
+        let endpoints = [
+            "https://m.5dxs.net/ajaxService?action=chapterlist&articleno=\(bookID)&index=0&size=2000&sort=1",
+            "https://m.adxs.net/ajaxService?action=chapterlist&articleno=\(bookID)&index=0&size=2000&sort=1"
+        ]
+
+        for endpoint in endpoints {
+            guard let url = URL(string: endpoint) else { continue }
+            do {
+                let html = try await fetchHTML(from: url)
+                guard let data = html.data(using: .utf8),
+                      let response = try? JSONDecoder().decode(FivedxsCatalogResponse.self, from: data),
+                      let items = response.items, !items.isEmpty else {
+                    continue
+                }
+                return items.prefix(maxChapterCount).compactMap { item in
+                    guard let chapterURL = absoluteURL(from: item.url, baseURL: sourceURL) else {
+                        return nil
+                    }
+                    let title = cleanText(item.chaptername)
+                    guard !title.isEmpty else { return nil }
+                    return ChapterLink(title: title, url: chapterURL)
+                }
+            } catch {
+                continue
+            }
+        }
+        return []
     }
 
     private func chapterListScore(_ links: [ChapterLink]) -> Int {
@@ -1276,15 +1338,23 @@ final class BookImportService: Sendable {
     }
 
     private func htmlToText(_ html: String) -> String {
+        // Strip script/style first — they contain raw text we never want to leak through.
         var text = html
             .replacingOccurrences(of: #"<script[\s\S]*?</script>"#, with: "", options: [.regularExpression, .caseInsensitive])
             .replacingOccurrences(of: #"<style[\s\S]*?</style>"#, with: "", options: [.regularExpression, .caseInsensitive])
+
+        // Decode entities BEFORE the tag strip pass so entity-encoded tags inside the body
+        // (e.g., 就爱读小说 wraps the chapter title as &lt;p class="name"&gt;...&lt;/p&gt;
+        // inside #acontent) become real tags that the strip pass can remove. Doing it after
+        // would leak the literal "<p class="name">…</p>" text into the rendered chapter.
+        text = decodeHTMLEntities(text)
+
+        text = text
             .replacingOccurrences(of: #"(?i)<br\s*/?>"#, with: "\n", options: .regularExpression)
             .replacingOccurrences(of: #"(?i)</p>"#, with: "\n", options: .regularExpression)
             .replacingOccurrences(of: #"(?i)</div>"#, with: "\n", options: .regularExpression)
             .replacingOccurrences(of: #"<[^>]+>"#, with: "", options: .regularExpression)
 
-        text = decodeHTMLEntities(text)
         text = text
             .replacingOccurrences(of: #"[ \t\u{00a0}]+"#, with: " ", options: .regularExpression)
             .replacingOccurrences(of: #"\n{3,}"#, with: "\n\n", options: .regularExpression)
@@ -1342,6 +1412,9 @@ final class BookImportService: Sendable {
         // chapter URL like /tongren/20104/index/1.html they would otherwise match the trailing
         // /index/1.html and capture "1" — the chapter number — instead of the book id "20104".
         let patterns = [
+            // 就爱读小说 (jieqi-style): /info/<sub>/<bookid>.html (detail), /reader/<sub>/<bookid>/<chapterno>.html (chapter)
+            #"^/info/\d+/(\d+)\.html?$"#,
+            #"^/reader/\d+/(\d+)/\d+\.html?$"#,
             // 破万卷小说: /<category>/<bookid> (book detail) and /<category>/<bookid>/index/<n>.html (chapter)
             #"^/[a-z]+\d*/(\d+)/index/\d+\.html?$"#,
             #"^/[a-z]+\d*/(\d+)/?$"#,
@@ -1375,22 +1448,8 @@ final class BookImportService: Sendable {
 
     private func decodeHTMLEntities(_ text: String) -> String {
         var decoded = text
-        let entities: [String: String] = [
-            "&nbsp;": " ",
-            "&amp;": "&",
-            "&quot;": "\"",
-            "&#39;": "'",
-            "&#x27;": "'",
-            "&lt;": "<",
-            "&gt;": ">",
-            "&emsp;": "　",
-            "&ensp;": " ",
-            "&mdash;": "-",
-            "&ndash;": "-",
-            "&hellip;": "..."
-        ]
 
-        for (entity, value) in entities {
+        for (entity, value) in HTMLEntityTable.entities {
             decoded = decoded.replacingOccurrences(of: entity, with: value)
         }
 
@@ -1606,6 +1665,73 @@ final class BookImportService: Sendable {
             return String(text[capture])
         }
     }
+}
+
+/// Named HTML entities encountered across the various Chinese novel sources we import from.
+/// We don't need a full HTML5 spec table — just the entities that actually appear in chapter
+/// content. Decimal/hex numeric entities are handled separately by decodeNumericHTMLEntities.
+private enum HTMLEntityTable {
+    static let entities: [String: String] = [
+        // Whitespace
+        "&nbsp;": " ",
+        "&emsp;": "　",
+        "&ensp;": " ",
+        "&thinsp;": " ",
+        "&zwj;": "",
+        "&zwnj;": "",
+
+        // Symbols
+        "&amp;": "&",
+        "&lt;": "<",
+        "&gt;": ">",
+        "&quot;": "\"",
+        "&apos;": "'",
+
+        // Smart quotes — many Chinese sources use these for dialogue
+        "&ldquo;": "\u{201C}",  // “
+        "&rdquo;": "\u{201D}",  // ”
+        "&lsquo;": "\u{2018}",  // ‘
+        "&rsquo;": "\u{2019}",  // ’
+        "&laquo;": "«",
+        "&raquo;": "»",
+        "&sbquo;": "‚",
+        "&bdquo;": "„",
+        "&prime;": "′",
+        "&Prime;": "″",
+
+        // Dashes / ellipses
+        "&mdash;": "—",
+        "&ndash;": "–",
+        "&hellip;": "……",
+        "&horbar;": "―",
+
+        // Punctuation
+        "&middot;": "·",
+        "&bull;": "•",
+        "&para;": "¶",
+        "&sect;": "§",
+        "&dagger;": "†",
+        "&Dagger;": "‡",
+        "&permil;": "‰",
+
+        // Trademarks / legal
+        "&copy;": "©",
+        "&reg;": "®",
+        "&trade;": "™",
+
+        // Math / common symbols
+        "&times;": "×",
+        "&divide;": "÷",
+        "&plusmn;": "±",
+        "&deg;": "°",
+        "&micro;": "µ",
+
+        // Numeric named (some sources still emit these)
+        "&#39;": "'",
+        "&#x27;": "'",
+        "&#34;": "\"",
+        "&#x22;": "\""
+    ]
 }
 
 private extension String.Encoding {

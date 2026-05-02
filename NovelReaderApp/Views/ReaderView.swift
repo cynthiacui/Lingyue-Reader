@@ -1256,7 +1256,11 @@ struct ReaderView: View {
             visiblePages.removeAll()
             visiblePageSignature = nil
             didSetInitialPage = true
-            libraryStore.addImportedNovel(repaired)
+            let existingCategory = libraryStore.categoryName(
+                forBookWith: novel.sourceURLString,
+                title: novel.title
+            ) ?? LibraryStore.uncategorizedName
+            libraryStore.addImportedNovel(repaired, categoryName: existingCategory)
             libraryStore.updateReadingState(
                 for: repaired.id,
                 chapterTitle: repaired.chapters.first?.title ?? repaired.title,
