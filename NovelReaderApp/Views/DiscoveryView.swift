@@ -667,6 +667,13 @@ private enum DiscoverySourceCatalog {
                 DiscoveryRouteParam(key: "classid", value: "0")
             ],
             queryEncoding: .gb18030
+        ),
+        DiscoverySourceSearchRoute(
+            sourceID: "大尾笔趣阁",
+            endpoint: "https://www.daweixs.com/modules/article/search.php",
+            method: .post,
+            queryKey: "searchkey",
+            queryEncoding: .gb18030
         )
     ]
 
@@ -688,6 +695,7 @@ private enum DiscoverySourceCatalog {
 
     static let sources: [DiscoverySource] = [
         DiscoverySource(name: "破万卷小说", tagline: "各類小說作品齊全", homepageURLString: "https://www.powanjuan.cc/", searchRoute: route(for: "破万卷小说")),
+        DiscoverySource(name: "大尾笔趣阁", tagline: "笔趣阁热门书库", homepageURLString: "https://www.daweixs.com/", searchRoute: route(for: "大尾笔趣阁")),
         DiscoverySource(name: "书林文学", tagline: "最新完结小说，速度快", homepageURLString: "https://www.baozhijixie.com/", searchRoute: route(for: "书林文学")),
         DiscoverySource(name: "ESJ轻小说", tagline: "日韩轻小说在线阅读", homepageURLString: "https://www.esjzone.cc/", searchRoute: route(for: "ESJ轻小说")),
         DiscoverySource(name: "思兔閱讀", tagline: "繁體熱門在線書庫", homepageURLString: "https://sto9.com/", searchRoute: route(for: "思兔閱讀")),

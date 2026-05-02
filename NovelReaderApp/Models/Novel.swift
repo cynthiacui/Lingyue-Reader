@@ -162,6 +162,7 @@ enum BookSourceRegistry {
 
     private static let sources: [SourcePattern] = [
         SourcePattern(name: "笔趣阁小说", hosts: ["bqgl.cc"]),
+        SourcePattern(name: "大尾笔趣阁", hosts: ["daweixs.com"]),
         SourcePattern(
             name: "笔趣阁",
             hosts: ["bq99.cc"],
