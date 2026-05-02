@@ -9,6 +9,13 @@ struct DiscoveryView: View {
     @State private var activeSearchQuery: String?
     @State private var browserDestination: DiscoveryBrowserDestination?
 
+    // Search state lives at this level so popping back from an in-app browser doesn't
+    // recreate DiscoverySearchResultsView from scratch and re-fire the search.
+    @State private var searchResultsQuery: String?
+    @State private var searchIsLoading = false
+    @State private var searchFailedMessage: String?
+    @State private var searchGroupedResults: [DiscoveryGroupedResult] = []
+
     private var horizontalMargin: CGFloat {
         if dynamicTypeSize.isAccessibilitySize { return 14 }
         return horizontalSizeClass == .compact ? 16 : 24
@@ -46,8 +53,17 @@ struct DiscoveryView: View {
             if let activeSearchQuery {
                 DiscoverySearchResultsView(
                     query: activeSearchQuery,
-                    sources: DiscoverySourceCatalog.searchableSources
+                    sources: DiscoverySourceCatalog.searchableSources,
+                    isLoading: searchIsLoading,
+                    failedMessage: searchFailedMessage,
+                    groupedResults: searchGroupedResults,
+                    onOpenSource: { url, title in
+                        browserDestination = DiscoveryBrowserDestination(url: url, title: title)
+                    }
                 )
+                .task(id: activeSearchQuery) {
+                    await runSearchIfNeeded(query: activeSearchQuery)
+                }
             }
         }
         .navigationDestination(item: $browserDestination) { destination in
@@ -164,6 +180,14 @@ struct DiscoveryView: View {
     private func triggerSearch() {
         let trimmed = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
+        if trimmed != searchResultsQuery {
+            // New query — clear stale cache so the results screen shows a loading spinner
+            // instead of the previous query's results while the new search runs.
+            searchGroupedResults = []
+            searchFailedMessage = nil
+            searchIsLoading = true
+            searchResultsQuery = nil
+        }
         activeSearchQuery = trimmed
     }
 
@@ -174,6 +198,39 @@ struct DiscoveryView: View {
         }
 
         browserDestination = DiscoveryBrowserDestination(url: source.fallbackSourceURL, title: source.name)
+    }
+
+    /// Runs a search only when the active query differs from the cached one. Re-entering the
+    /// results screen with the same query is a no-op, so popping back from an in-app browser
+    /// shows the previous results instantly. Otherwise consumes the streaming search so the
+    /// UI shows hits as soon as the first source returns instead of waiting for every source.
+    @MainActor
+    private func runSearchIfNeeded(query: String) async {
+        if searchResultsQuery == query, !searchGroupedResults.isEmpty || searchFailedMessage != nil {
+            return
+        }
+        searchResultsQuery = query
+        searchIsLoading = true
+        searchFailedMessage = nil
+        searchGroupedResults = []
+
+        let stream = DiscoverySearchService.shared.searchStream(
+            query: query,
+            sources: DiscoverySourceCatalog.searchableSources
+        )
+
+        for await partialResults in stream {
+            guard !Task.isCancelled, searchResultsQuery == query else { return }
+            searchGroupedResults = partialResults
+            // Drop the spinner the moment any source returns hits; subsequent sources just
+            // stream in additional rows.
+            if !partialResults.isEmpty {
+                searchIsLoading = false
+            }
+        }
+
+        guard !Task.isCancelled, searchResultsQuery == query else { return }
+        searchIsLoading = false
     }
 }
 
@@ -192,11 +249,10 @@ private struct DiscoveryBrowserDestination: Identifiable, Hashable {
 private struct DiscoverySearchResultsView: View {
     let query: String
     let sources: [DiscoverySource]
-
-    @State private var isLoading = true
-    @State private var groupedResults: [DiscoveryGroupedResult] = []
-    @State private var failedMessage: String?
-    @State private var browserDestination: DiscoveryBrowserDestination?
+    let isLoading: Bool
+    let failedMessage: String?
+    let groupedResults: [DiscoveryGroupedResult]
+    let onOpenSource: (URL, String) -> Void
 
     var body: some View {
         ZStack {
@@ -214,12 +270,6 @@ private struct DiscoverySearchResultsView: View {
         }
         .navigationTitle("搜索结果")
         .navigationBarTitleDisplayMode(.inline)
-        .task(id: query) {
-            await runSearch()
-        }
-        .navigationDestination(item: $browserDestination) { destination in
-            InAppBrowserView(url: destination.url, title: destination.title)
-        }
     }
 
     private var loadingView: some View {
@@ -265,7 +315,7 @@ private struct DiscoverySearchResultsView: View {
                     ForEach(sources) { source in
                         Button {
                             if let url = source.searchURL(for: query) {
-                                browserDestination = DiscoveryBrowserDestination(url: url, title: source.name)
+                                onOpenSource(url, source.name)
                             }
                         } label: {
                             Text(source.name)
@@ -315,10 +365,7 @@ private struct DiscoverySearchResultsView: View {
                             HStack(spacing: 8) {
                                 ForEach(result.sourceLinks) { sourceLink in
                                     Button {
-                                        browserDestination = DiscoveryBrowserDestination(
-                                            url: sourceLink.url,
-                                            title: sourceLink.source.name
-                                        )
+                                        onOpenSource(sourceLink.url, sourceLink.source.name)
                                     } label: {
                                         Text(sourceLink.source.name)
                                             .font(.caption.weight(.semibold))
@@ -352,21 +399,6 @@ private struct DiscoverySearchResultsView: View {
         }
     }
 
-    @MainActor
-    private func runSearch() async {
-        isLoading = true
-        failedMessage = nil
-        groupedResults = []
-
-        do {
-            let found = try await DiscoverySearchService.shared.search(query: query, sources: sources)
-            groupedResults = found
-            isLoading = false
-        } catch {
-            failedMessage = error.localizedDescription
-            isLoading = false
-        }
-    }
 }
 
 private struct DiscoverySource: Identifiable, Hashable {
@@ -763,8 +795,11 @@ private actor DiscoverySearchService {
 
     private init() {
         let configuration = URLSessionConfiguration.ephemeral
-        configuration.timeoutIntervalForRequest = 12
-        configuration.timeoutIntervalForResource = 20
+        // 6s per request: most sources respond in well under 2s; anything past 6s is almost
+        // certainly down or rate-limited and shouldn't keep the spinner alive for the whole
+        // batch. Resource timeout stays a bit higher for slow CDNs.
+        configuration.timeoutIntervalForRequest = 6
+        configuration.timeoutIntervalForResource = 12
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
         configuration.httpAdditionalHeaders = [
             "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15",
@@ -773,37 +808,53 @@ private actor DiscoverySearchService {
         self.session = URLSession(configuration: configuration, delegate: redirectDelegate, delegateQueue: nil)
     }
 
-    func search(query: String, sources: [DiscoverySource]) async throws -> [DiscoveryGroupedResult] {
-        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return [] }
-        let searchableSources = sources.filter { $0.searchRoute != nil }
-        guard !searchableSources.isEmpty else { return [] }
+    /// Streams partial result sets as each source finishes. Wall-clock time is bound by the
+    /// slowest single source (not the sum of sequential batches), and the UI sees the first
+    /// hits within a few hundred ms instead of waiting for every source.
+    nonisolated func searchStream(
+        query: String,
+        sources: [DiscoverySource]
+    ) -> AsyncStream<[DiscoveryGroupedResult]> {
+        AsyncStream { continuation in
+            let task = Task { [self] in
+                let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty else {
+                    continuation.finish()
+                    return
+                }
+                let searchableSources = sources.filter { $0.searchRoute != nil }
+                guard !searchableSources.isEmpty else {
+                    continuation.finish()
+                    return
+                }
 
-        var allHits: [DiscoveryRawSearchHit] = []
-        let batches = searchableSources.chunked(into: 6)
+                var allHits: [DiscoveryRawSearchHit] = []
+                await withTaskGroup(of: [DiscoveryRawSearchHit].self) { group in
+                    for source in searchableSources {
+                        group.addTask { [self] in
+                            await self.searchSingleSource(source, query: trimmed)
+                        }
+                    }
 
-        for batch in batches {
-            let batchHits = await searchBatch(batch, query: trimmed)
-            allHits.append(contentsOf: batchHits)
+                    for await sourceHits in group {
+                        if Task.isCancelled { break }
+                        allHits.append(contentsOf: sourceHits)
+                        let grouped = await self.groupAndSort(allHits, query: trimmed)
+                        continuation.yield(grouped)
+                    }
+                }
+                continuation.finish()
+            }
+            continuation.onTermination = { _ in task.cancel() }
         }
-
-        return groupAndSort(allHits, query: trimmed)
     }
 
-    private func searchBatch(_ batch: [DiscoverySource], query: String) async -> [DiscoveryRawSearchHit] {
-        await withTaskGroup(of: [DiscoveryRawSearchHit].self) { group in
-            for source in batch {
-                group.addTask {
-                    await self.searchSingleSource(source, query: query)
-                }
-            }
-
-            var merged: [DiscoveryRawSearchHit] = []
-            for await sourceHits in group {
-                merged.append(contentsOf: sourceHits)
-            }
-            return merged
+    func search(query: String, sources: [DiscoverySource]) async throws -> [DiscoveryGroupedResult] {
+        var latest: [DiscoveryGroupedResult] = []
+        for await results in searchStream(query: query, sources: sources) {
+            latest = results
         }
+        return latest
     }
 
     private func searchSingleSource(_ source: DiscoverySource, query: String) async -> [DiscoveryRawSearchHit] {

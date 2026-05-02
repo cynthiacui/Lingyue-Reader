@@ -365,7 +365,15 @@ final class BookImportService: Sendable {
                 ?? ""
         )
 
+        // 半夏小说 also stashes the full-resolution cover in the lazy <img>'s data-original
+        // attribute (its src is a "no cover" placeholder). Try og:image first, then any img
+        // with a book-cover-ish class — preferring data-original over src — before falling
+        // back to the alt-attribute pattern that just gives us the title.
         let cover = metaContent(named: "og:image", in: html)
+            ?? firstMatch(#"<img[^>]+(?:id|class)=["'][^"']*(?:cover|bookimg|image|book-img)[^"']*["'][^>]+data-original=["']([^"']+)["']"#, in: html)
+            ?? firstMatch(#"<img[^>]+data-original=["']([^"']+)["'][^>]+(?:id|class)=["'][^"']*(?:cover|bookimg|image|book-img)[^"']*["']"#, in: html)
+            ?? firstMatch(#"<div[^>]+class=["'][^"']*book-img[^"']*["'][^>]*>\s*<img[^>]+data-original=["']([^"']+)["']"#, in: html)
+            ?? firstMatch(#"<div[^>]+class=["'][^"']*book-img[^"']*["'][^>]*>\s*<img[^>]+src=["']([^"']+)["']"#, in: html)
             ?? firstMatch(#"<img[^>]+(?:id|class)=["'][^"']*(?:cover|bookimg|image)[^"']*["'][^>]+src=["']([^"']+)["']"#, in: html)
             ?? firstMatch(#"<img[^>]+src=["']([^"']+)["'][^>]+(?:id|class)=["'][^"']*(?:cover|bookimg|image)[^"']*["']"#, in: html)
 
@@ -373,8 +381,20 @@ final class BookImportService: Sendable {
             title: title,
             author: author,
             summary: summary,
-            coverImageURL: cover.flatMap { absoluteURL(from: $0, baseURL: url) }
+            coverImageURL: cover.flatMap { absoluteURL(from: $0, baseURL: url) }.map(httpsUpgraded)
         )
+    }
+
+    /// App Transport Security blocks plain http loads for URLSession (and therefore SwiftUI's
+    /// AsyncImage), even though our WKWebView is allowed via NSAllowsArbitraryLoadsInWebContent.
+    /// Some sources (e.g. 半夏小说) advertise their og:image as an http URL even though https
+    /// works fine — upgrade so the cover actually loads.
+    private func httpsUpgraded(_ url: URL) -> URL {
+        guard url.scheme?.lowercased() == "http",
+              var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        else { return url }
+        components.scheme = "https"
+        return components.url ?? url
     }
 
     private func sourceSpecificBookTitle(in html: String, url: URL) -> String? {
@@ -388,6 +408,10 @@ final class BookImportService: Sendable {
         guard isCatalogSource || BookSourceRegistry.isKnownHost(url) else { return nil }
 
         let patterns = [
+            // 半夏小说 wraps the book name in <h1> inside <div class="book-describe">. Other
+            // sites use similar info containers; this pattern grabs the first h1/h2 that lives
+            // directly inside one of those containers, which steers around site-logo <h1>s.
+            #"<(?:div|section|article)[^>]+class=["'][^"']*(?:book-describe|book-detail|book-info|book-msg|bookbox|book-data)[^"']*["'][^>]*>\s*(?:<[^>]+>\s*)*?<(?:h1|h2|h3)[^>]*>\s*([^<]{2,100})\s*</(?:h1|h2|h3)>"#,
             #"<(?:h1|h2|h3|div|span|p)[^>]*(?:class|id)=["'][^"']*(?:bookname|book-name|booktitle|book-title|info-title|detail-title|novel-title|title)[^"']*["'][^>]*>([\s\S]{1,180}?)</(?:h1|h2|h3|div|span|p)>"#,
             #"<img[^>]+(?:class|id)=["'][^"']*(?:cover|bookimg|image|pic)[^"']*["'][^>]+alt=["']([^"']{1,100})["']"#,
             #"<img[^>]+alt=["']([^"']{1,100})["'][^>]+(?:class|id)=["'][^"']*(?:cover|bookimg|image|pic)[^"']*["']"#,
@@ -413,7 +437,12 @@ final class BookImportService: Sendable {
             "笔趣阁", "筆趣閣", "免费阅读", "免費閱讀", "小说网", "小說網",
             "书库", "書庫", "首页", "首頁", "目录", "目錄", "搜索", "排行",
             "内容简介", "內容簡介", "简介", "簡介", "加入书架", "加入書架",
-            "开始阅读", "開始閱讀"
+            "开始阅读", "開始閱讀",
+            // Site brand names that occasionally land in logo <h1>s.
+            "半夏小说", "半夏小說", "努努书坊", "努努書坊", "宙斯小说", "宙斯小說",
+            "破万卷", "破萬卷", "黄金屋中文", "黃金屋中文", "52书库", "52書庫",
+            "思兔阅读", "思兔閱讀", "台湾小说网", "臺灣小說網",
+            "當前位置", "当前位置"
         ]
         if genericParts.contains(where: { lowered.contains($0.lowercased()) }) {
             return false

@@ -114,8 +114,14 @@ final class LibraryStore: ObservableObject {
     func addImportedNovel(_ novel: Novel, categoryName: String = LibraryStore.uncategorizedName) -> Bool {
         removeExistingBook(sourceURLString: novel.sourceURLString, title: novel.title)
 
+        // Stamp the just-imported novel as if it had been opened "now" so the Library's
+        // most-recent-first sort places it at the top of the stack, alongside actively-read
+        // books. The user can still bury it by opening other books later.
+        var stamped = novel
+        stamped.lastOpenedAt = Date.now
+
         let targetIndex = ensureCategory(named: categoryName)
-        categories[targetIndex].novels.insert(novel, at: 0)
+        categories[targetIndex].novels.insert(stamped, at: 0)
         return true
     }
 
