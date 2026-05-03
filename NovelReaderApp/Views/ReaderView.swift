@@ -514,11 +514,6 @@ struct ReaderView: View {
                                         }
 
                                         Spacer(minLength: 8)
-
-                                        if currentPage.chapterIndex == index {
-                                            Image(systemName: "checkmark")
-                                                .font(.system(size: 12, weight: .bold))
-                                        }
                                     }
                                     .foregroundStyle(currentPage.chapterIndex == index ? Color.readerAccent : pageForeground)
                                     .padding(.horizontal, 12)
