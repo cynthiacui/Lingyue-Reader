@@ -881,7 +881,7 @@ struct ReaderView: View {
             return
         }
 
-        loadedChapterOverrides[key] = cachedChapter
+        loadedChapterOverrides[key] = mergedOverride(loaded: cachedChapter, matching: chapter)
         downloadedChapterKeys.insert(key)
     }
 
@@ -1130,7 +1130,7 @@ struct ReaderView: View {
         guard loadedChapterOverrides[key] == nil else { return }
 
         if let cachedChapter = await ChapterContentCache.shared.cachedChapter(for: chapter) {
-            loadedChapterOverrides[key] = cachedChapter
+            loadedChapterOverrides[key] = mergedOverride(loaded: cachedChapter, matching: chapter)
             downloadedChapterKeys.insert(key)
         }
     }
@@ -1158,12 +1158,13 @@ struct ReaderView: View {
             Task {
                 do {
                     let loadedChapter = try await ChapterContentCache.shared.chapter(for: chapter)
+                    let merged = mergedOverride(loaded: loadedChapter, matching: chapter)
                     await MainActor.run {
-                        loadedChapterOverrides[key] = loadedChapter
+                        loadedChapterOverrides[key] = merged
                         downloadedChapterKeys.insert(key)
                         _ = prefetchingChapterKeys.remove(key)
                     }
-                    await prePaginate(chapter: loadedChapter, originalChapter: chapter, chapterIndex: chapterIndex)
+                    await prePaginate(chapter: merged, originalChapter: chapter, chapterIndex: chapterIndex)
                 } catch {
                     await MainActor.run {
                         _ = prefetchingChapterKeys.remove(key)
@@ -1223,7 +1224,7 @@ struct ReaderView: View {
 
         do {
             let loadedChapter = try await ChapterContentCache.shared.chapter(for: chapter)
-            loadedChapterOverrides[key] = loadedChapter
+            loadedChapterOverrides[key] = mergedOverride(loaded: loadedChapter, matching: chapter)
             downloadedChapterKeys.insert(key)
         } catch {
             chapterLoadErrors[key] = error.localizedDescription
@@ -1280,6 +1281,18 @@ struct ReaderView: View {
 
     private func chapterCacheKey(_ chapter: NovelChapter) -> String {
         chapter.sourceURLString ?? chapter.id.uuidString
+    }
+
+    /// Some sources (e.g. 破万卷小说) prefix every chapter's parsed title with the book name,
+    /// while the catalog/imported list shows just "第N章". Keep the catalog title in the
+    /// picker by re-wrapping the loaded chapter with the catalog row's title and id.
+    private func mergedOverride(loaded: NovelChapter, matching catalog: NovelChapter) -> NovelChapter {
+        NovelChapter(
+            id: catalog.id,
+            title: catalog.title,
+            content: loaded.content,
+            sourceURLString: loaded.sourceURLString ?? catalog.sourceURLString
+        )
     }
 
     private func isChapterDownloaded(_ chapter: NovelChapter) -> Bool {
