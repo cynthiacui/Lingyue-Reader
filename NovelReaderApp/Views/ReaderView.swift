@@ -1284,15 +1284,29 @@ struct ReaderView: View {
     }
 
     /// Some sources (e.g. 破万卷小说) prefix every chapter's parsed title with the book name,
-    /// while the catalog/imported list shows just "第N章". Keep the catalog title in the
-    /// picker by re-wrapping the loaded chapter with the catalog row's title and id.
+    /// while the catalog/imported list shows just "第N章". Re-wrap the loaded chapter with
+    /// the catalog row's title + id, and rewrite the leading title line in the content body
+    /// so the rendered page header matches the catalog title (and the picker, and the
+    /// reader's top/bottom chrome).
     private func mergedOverride(loaded: NovelChapter, matching catalog: NovelChapter) -> NovelChapter {
         NovelChapter(
             id: catalog.id,
             title: catalog.title,
-            content: loaded.content,
+            content: rewriteLeadingTitle(in: loaded.content, from: loaded.title, to: catalog.title),
             sourceURLString: loaded.sourceURLString ?? catalog.sourceURLString
         )
+    }
+
+    private func rewriteLeadingTitle(in content: String, from oldTitle: String, to newTitle: String) -> String {
+        let trimmedOld = oldTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedOld.isEmpty, trimmedOld != newTitle else { return content }
+
+        let leadingWhitespace = content.prefix { $0.isWhitespace || $0.isNewline }
+        let body = content.dropFirst(leadingWhitespace.count)
+        guard body.hasPrefix(trimmedOld) else { return content }
+
+        let remainder = body.dropFirst(trimmedOld.count)
+        return String(leadingWhitespace) + newTitle + String(remainder)
     }
 
     private func isChapterDownloaded(_ chapter: NovelChapter) -> Bool {
