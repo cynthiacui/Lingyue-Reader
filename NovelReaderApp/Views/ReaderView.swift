@@ -133,7 +133,7 @@ struct ReaderView: View {
 
                 if showChapterPicker {
                     chapterPickerOverlay(pages: pages, currentPage: currentPage)
-                        .transition(.opacity.combined(with: .scale(scale: 0.96)))
+                        .transition(ModalStyle.transition)
                 }
 
                 if showPreferences {
@@ -334,7 +334,7 @@ struct ReaderView: View {
                 .buttonStyle(.plain)
 
                 Button {
-                    withAnimation(.easeInOut(duration: 0.18)) {
+                    withAnimation(ModalStyle.presentationAnimation) {
                         showChapterPicker = true
                         showPreferences = false
                     }
@@ -458,10 +458,14 @@ struct ReaderView: View {
     }
 
     private func chapterPickerOverlay(pages: [ReaderPageItem], currentPage: ReaderPageItem) -> some View {
-        ZStack {
-            Color.black.opacity(currentTheme == .night ? 0.45 : 0.22)
-                .ignoresSafeArea()
-
+        ModalContainer(
+            dismissOnTapOutside: true,
+            onDismiss: {
+                withAnimation(ModalStyle.presentationAnimation) {
+                    showChapterPicker = false
+                }
+            }
+        ) {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
                     Text("章节目录")
@@ -471,12 +475,14 @@ struct ReaderView: View {
                     Spacer()
 
                     Button {
-                        withAnimation(.easeInOut(duration: 0.18)) {
+                        withAnimation(ModalStyle.presentationAnimation) {
                             showChapterPicker = false
                         }
                     } label: {
                         Image(systemName: "xmark")
                             .font(.system(size: 14, weight: .bold))
+                            .frame(width: 36, height: 36)
+                            .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                     .foregroundStyle(secondaryForeground)
@@ -484,19 +490,19 @@ struct ReaderView: View {
 
                 ScrollViewReader { proxy in
                     ScrollView {
-                        LazyVStack(spacing: 4) {
+                        LazyVStack(spacing: 2) {
                             ForEach(chapters.indices, id: \.self) { index in
                                 Button {
                                     goToChapter(index, pageIndex: 0)
                                     Task {
                                         await prepareChapter(at: index)
                                     }
-                                    withAnimation(.easeInOut(duration: 0.18)) {
+                                    withAnimation(ModalStyle.presentationAnimation) {
                                         showChapterPicker = false
                                         showControls = false
                                     }
                                 } label: {
-                                    HStack {
+                                    HStack(spacing: 8) {
                                         Text(displayed(chapters[index].title))
                                             .font(.system(size: 15, weight: currentPage.chapterIndex == index ? .bold : .regular))
                                             .lineLimit(1)
@@ -507,7 +513,7 @@ struct ReaderView: View {
                                                 .accessibilityLabel("已下载")
                                         }
 
-                                        Spacer()
+                                        Spacer(minLength: 8)
 
                                         if currentPage.chapterIndex == index {
                                             Image(systemName: "checkmark")
@@ -516,11 +522,13 @@ struct ReaderView: View {
                                     }
                                     .foregroundStyle(currentPage.chapterIndex == index ? Color.readerAccent : pageForeground)
                                     .padding(.horizontal, 12)
-                                    .padding(.vertical, 10)
+                                    .frame(minHeight: 44)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
                                     .background(
                                         RoundedRectangle(cornerRadius: 8, style: .continuous)
                                             .fill(currentPage.chapterIndex == index ? Color.readerAccent.opacity(0.12) : Color.clear)
                                     )
+                                    .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                                 }
                                 .buttonStyle(.plain)
                                 .id(index)
@@ -536,11 +544,10 @@ struct ReaderView: View {
                 }
             }
             .padding(16)
-            .frame(maxWidth: 330, maxHeight: 430, alignment: .topLeading)
+            .frame(maxWidth: 360, maxHeight: 460, alignment: .topLeading)
             .background(currentTheme.surfaceBackground)
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             .shadow(color: .black.opacity(0.18), radius: 24, x: 0, y: 12)
-            .padding(.horizontal, 28)
         }
     }
 
