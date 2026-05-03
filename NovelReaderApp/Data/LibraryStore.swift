@@ -151,6 +151,23 @@ final class LibraryStore: ObservableObject {
         return true
     }
 
+    func renameCategory(id: UUID, to newName: String) -> Bool {
+        let trimmedName = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty else { return false }
+
+        guard let index = categories.firstIndex(where: { $0.id == id }) else { return false }
+
+        if categories[index].name == trimmedName { return true }
+
+        let conflicts = categories.contains { other in
+            other.id != id && other.name.caseInsensitiveCompare(trimmedName) == .orderedSame
+        }
+        guard !conflicts else { return false }
+
+        categories[index].name = trimmedName
+        return true
+    }
+
     func deleteBook(_ novel: Novel) {
         var updatedCategories = categories
         for index in updatedCategories.indices {

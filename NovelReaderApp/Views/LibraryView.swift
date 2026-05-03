@@ -837,14 +837,6 @@ private struct StackBookCard: View {
     let novel: Novel
     @AppStorage("reader.usesTraditionalChinese") private var usesTraditionalChinese = false
 
-    private var metadataLine: String {
-        let author = displayed(novel.author)
-        guard let source = BookSourceRegistry.displayName(for: novel.sourceURLString) else {
-            return author
-        }
-        return "\(author) · \(displayed(source))"
-    }
-
     var body: some View {
         HStack(spacing: 12) {
             BookCover(novel: novel, width: 48, height: 68)
@@ -855,10 +847,9 @@ private struct StackBookCard: View {
                     .foregroundStyle(Color.readerInk)
                     .lineLimit(1)
 
-                Text(metadataLine)
+                BookMetadataLine(novel: novel, usesTraditionalChinese: usesTraditionalChinese)
                     .font(.system(size: 12))
                     .foregroundStyle(Color.readerMuted)
-                    .lineLimit(1)
 
                 Text(displayed(novel.lastChapter))
                     .font(.system(size: 12, design: .serif))
@@ -879,6 +870,34 @@ private struct StackBookCard: View {
         .background(Color.readerSurface)
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .shadow(color: .black.opacity(0.10), radius: 8, x: 0, y: 4)
+    }
+
+    private func displayed(_ text: String) -> String {
+        ChineseTextConverter.display(text, usesTraditionalChinese: usesTraditionalChinese)
+    }
+}
+
+/// Renders "{author} · {source}" so the source name pins to the right and the author truncates
+/// from the tail when there isn't enough room. Without this, a long author hides the source.
+private struct BookMetadataLine: View {
+    let novel: Novel
+    let usesTraditionalChinese: Bool
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Text(displayed(novel.author))
+                .lineLimit(1)
+                .truncationMode(.tail)
+
+            if let source = BookSourceRegistry.displayName(for: novel.sourceURLString) {
+                Text("·")
+                    .layoutPriority(1)
+                Text(displayed(source))
+                    .lineLimit(1)
+                    .layoutPriority(1)
+                    .fixedSize(horizontal: true, vertical: false)
+            }
+        }
     }
 
     private func displayed(_ text: String) -> String {
@@ -1088,14 +1107,6 @@ private struct CategoryBookRow: View {
     let novel: Novel
     @AppStorage("reader.usesTraditionalChinese") private var usesTraditionalChinese = false
 
-    private var metadataLine: String {
-        let author = displayed(novel.author)
-        guard let source = BookSourceRegistry.displayName(for: novel.sourceURLString) else {
-            return author
-        }
-        return "\(author) · \(displayed(source))"
-    }
-
     var body: some View {
         HStack(spacing: 10) {
             BookCover(novel: novel, width: 44, height: 62)
@@ -1106,10 +1117,9 @@ private struct CategoryBookRow: View {
                     .foregroundStyle(Color.readerInk)
                     .lineLimit(1)
 
-                Text(metadataLine)
+                BookMetadataLine(novel: novel, usesTraditionalChinese: usesTraditionalChinese)
                     .font(.system(size: 12))
                     .foregroundStyle(Color.readerMuted)
-                    .lineLimit(1)
 
                 Text(displayed(novel.lastChapter))
                     .font(.system(size: 13, design: .serif))
@@ -1312,42 +1322,16 @@ private struct CategoryManagementView: View {
     @AppStorage("reader.usesTraditionalChinese") private var usesTraditionalChinese = false
     @Environment(\.dismiss) private var dismiss
     @State private var pendingDeletion: LibraryCategory?
+    @State private var editingCategoryID: UUID?
+    @State private var editingName: String = ""
+    @State private var renameError: String?
+    @FocusState private var renameFieldFocused: Bool
 
     var body: some View {
         List {
             ForEach(libraryStore.categories) { category in
-                HStack(spacing: 12) {
-                    Image(systemName: "folder.fill")
-                        .font(.system(size: 17, weight: .semibold))
-                        .foregroundStyle(Color.readerAccent)
-
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(displayed(category.name))
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundStyle(Color.readerInk)
-                            .lineLimit(1)
-
-                        Text("\(category.novels.count) 本")
-                            .font(.system(size: 12))
-                            .foregroundStyle(Color.readerMuted)
-                    }
-
-                    Spacer()
-
-                    // Explicit, always-visible delete control. No swipe needed — taps the
-                    // trash icon to bring up the confirmation alert.
-                    Button {
-                        pendingDeletion = category
-                    } label: {
-                        Image(systemName: "trash.circle.fill")
-                            .font(.system(size: 22))
-                            .foregroundStyle(.red, Color.red.opacity(0.12))
-                            .symbolRenderingMode(.palette)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("删除分类")
-                }
-                .padding(.vertical, 4)
+                categoryRow(category)
+                    .padding(.vertical, 4)
             }
             .onMove { source, destination in
                 libraryStore.categories.move(fromOffsets: source, toOffset: destination)
@@ -1391,6 +1375,119 @@ private struct CategoryManagementView: View {
                     .font(.system(size: 14))
                     .foregroundStyle(Color.readerMuted)
             }
+        }
+        .alert(
+            "无法重命名",
+            isPresented: Binding(
+                get: { renameError != nil },
+                set: { if !$0 { renameError = nil } }
+            ),
+            presenting: renameError
+        ) { _ in
+            Button("好的", role: .cancel) { renameError = nil }
+        } message: { message in
+            Text(message)
+        }
+    }
+
+    @ViewBuilder
+    private func categoryRow(_ category: LibraryCategory) -> some View {
+        if editingCategoryID == category.id {
+            HStack(spacing: 12) {
+                Image(systemName: "folder.fill")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(Color.readerAccent)
+
+                TextField("分类名称", text: $editingName)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(Color.readerInk)
+                    .textInputAutocapitalization(.never)
+                    .submitLabel(.done)
+                    .focused($renameFieldFocused)
+                    .onSubmit { commitRename(for: category) }
+
+                Spacer(minLength: 6)
+
+                Button("取消") { cancelRename() }
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(Color.readerMuted)
+                    .buttonStyle(.plain)
+
+                Button("完成") { commitRename(for: category) }
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(Color.readerAccent)
+                    .buttonStyle(.plain)
+                    .disabled(editingName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        } else {
+            HStack(spacing: 12) {
+                Image(systemName: "folder.fill")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(Color.readerAccent)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(displayed(category.name))
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(Color.readerInk)
+                        .lineLimit(1)
+
+                    Text("\(category.novels.count) 本")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Color.readerMuted)
+                }
+
+                Spacer()
+
+                Button {
+                    beginRename(for: category)
+                } label: {
+                    Image(systemName: "pencil.circle.fill")
+                        .font(.system(size: 22))
+                        .foregroundStyle(Color.readerAccent, Color.readerAccent.opacity(0.14))
+                        .symbolRenderingMode(.palette)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("重命名分类")
+
+                // Explicit, always-visible delete control. No swipe needed — taps the
+                // trash icon to bring up the confirmation alert.
+                Button {
+                    pendingDeletion = category
+                } label: {
+                    Image(systemName: "trash.circle.fill")
+                        .font(.system(size: 22))
+                        .foregroundStyle(.red, Color.red.opacity(0.12))
+                        .symbolRenderingMode(.palette)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("删除分类")
+            }
+        }
+    }
+
+    private func beginRename(for category: LibraryCategory) {
+        editingName = category.name
+        editingCategoryID = category.id
+        renameError = nil
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            renameFieldFocused = true
+        }
+    }
+
+    private func cancelRename() {
+        renameFieldFocused = false
+        editingCategoryID = nil
+        editingName = ""
+        renameError = nil
+    }
+
+    private func commitRename(for category: LibraryCategory) {
+        let trimmed = editingName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        if libraryStore.renameCategory(id: category.id, to: trimmed) {
+            cancelRename()
+        } else {
+            renameError = "分类名称已被使用"
         }
     }
 
