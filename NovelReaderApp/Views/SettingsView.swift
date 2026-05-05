@@ -3,6 +3,8 @@ import SwiftUI
 struct SettingsView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.appTheme) private var theme
+    @EnvironmentObject private var themeManager: AppThemeManager
 
     @AppStorage("reader.fontSize") private var fontSize = 18.0
     @AppStorage("reader.lineSpacing") private var lineSpacing = 8.0
@@ -35,12 +37,13 @@ struct SettingsView: View {
 
     var body: some View {
         ZStack {
-            Color.readerBackground.ignoresSafeArea()
+            ThemeBackgroundView()
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
                     previewSection
                     readingControlsSection
+                    appThemeSection
                     storageSection
                 }
                 .padding(.top, 12)
@@ -74,8 +77,70 @@ struct SettingsView: View {
             .padding(16)
             .background(selectedTheme.pageBackground)
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .shadow(color: .black.opacity(0.05), radius: 12, x: 0, y: 6)
+            .shadow(color: theme.cardShadow, radius: 12, x: 0, y: 6)
         }
+    }
+
+    private var appThemeSection: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            SectionHeader(title: "外观主题")
+
+            HStack(spacing: 12) {
+                ForEach(AppTheme.allCases) { option in
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            themeManager.select(option)
+                        }
+                    } label: {
+                        appThemeSwatch(for: option)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(option.displayName)
+                }
+
+                Spacer(minLength: 0)
+            }
+        }
+    }
+
+    private func appThemeSwatch(for option: AppTheme) -> some View {
+        let isSelected = themeManager.current == option
+        return ZStack {
+            if let imageName = option.swatchImageName {
+                // Scale past the swatch frame so the white border baked into the source
+                // artwork gets cropped out by the outer .clipShape(RoundedRectangle).
+                Image(imageName)
+                    .resizable()
+                    .scaledToFill()
+                    .scaleEffect(1.22)
+            } else {
+                LinearGradient(
+                    colors: [option.background, option.cardBackground, option.accent],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+
+                option.swatchOverlay
+                    .allowsHitTesting(false)
+            }
+
+            if isSelected {
+                Image(systemName: "checkmark")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(.white)
+                    .frame(width: 20, height: 20)
+                    .background(Circle().fill(option.accent))
+            }
+        }
+        .frame(width: 44, height: 44)
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(
+                    isSelected ? theme.accent : theme.secondaryText.opacity(0.22),
+                    lineWidth: isSelected ? 2 : 1
+                )
+        )
     }
 
     private var readingControlsSection: some View {
@@ -88,12 +153,12 @@ struct SettingsView: View {
                         Label("字号", systemImage: "textformat.size")
                         Spacer()
                         Text("\(Int(fontSize))")
-                            .foregroundStyle(Color.readerMuted)
+                            .foregroundStyle(theme.secondaryText)
                     }
                     .font(.headline)
 
                     Slider(value: $fontSize, in: 12...32, step: 1)
-                        .tint(.readerAccent)
+                        .tint(theme.accent)
                 }
 
                 VStack(alignment: .leading, spacing: 10) {
@@ -101,12 +166,12 @@ struct SettingsView: View {
                         Label("行距", systemImage: "text.line.first.and.arrowtriangle.forward")
                         Spacer()
                         Text("\(Int(lineSpacing))")
-                            .foregroundStyle(Color.readerMuted)
+                            .foregroundStyle(theme.secondaryText)
                     }
                     .font(.headline)
 
                     Slider(value: $lineSpacing, in: 0...24, step: 1)
-                        .tint(.readerAccent)
+                        .tint(theme.accent)
                 }
 
                 themePicker
@@ -133,7 +198,7 @@ struct SettingsView: View {
                     }
                 }
             }
-            .foregroundStyle(Color.readerInk)
+            .foregroundStyle(theme.primaryText)
             .readerCard()
         }
     }
@@ -151,7 +216,7 @@ struct SettingsView: View {
                     Label("下载数据", systemImage: "internaldrive")
                     Spacer()
                     Text(cacheSizeText)
-                        .foregroundStyle(Color.readerMuted)
+                        .foregroundStyle(theme.secondaryText)
                 }
 
                 Button(role: .destructive) {
@@ -168,11 +233,11 @@ struct SettingsView: View {
                 if let cacheNotice {
                     Text(cacheNotice)
                         .font(.caption)
-                        .foregroundStyle(Color.readerMuted)
+                        .foregroundStyle(theme.secondaryText)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
-            .foregroundStyle(Color.readerInk)
+            .foregroundStyle(theme.primaryText)
             .readerCard()
         }
     }
@@ -199,32 +264,32 @@ struct SettingsView: View {
                 .font(.headline)
 
             HStack(alignment: .top, spacing: 6) {
-                ForEach(ReadingTheme.allCases) { theme in
+                ForEach(ReadingTheme.allCases) { readingTheme in
                     Button {
-                        themeRawValue = theme.rawValue
+                        themeRawValue = readingTheme.rawValue
                     } label: {
                         VStack(spacing: 6) {
                             Circle()
-                                .fill(theme.pageBackground)
+                                .fill(readingTheme.pageBackground)
                                 .frame(width: 34, height: 34)
                                 .overlay(
                                     Circle()
                                         .strokeBorder(
-                                            theme == selectedTheme ? Color.readerAccent : Color.black.opacity(0.12),
-                                            lineWidth: theme == selectedTheme ? 2.5 : 1
+                                            readingTheme == selectedTheme ? theme.accent : Color.black.opacity(0.12),
+                                            lineWidth: readingTheme == selectedTheme ? 2.5 : 1
                                         )
                                 )
                                 .overlay(alignment: .center) {
-                                    if theme == selectedTheme {
+                                    if readingTheme == selectedTheme {
                                         Image(systemName: "checkmark")
                                             .font(.system(size: 13, weight: .bold))
-                                            .foregroundStyle(theme.pageForeground)
+                                            .foregroundStyle(readingTheme.pageForeground)
                                     }
                                 }
 
-                            Text(theme.rawValue)
+                            Text(readingTheme.rawValue)
                                 .font(.caption)
-                                .foregroundStyle(theme == selectedTheme ? Color.readerAccent : Color.readerMuted)
+                                .foregroundStyle(readingTheme == selectedTheme ? theme.accent : theme.secondaryText)
                         }
                         .frame(maxWidth: .infinity)
                     }

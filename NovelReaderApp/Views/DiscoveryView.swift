@@ -4,6 +4,7 @@ import Foundation
 struct DiscoveryView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.appTheme) private var theme
 
     @State private var searchText = ""
     @State private var activeSearchQuery: String?
@@ -23,7 +24,7 @@ struct DiscoveryView: View {
 
     var body: some View {
         ZStack {
-            Color.readerBackground.ignoresSafeArea()
+            ThemeBackgroundView()
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
@@ -75,7 +76,7 @@ struct DiscoveryView: View {
         HStack(spacing: 10) {
             Image(systemName: "magnifyingglass")
                 .font(.headline)
-                .foregroundStyle(Color.readerMuted)
+                .foregroundStyle(theme.secondaryText)
 
             TextField("搜索小说名或关键词", text: $searchText)
                 .textInputAutocapitalization(.never)
@@ -88,7 +89,7 @@ struct DiscoveryView: View {
             } label: {
                 Text("搜索")
                     .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(Color.readerAccent)
+                    .foregroundStyle(theme.accent)
             }
             .buttonStyle(.plain)
         }
@@ -96,7 +97,7 @@ struct DiscoveryView: View {
         .padding(.vertical, 11)
         .background(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(Color.readerSurface)
+                .fill(theme.cardBackground)
         )
     }
 
@@ -104,7 +105,7 @@ struct DiscoveryView: View {
         VStack(alignment: .leading, spacing: 18) {
             Text("书库")
                 .font(.system(size: 30, weight: .bold, design: .rounded))
-                .foregroundStyle(Color.readerInk)
+                .foregroundStyle(theme.primaryText)
                 .padding(.bottom, 2)
 
             sourceSection(
@@ -127,17 +128,17 @@ struct DiscoveryView: View {
             HStack(alignment: .lastTextBaseline, spacing: 8) {
                 Text(title)
                     .font(.system(size: 17, weight: .semibold, design: .rounded))
-                    .foregroundStyle(Color.readerInk)
+                    .foregroundStyle(theme.primaryText)
 
                 Text("\(sources.count)")
                     .font(.caption.weight(.semibold))
-                    .foregroundStyle(Color.readerMuted)
+                    .foregroundStyle(theme.secondaryText)
             }
             .padding(.bottom, 3)
 
             Text(subtitle)
                 .font(.footnote)
-                .foregroundStyle(Color.readerMuted)
+                .foregroundStyle(theme.secondaryText)
                 .padding(.bottom, 6)
 
             VStack(spacing: 0) {
@@ -146,7 +147,7 @@ struct DiscoveryView: View {
 
                     if source.id != sources.last?.id {
                         Divider()
-                            .overlay(Color.readerMuted.opacity(0.18))
+                            .overlay(theme.secondaryText.opacity(0.18))
                     }
                 }
             }
@@ -160,14 +161,14 @@ struct DiscoveryView: View {
             HStack(alignment: .top, spacing: 12) {
                 Text(source.name)
                     .font(.system(size: 19, weight: .bold, design: .rounded))
-                    .foregroundStyle(Color.readerInk)
+                    .foregroundStyle(theme.primaryText)
                     .multilineTextAlignment(.leading)
                     .lineLimit(2)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                 Text(source.tagline)
                     .font(.system(size: 15))
-                    .foregroundStyle(Color.readerMuted)
+                    .foregroundStyle(theme.secondaryText)
                     .multilineTextAlignment(.trailing)
                     .lineLimit(2)
                     .frame(width: dynamicTypeSize.isAccessibilitySize ? 150 : 172, alignment: .trailing)
@@ -248,6 +249,7 @@ private struct DiscoveryBrowserDestination: Identifiable, Hashable {
 }
 
 private struct DiscoverySearchResultsView: View {
+    @Environment(\.appTheme) private var theme
     let query: String
     let sources: [DiscoverySource]
     let isLoading: Bool
@@ -257,7 +259,7 @@ private struct DiscoverySearchResultsView: View {
 
     var body: some View {
         ZStack {
-            Color.readerBackground.ignoresSafeArea()
+            ThemeBackgroundView()
 
             if isLoading {
                 loadingView
@@ -276,10 +278,10 @@ private struct DiscoverySearchResultsView: View {
     private var loadingView: some View {
         VStack(spacing: 12) {
             ProgressView()
-                .tint(Color.readerAccent)
+                .tint(theme.accent)
             Text("正在搜索 \(sources.count) 个来源…")
                 .font(.subheadline)
-                .foregroundStyle(Color.readerMuted)
+                .foregroundStyle(theme.secondaryText)
         }
     }
 
@@ -287,15 +289,15 @@ private struct DiscoverySearchResultsView: View {
         VStack(spacing: 10) {
             Image(systemName: "exclamationmark.triangle")
                 .font(.system(size: 28, weight: .semibold))
-                .foregroundStyle(Color.readerMuted)
+                .foregroundStyle(theme.secondaryText)
 
             Text("搜索失败")
                 .font(.headline)
-                .foregroundStyle(Color.readerInk)
+                .foregroundStyle(theme.primaryText)
 
             Text(message)
                 .font(.subheadline)
-                .foregroundStyle(Color.readerMuted)
+                .foregroundStyle(theme.secondaryText)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 24)
         }
@@ -306,11 +308,11 @@ private struct DiscoverySearchResultsView: View {
             VStack(alignment: .leading, spacing: 16) {
                 Text("没有找到匹配内容")
                     .font(.headline)
-                    .foregroundStyle(Color.readerInk)
+                    .foregroundStyle(theme.primaryText)
 
                 Text("你也可以直接按来源搜索：")
                     .font(.subheadline)
-                    .foregroundStyle(Color.readerMuted)
+                    .foregroundStyle(theme.secondaryText)
 
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 110), spacing: 10)], spacing: 10) {
                     ForEach(sources) { source in
@@ -321,14 +323,14 @@ private struct DiscoverySearchResultsView: View {
                         } label: {
                             Text(source.name)
                                 .font(.caption.weight(.semibold))
-                                .foregroundStyle(Color.readerInk)
+                                .foregroundStyle(theme.primaryText)
                                 .lineLimit(1)
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 9)
                                 .padding(.horizontal, 8)
                                 .background(
                                     RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                        .fill(Color.readerSurface)
+                                        .fill(theme.cardBackground)
                                 )
                         }
                         .buttonStyle(.plain)
@@ -345,20 +347,20 @@ private struct DiscoverySearchResultsView: View {
             VStack(alignment: .leading, spacing: 12) {
                 Text("“\(query)” 相关结果")
                     .font(.subheadline)
-                    .foregroundStyle(Color.readerMuted)
+                    .foregroundStyle(theme.secondaryText)
                     .padding(.horizontal, 4)
 
                 ForEach(groupedResults) { result in
                     VStack(alignment: .leading, spacing: 10) {
                         Text(result.title)
                             .font(.system(size: 18, weight: .semibold, design: .rounded))
-                            .foregroundStyle(Color.readerInk)
+                            .foregroundStyle(theme.primaryText)
                             .lineSpacing(3)
 
                         if !result.summary.isEmpty {
                             Text(result.summary)
                                 .font(.system(size: 14))
-                                .foregroundStyle(Color.readerMuted)
+                                .foregroundStyle(theme.secondaryText)
                                 .lineLimit(3)
                         }
 
@@ -370,12 +372,12 @@ private struct DiscoverySearchResultsView: View {
                                     } label: {
                                         Text(sourceLink.source.name)
                                             .font(.caption.weight(.semibold))
-                                            .foregroundStyle(Color.readerInk)
+                                            .foregroundStyle(theme.primaryText)
                                             .padding(.horizontal, 10)
                                             .padding(.vertical, 7)
                                             .background(
                                                 Capsule()
-                                                    .fill(Color.readerSurface)
+                                                    .fill(theme.cardBackground)
                                             )
                                     }
                                     .buttonStyle(.plain)
@@ -383,15 +385,13 @@ private struct DiscoverySearchResultsView: View {
                             }
                         }
                     }
-                    .padding(14)
+                    .padding(16)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     .background(
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .fill(Color.readerBackground.opacity(0.68))
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .fill(theme.subtleCardBackground)
                     )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .stroke(Color.readerMuted.opacity(0.2), lineWidth: 1)
-                    )
+                    .shadow(color: theme.cardShadow, radius: 6, x: 0, y: 2)
                 }
             }
             .padding(.horizontal, 16)

@@ -46,11 +46,19 @@ extension ReadingTheme {
 
 extension View {
     func readerCard() -> some View {
-        self
+        modifier(ReaderCardModifier())
+    }
+}
+
+private struct ReaderCardModifier: ViewModifier {
+    @Environment(\.appTheme) private var theme
+
+    func body(content: Content) -> some View {
+        content
             .padding(16)
-            .background(Color.readerSurface)
+            .background(theme.cardBackground)
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .shadow(color: .black.opacity(0.05), radius: 12, x: 0, y: 6)
+            .shadow(color: theme.cardShadow, radius: 12, x: 0, y: 6)
     }
 }
 
@@ -122,10 +130,15 @@ struct CompactStepper: View {
     let step: Double
     let format: (Double) -> String
     var background: Color = Color(.tertiarySystemFill)
-    var foreground: Color = Color.readerInk
-    var dividerColor: Color = Color.readerMuted.opacity(0.2)
+    var foreground: Color? = nil
+    var dividerColor: Color? = nil
+
+    @Environment(\.appTheme) private var theme
 
     var body: some View {
+        let resolvedForeground = foreground ?? theme.primaryText
+        let resolvedDivider = dividerColor ?? theme.secondaryText.opacity(0.25)
+
         let canDecrement = value > range.lowerBound
         let canIncrement = value < range.upperBound
 
@@ -144,7 +157,7 @@ struct CompactStepper: View {
             .opacity(canDecrement ? 1 : 0.35)
 
             Rectangle()
-                .fill(dividerColor)
+                .fill(resolvedDivider)
                 .frame(width: 1, height: 18)
 
             Text(format(value))
@@ -155,7 +168,7 @@ struct CompactStepper: View {
                 .frame(minWidth: 52, minHeight: 32)
 
             Rectangle()
-                .fill(dividerColor)
+                .fill(resolvedDivider)
                 .frame(width: 1, height: 18)
 
             Button {
@@ -171,7 +184,7 @@ struct CompactStepper: View {
             .disabled(!canIncrement)
             .opacity(canIncrement ? 1 : 0.35)
         }
-        .foregroundStyle(foreground)
+        .foregroundStyle(resolvedForeground)
         .background(
             RoundedRectangle(cornerRadius: 7, style: .continuous)
                 .fill(background)
@@ -183,11 +196,13 @@ struct SectionHeader: View {
     let title: String
     var actionTitle: String?
 
+    @Environment(\.appTheme) private var theme
+
     var body: some View {
         HStack {
             Text(title)
                 .font(.system(size: 20, weight: .bold, design: .rounded))
-                .foregroundStyle(Color.readerInk)
+                .foregroundStyle(theme.primaryText)
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
 
@@ -196,7 +211,7 @@ struct SectionHeader: View {
             if let actionTitle {
                 Button(actionTitle) { }
                     .font(.subheadline.weight(.medium))
-                    .foregroundStyle(Color.readerAccent)
+                    .foregroundStyle(theme.accent)
             }
         }
     }

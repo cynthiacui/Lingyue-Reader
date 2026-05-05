@@ -12,6 +12,7 @@ private struct LibraryScrollOffsetKey: PreferenceKey {
 struct LibraryView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.appTheme) private var theme
     @EnvironmentObject private var libraryStore: LibraryStore
 
     @State private var isAddingCategory = false
@@ -38,7 +39,7 @@ struct LibraryView: View {
 
     var body: some View {
         ZStack {
-            Color.readerBackground.ignoresSafeArea()
+            ThemeBackgroundView()
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
@@ -192,7 +193,7 @@ struct LibraryView: View {
                 } label: {
                     Image(systemName: "ellipsis.circle.fill")
                         .font(.system(size: 17, weight: .semibold))
-                        .foregroundStyle(Color.readerAccent)
+                        .foregroundStyle(theme.accent)
                 }
                 .accessibilityLabel("分类操作")
             }
@@ -291,6 +292,7 @@ private struct CenteredOverlay<Content: View>: View {
 }
 
 private struct BookPressableNavigationRow<Destination: View, Label: View>: View {
+    @Environment(\.appTheme) private var theme
     @State private var isNavigating = false
     @State private var didLongPress = false
     @State private var dragOffset: CGFloat = 0
@@ -368,7 +370,7 @@ private struct BookPressableNavigationRow<Destination: View, Label: View>: View 
                             .foregroundStyle(Color.white)
                             .frame(width: actionWidth)
                             .frame(maxHeight: .infinity)
-                            .background(Color.readerAccent)
+                            .background(theme.accent)
                             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                         }
                         .buttonStyle(.plain)
@@ -518,6 +520,7 @@ private struct CategoryEditOverlay: View {
     @Binding var categories: [LibraryCategory]
     @Binding var newCategoryName: String
     @FocusState private var isNewCategoryFocused: Bool
+    @Environment(\.appTheme) private var theme
     @AppStorage("reader.usesTraditionalChinese") private var usesTraditionalChinese = false
     let onDismiss: () -> Void
 
@@ -527,21 +530,21 @@ private struct CategoryEditOverlay: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("移动到分类")
                         .font(.system(size: 18, weight: .bold, design: .rounded))
-                        .foregroundStyle(Color.readerInk)
+                        .foregroundStyle(theme.primaryText)
 
                     Text(displayed(novel.title))
                         .font(.system(size: 13))
-                        .foregroundStyle(Color.readerMuted)
+                        .foregroundStyle(theme.secondaryText)
                         .lineLimit(1)
                 }
 
                 if categories.isEmpty {
                     Text("还没有分类，可以先创建一个。")
                         .font(.system(size: 13))
-                        .foregroundStyle(Color.readerMuted)
+                        .foregroundStyle(theme.secondaryText)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(12)
-                        .background(Color.readerBackground)
+                        .background(theme.background)
                         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                 } else {
                     ScrollView {
@@ -553,28 +556,28 @@ private struct CategoryEditOverlay: View {
                                     HStack(spacing: 10) {
                                         Image(systemName: "folder")
                                             .font(.system(size: 15, weight: .semibold))
-                                            .foregroundStyle(Color.readerAccent)
+                                            .foregroundStyle(theme.accent)
 
                                         Text(category.name)
                                             .font(.system(size: 15, weight: .semibold))
-                                            .foregroundStyle(Color.readerInk)
+                                            .foregroundStyle(theme.primaryText)
                                             .lineLimit(1)
 
                                         Spacer()
 
                                         Text("\(category.novels.count)")
                                             .font(.system(size: 12, weight: .medium))
-                                            .foregroundStyle(Color.readerMuted)
+                                            .foregroundStyle(theme.secondaryText)
 
                                         if categoryContains(novel, categoryID: category.id) {
                                             Image(systemName: "checkmark")
                                                 .font(.system(size: 12, weight: .bold))
-                                                .foregroundStyle(Color.readerAccent)
+                                                .foregroundStyle(theme.accent)
                                         }
                                     }
                                     .padding(.horizontal, 12)
                                     .padding(.vertical, 10)
-                                    .background(Color.readerBackground)
+                                    .background(theme.background)
                                     .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                                 }
                                 .buttonStyle(.plain)
@@ -587,7 +590,7 @@ private struct CategoryEditOverlay: View {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("创建新分类")
                         .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(Color.readerMuted)
+                        .foregroundStyle(theme.secondaryText)
 
                     HStack(spacing: 8) {
                         TextField("分类名称", text: $newCategoryName)
@@ -597,7 +600,7 @@ private struct CategoryEditOverlay: View {
                             .font(.system(size: 14))
                             .padding(.horizontal, 10)
                             .padding(.vertical, 9)
-                            .background(Color.readerBackground)
+                            .background(theme.background)
                             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                             .onSubmit {
                                 createCategoryAndMove(novel)
@@ -607,10 +610,10 @@ private struct CategoryEditOverlay: View {
                             createCategoryAndMove(novel)
                         }
                         .font(.system(size: 14, weight: .bold))
-                        .foregroundStyle(Color.readerSurface)
+                        .foregroundStyle(theme.cardBackground)
                         .padding(.horizontal, 12)
                         .padding(.vertical, 9)
-                        .background(trimmedNewCategoryName.isEmpty ? Color.readerMuted.opacity(0.45) : Color.readerAccent)
+                        .background(trimmedNewCategoryName.isEmpty ? theme.secondaryText.opacity(0.45) : theme.accent)
                         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                         .disabled(trimmedNewCategoryName.isEmpty)
                     }
@@ -621,12 +624,12 @@ private struct CategoryEditOverlay: View {
                     onDismiss()
                 }
                 .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(Color.readerMuted)
+                .foregroundStyle(theme.secondaryText)
                 .frame(maxWidth: .infinity)
             }
             .padding(16)
             .frame(maxWidth: 340, alignment: .leading)
-            .background(Color.readerSurface)
+            .background(theme.cardBackground)
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             .shadow(color: .black.opacity(0.16), radius: 24, x: 0, y: 12)
         } onDismiss: {
@@ -683,16 +686,18 @@ private struct CategoryEditOverlay: View {
 }
 
 private struct CompactSectionHeader: View {
+    @Environment(\.appTheme) private var theme
     let title: String
 
     var body: some View {
         Text(title)
             .font(.system(size: 18, weight: .bold, design: .rounded))
-            .foregroundStyle(Color.readerInk)
+            .foregroundStyle(theme.primaryText)
     }
 }
 
 private struct CompactReadingCard: View {
+    @Environment(\.appTheme) private var theme
     let novel: Novel
     @AppStorage("reader.usesTraditionalChinese") private var usesTraditionalChinese = false
 
@@ -701,7 +706,7 @@ private struct CompactReadingCard: View {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text(displayed(novel.title))
                     .font(.system(size: 15, weight: .semibold, design: .rounded))
-                    .foregroundStyle(Color.readerInk)
+                    .foregroundStyle(theme.primaryText)
                     .lineLimit(1)
                     .minimumScaleFactor(0.82)
 
@@ -709,25 +714,25 @@ private struct CompactReadingCard: View {
 
                 Text("\(Int(novel.progress * 100))%")
                     .font(.system(size: 12, weight: .bold, design: .rounded))
-                    .foregroundStyle(Color.readerAccent)
+                    .foregroundStyle(theme.accent)
                     .fixedSize(horizontal: true, vertical: false)
             }
 
             Text(displayed(novel.lastChapter))
                 .font(.system(size: 14, design: .serif))
-                .foregroundStyle(Color.readerMuted)
+                .foregroundStyle(theme.secondaryText)
                 .lineLimit(1)
                 .minimumScaleFactor(0.85)
 
             ProgressView(value: novel.progress)
-                .tint(.readerAccent)
+                .tint(theme.accent)
                 .controlSize(.small)
         }
         .padding(12)
         .frame(maxWidth: .infinity, minHeight: 92, alignment: .topLeading)
-        .background(Color.readerSurface)
+        .background(theme.cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .shadow(color: .black.opacity(0.035), radius: 8, x: 0, y: 4)
+        .shadow(color: theme.cardShadow, radius: 8, x: 0, y: 4)
     }
 
     private func displayed(_ text: String) -> String {
@@ -736,6 +741,7 @@ private struct CompactReadingCard: View {
 }
 
 private struct StackedCategoryShelf: View {
+    @Environment(\.appTheme) private var theme
     let category: LibraryCategory
     let namespace: Namespace.ID
     let isExpanded: Bool
@@ -767,14 +773,14 @@ private struct StackedCategoryShelf: View {
             HStack {
                 Text(category.name)
                     .font(.system(size: 16, weight: .bold, design: .rounded))
-                    .foregroundStyle(Color.readerInk)
+                    .foregroundStyle(theme.primaryText)
                     .lineLimit(1)
 
                 Spacer()
 
                 Text("\(category.novels.count) 本")
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(Color.readerMuted)
+                    .foregroundStyle(theme.secondaryText)
             }
 
             if visible.isEmpty {
@@ -834,6 +840,7 @@ private struct StackedCategoryShelf: View {
 }
 
 private struct StackBookCard: View {
+    @Environment(\.appTheme) private var theme
     let novel: Novel
     @AppStorage("reader.usesTraditionalChinese") private var usesTraditionalChinese = false
 
@@ -844,16 +851,16 @@ private struct StackBookCard: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(displayed(novel.title))
                     .font(.system(size: 15, weight: .semibold, design: .rounded))
-                    .foregroundStyle(Color.readerInk)
+                    .foregroundStyle(theme.primaryText)
                     .lineLimit(1)
 
                 BookMetadataLine(novel: novel, usesTraditionalChinese: usesTraditionalChinese)
                     .font(.system(size: 12))
-                    .foregroundStyle(Color.readerMuted)
+                    .foregroundStyle(theme.secondaryText)
 
                 Text(displayed(novel.lastChapter))
                     .font(.system(size: 12, design: .serif))
-                    .foregroundStyle(Color.readerMuted)
+                    .foregroundStyle(theme.secondaryText)
                     .lineLimit(1)
             }
 
@@ -861,15 +868,15 @@ private struct StackBookCard: View {
 
             Text("\(Int(novel.progress * 100))%")
                 .font(.system(size: 12, weight: .bold, design: .rounded))
-                .foregroundStyle(Color.readerAccent)
+                .foregroundStyle(theme.accent)
                 .fixedSize(horizontal: true, vertical: false)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.readerSurface)
+        .background(theme.cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .shadow(color: .black.opacity(0.10), radius: 8, x: 0, y: 4)
+        .shadow(color: theme.cardShadow, radius: 8, x: 0, y: 4)
     }
 
     private func displayed(_ text: String) -> String {
@@ -906,6 +913,7 @@ private struct BookMetadataLine: View {
 }
 
 private struct ExpandedCategoryOverlay: View {
+    @Environment(\.appTheme) private var theme
     let category: LibraryCategory
     let namespace: Namespace.ID
     let onDismiss: () -> Void
@@ -938,10 +946,10 @@ private struct ExpandedCategoryOverlay: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(category.name)
                             .font(.system(size: 20, weight: .bold, design: .rounded))
-                            .foregroundStyle(Color.readerInk)
+                            .foregroundStyle(theme.primaryText)
                         Text("\(category.novels.count) 本")
                             .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(Color.readerMuted)
+                            .foregroundStyle(theme.secondaryText)
                     }
 
                     Spacer()
@@ -951,7 +959,7 @@ private struct ExpandedCategoryOverlay: View {
                     } label: {
                         Image(systemName: "xmark.circle.fill")
                             .font(.system(size: 22, weight: .semibold))
-                            .foregroundStyle(Color.readerMuted)
+                            .foregroundStyle(theme.secondaryText)
                     }
                     .buttonStyle(.plain)
                 }
@@ -993,7 +1001,7 @@ private struct ExpandedCategoryOverlay: View {
                 }
             }
             .frame(maxWidth: .infinity)
-            .background(Color.readerBackground)
+            .background(theme.background)
             .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
             .shadow(color: .black.opacity(0.18), radius: 30, x: 0, y: 14)
             .padding(.horizontal, 16)
@@ -1004,6 +1012,7 @@ private struct ExpandedCategoryOverlay: View {
 }
 
 private struct CategoryShelf: View {
+    @Environment(\.appTheme) private var theme
     let category: LibraryCategory
     @Binding var categories: [LibraryCategory]
     @Binding var activeSwipeID: UUID?
@@ -1016,14 +1025,14 @@ private struct CategoryShelf: View {
             HStack {
                 Text(category.name)
                     .font(.system(size: 16, weight: .bold, design: .rounded))
-                    .foregroundStyle(Color.readerInk)
+                    .foregroundStyle(theme.primaryText)
                     .lineLimit(1)
 
                 Spacer()
 
                 Text("\(category.novels.count) 本")
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(Color.readerMuted)
+                    .foregroundStyle(theme.secondaryText)
 
                 if !category.novels.isEmpty {
                     NavigationLink {
@@ -1035,7 +1044,7 @@ private struct CategoryShelf: View {
                         Text("查看全部")
                             .font(.system(size: 12, weight: .semibold))
                     }
-                    .foregroundStyle(Color.readerAccent)
+                    .foregroundStyle(theme.accent)
                 }
             }
 
@@ -1080,30 +1089,35 @@ private struct CategoryShelf: View {
 }
 
 private struct EmptyCategoryCard: View {
+    @Environment(\.appTheme) private var theme
+
     var body: some View {
         Text("还没有分类")
             .font(.system(size: 14, weight: .medium))
-            .foregroundStyle(Color.readerMuted)
+            .foregroundStyle(theme.secondaryText)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(12)
-            .background(Color.readerSurface.opacity(0.72))
+            .background(theme.cardBackground.opacity(0.72))
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 }
 
 private struct EmptyCategoryRow: View {
+    @Environment(\.appTheme) private var theme
+
     var body: some View {
         Text("暂无书籍")
             .font(.system(size: 13))
-            .foregroundStyle(Color.readerMuted)
+            .foregroundStyle(theme.secondaryText)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(10)
-            .background(Color.readerSurface.opacity(0.58))
+            .background(theme.cardBackground.opacity(0.58))
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 }
 
 private struct CategoryBookRow: View {
+    @Environment(\.appTheme) private var theme
     let novel: Novel
     @AppStorage("reader.usesTraditionalChinese") private var usesTraditionalChinese = false
 
@@ -1114,16 +1128,16 @@ private struct CategoryBookRow: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(displayed(novel.title))
                     .font(.system(size: 15, weight: .semibold, design: .rounded))
-                    .foregroundStyle(Color.readerInk)
+                    .foregroundStyle(theme.primaryText)
                     .lineLimit(1)
 
                 BookMetadataLine(novel: novel, usesTraditionalChinese: usesTraditionalChinese)
                     .font(.system(size: 12))
-                    .foregroundStyle(Color.readerMuted)
+                    .foregroundStyle(theme.secondaryText)
 
                 Text(displayed(novel.lastChapter))
                     .font(.system(size: 13, design: .serif))
-                    .foregroundStyle(Color.readerMuted)
+                    .foregroundStyle(theme.secondaryText)
                     .lineLimit(2)
             }
 
@@ -1131,12 +1145,12 @@ private struct CategoryBookRow: View {
 
             Text("\(Int(novel.progress * 100))%")
                 .font(.system(size: 12, weight: .bold, design: .rounded))
-                .foregroundStyle(Color.readerAccent)
+                .foregroundStyle(theme.accent)
                 .fixedSize(horizontal: true, vertical: false)
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.readerSurface.opacity(0.78))
+        .background(theme.cardBackground.opacity(0.78))
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 
@@ -1159,6 +1173,7 @@ private struct CategoryDetailView: View {
 
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.appTheme) private var theme
     @State private var searchText = ""
     @State private var sortMode: CategorySortMode = .recent
     @State private var categoryEditBook: Novel?
@@ -1215,7 +1230,7 @@ private struct CategoryDetailView: View {
 
     var body: some View {
         ZStack {
-            Color.readerBackground.ignoresSafeArea()
+            ThemeBackgroundView()
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
@@ -1321,6 +1336,7 @@ private struct CategoryManagementView: View {
     @EnvironmentObject private var libraryStore: LibraryStore
     @AppStorage("reader.usesTraditionalChinese") private var usesTraditionalChinese = false
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.appTheme) private var theme
     @State private var pendingDeletion: LibraryCategory?
     @State private var editingCategoryID: UUID?
     @State private var editingName: String = ""
@@ -1373,7 +1389,7 @@ private struct CategoryManagementView: View {
             if libraryStore.categories.isEmpty {
                 Text("还没有分类")
                     .font(.system(size: 14))
-                    .foregroundStyle(Color.readerMuted)
+                    .foregroundStyle(theme.secondaryText)
             }
         }
         .alert(
@@ -1396,11 +1412,11 @@ private struct CategoryManagementView: View {
             HStack(spacing: 12) {
                 Image(systemName: "folder.fill")
                     .font(.system(size: 17, weight: .semibold))
-                    .foregroundStyle(Color.readerAccent)
+                    .foregroundStyle(theme.accent)
 
                 TextField("分类名称", text: $editingName)
                     .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(Color.readerInk)
+                    .foregroundStyle(theme.primaryText)
                     .textInputAutocapitalization(.never)
                     .submitLabel(.done)
                     .focused($renameFieldFocused)
@@ -1410,12 +1426,12 @@ private struct CategoryManagementView: View {
 
                 Button("取消") { cancelRename() }
                     .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(Color.readerMuted)
+                    .foregroundStyle(theme.secondaryText)
                     .buttonStyle(.plain)
 
                 Button("完成") { commitRename(for: category) }
                     .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(Color.readerAccent)
+                    .foregroundStyle(theme.accent)
                     .buttonStyle(.plain)
                     .disabled(editingName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
@@ -1423,17 +1439,17 @@ private struct CategoryManagementView: View {
             HStack(spacing: 12) {
                 Image(systemName: "folder.fill")
                     .font(.system(size: 17, weight: .semibold))
-                    .foregroundStyle(Color.readerAccent)
+                    .foregroundStyle(theme.accent)
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(displayed(category.name))
                         .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(Color.readerInk)
+                        .foregroundStyle(theme.primaryText)
                         .lineLimit(1)
 
                     Text("\(category.novels.count) 本")
                         .font(.system(size: 12))
-                        .foregroundStyle(Color.readerMuted)
+                        .foregroundStyle(theme.secondaryText)
                 }
 
                 Spacer()
@@ -1443,7 +1459,7 @@ private struct CategoryManagementView: View {
                 } label: {
                     Image(systemName: "pencil.circle.fill")
                         .font(.system(size: 22))
-                        .foregroundStyle(Color.readerAccent, Color.readerAccent.opacity(0.14))
+                        .foregroundStyle(theme.accent, theme.accent.opacity(0.14))
                         .symbolRenderingMode(.palette)
                 }
                 .buttonStyle(.plain)
