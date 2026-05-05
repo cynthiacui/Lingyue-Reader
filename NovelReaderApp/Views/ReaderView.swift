@@ -716,7 +716,13 @@ struct ReaderView: View {
     }
 
     private func placeholderPage(forChapterAt chapterIndex: Int) -> ReaderPageItem {
-        let chapter = baseChapters.indices.contains(chapterIndex) ? baseChapters[chapterIndex] : nil
+        // Resolve through loadedChapterOverrides so a chapter that was populated
+        // by loadDiskCachedChapterImmediately (synchronous disk hit on chapter
+        // switch) shows its content right away instead of flashing the
+        // "正在加载章节内容..." placeholder before rebuildVisiblePagesIfNeeded
+        // catches up.
+        let rawChapter = baseChapters.indices.contains(chapterIndex) ? baseChapters[chapterIndex] : nil
+        let chapter = rawChapter.map { loadedChapterOverrides[chapterCacheKey($0)] ?? $0 }
         let title = displayed(chapter?.title ?? activeNovel.title)
         return ReaderPageItem(
             chapterIndex: max(0, chapterIndex),
@@ -1099,6 +1105,16 @@ struct ReaderView: View {
         let key = chapterCacheKey(chapter)
         if let errorMessage = chapterLoadErrors[key] {
             return "\(chapter.title)\n\n章节加载失败：\(errorMessage)"
+        }
+
+        // Last-chance synchronous disk hit. Async cache hydration
+        // (loadCachedChapterIfAvailable) yields the actor before populating
+        // loadedChapterOverrides, so a downloaded chapter would otherwise flash
+        // the loading placeholder during the actor hop. Reading the JSON off
+        // disk directly is fast enough to do inline on the render pass.
+        if let cached = ChapterContentCache.diskCachedChapter(for: chapter),
+           !cached.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return cached.content
         }
 
         if loadingChapterKeys.contains(key) {
