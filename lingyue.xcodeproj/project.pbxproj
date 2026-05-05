@@ -7,7 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		010000000000000000000101 /* NovelReaderAppApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000001 /* NovelReaderAppApp.swift */; };
+		010000000000000000000101 /* LingyueApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000001 /* LingyueApp.swift */; };
 		010000000000000000000102 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000002 /* ContentView.swift */; };
 		010000000000000000000103 /* Novel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000003 /* Novel.swift */; };
 		010000000000000000000104 /* MockData.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000004 /* MockData.swift */; };
@@ -30,7 +30,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-		010000000000000000000001 /* NovelReaderAppApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NovelReaderAppApp.swift; sourceTree = "<group>"; };
+		010000000000000000000001 /* LingyueApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LingyueApp.swift; sourceTree = "<group>"; };
 		010000000000000000000002 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		010000000000000000000003 /* Novel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Novel.swift; sourceTree = "<group>"; };
 		010000000000000000000004 /* MockData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MockData.swift; sourceTree = "<group>"; };
@@ -40,7 +40,7 @@
 		010000000000000000000008 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		010000000000000000000009 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		01000000000000000000000A /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
-		01000000000000000000000B /* NovelReaderApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = NovelReaderApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		01000000000000000000000B /* lingyue.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = lingyue.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		01000000000000000000000C /* ReaderView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReaderView.swift; sourceTree = "<group>"; };
 		01000000000000000000000D /* InAppBrowserView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InAppBrowserView.swift; sourceTree = "<group>"; };
 		01000000000000000000000E /* LibraryStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryStore.swift; sourceTree = "<group>"; };
@@ -68,15 +68,15 @@
 		010000000000000000000301 = {
 			isa = PBXGroup;
 			children = (
-				010000000000000000000302 /* NovelReaderApp */,
+				010000000000000000000302 /* lingyue */,
 				010000000000000000000303 /* Products */,
 			);
 			sourceTree = "<group>";
 		};
-		010000000000000000000302 /* NovelReaderApp */ = {
+		010000000000000000000302 /* lingyue */ = {
 			isa = PBXGroup;
 			children = (
-				010000000000000000000001 /* NovelReaderAppApp.swift */,
+				010000000000000000000001 /* LingyueApp.swift */,
 				010000000000000000000002 /* ContentView.swift */,
 				010000000000000000000304 /* Models */,
 				010000000000000000000305 /* Data */,
@@ -84,13 +84,13 @@
 				010000000000000000000307 /* SupportingFiles */,
 				010000000000000000000009 /* Assets.xcassets */,
 			);
-			path = NovelReaderApp;
+			path = lingyue;
 			sourceTree = "<group>";
 		};
 		010000000000000000000303 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				01000000000000000000000B /* NovelReaderApp.app */,
+				01000000000000000000000B /* lingyue.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -144,9 +144,9 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		010000000000000000000401 /* NovelReaderApp */ = {
+		010000000000000000000401 /* lingyue */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = 010000000000000000000501 /* Build configuration list for PBXNativeTarget "NovelReaderApp" */;
+			buildConfigurationList = 010000000000000000000501 /* Build configuration list for PBXNativeTarget "lingyue" */;
 			buildPhases = (
 				010000000000000000000202 /* Sources */,
 				010000000000000000000201 /* Frameworks */,
@@ -156,9 +156,9 @@
 			);
 			dependencies = (
 			);
-			name = NovelReaderApp;
-			productName = NovelReaderApp;
-			productReference = 01000000000000000000000B /* NovelReaderApp.app */;
+			name = lingyue;
+			productName = lingyue;
+			productReference = 01000000000000000000000B /* lingyue.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -176,7 +176,7 @@
 					};
 				};
 			};
-			buildConfigurationList = 010000000000000000000502 /* Build configuration list for PBXProject "NovelReaderApp" */;
+			buildConfigurationList = 010000000000000000000502 /* Build configuration list for PBXProject "lingyue" */;
 			compatibilityVersion = "Xcode 14.0";
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
@@ -190,7 +190,7 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				010000000000000000000401 /* NovelReaderApp */,
+				010000000000000000000401 /* lingyue */,
 			);
 		};
 /* End PBXProject section */
@@ -211,7 +211,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				010000000000000000000101 /* NovelReaderAppApp.swift in Sources */,
+				010000000000000000000101 /* LingyueApp.swift in Sources */,
 				010000000000000000000102 /* ContentView.swift in Sources */,
 				010000000000000000000103 /* Novel.swift in Sources */,
 				010000000000000000000104 /* MockData.swift in Sources */,
@@ -356,14 +356,14 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_ASSET_PATHS = "";
 				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_FILE = NovelReaderApp/SupportingFiles/Info.plist;
+				INFOPLIST_FILE = lingyue/SupportingFiles/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.example.NovelReaderApp;
+				PRODUCT_BUNDLE_IDENTIFIER = com.lingyue.reader;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
@@ -381,14 +381,14 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_ASSET_PATHS = "";
 				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_FILE = NovelReaderApp/SupportingFiles/Info.plist;
+				INFOPLIST_FILE = lingyue/SupportingFiles/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.example.NovelReaderApp;
+				PRODUCT_BUNDLE_IDENTIFIER = com.lingyue.reader;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
@@ -402,7 +402,7 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		010000000000000000000501 /* Build configuration list for PBXNativeTarget "NovelReaderApp" */ = {
+		010000000000000000000501 /* Build configuration list for PBXNativeTarget "lingyue" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				010000000000000000000603 /* Debug */,
@@ -411,7 +411,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		010000000000000000000502 /* Build configuration list for PBXProject "NovelReaderApp" */ = {
+		010000000000000000000502 /* Build configuration list for PBXProject "lingyue" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				010000000000000000000601 /* Debug */,

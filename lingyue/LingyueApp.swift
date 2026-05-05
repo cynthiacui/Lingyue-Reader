@@ -1,7 +1,7 @@
 import SwiftUI
 
 @main
-struct NovelReaderAppApp: App {
+struct LingyueApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()

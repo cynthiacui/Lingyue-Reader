@@ -331,7 +331,7 @@ final class LibraryStore: ObservableObject {
         let baseURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? FileManager.default.temporaryDirectory
         return baseURL
-            .appendingPathComponent("NovelReaderApp", isDirectory: true)
+            .appendingPathComponent("lingyue", isDirectory: true)
             .appendingPathComponent("LibraryStore.json")
     }
 }
