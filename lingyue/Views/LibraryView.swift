@@ -39,32 +39,40 @@ struct LibraryView: View {
         ]
     }
 
+    private var isLibraryEmpty: Bool {
+        libraryStore.allNovels.isEmpty && libraryStore.categories.isEmpty
+    }
+
     var body: some View {
         ZStack {
             ThemeBackgroundView()
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    currentlyReadingSection
-                    categorizedBooksSection
-                }
-                .padding(.top, 8)
-                .padding(.bottom, 18)
-                .background(
-                    GeometryReader { proxy in
-                        Color.clear.preference(
-                            key: LibraryScrollOffsetKey.self,
-                            value: proxy.frame(in: .named("LibraryScroll")).minY
-                        )
+            if isLibraryEmpty {
+                emptyStateView
+            } else {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 18) {
+                        currentlyReadingSection
+                        categorizedBooksSection
                     }
-                )
+                    .padding(.top, 8)
+                    .padding(.bottom, 18)
+                    .background(
+                        GeometryReader { proxy in
+                            Color.clear.preference(
+                                key: LibraryScrollOffsetKey.self,
+                                value: proxy.frame(in: .named("LibraryScroll")).minY
+                            )
+                        }
+                    )
+                }
+                .coordinateSpace(name: "LibraryScroll")
+                .onPreferenceChange(LibraryScrollOffsetKey.self) { _ in
+                    closeActiveSwipe()
+                }
+                .contentMargins(.horizontal, horizontalMargin, for: .scrollContent)
+                .safeAreaPadding(.bottom, 12)
             }
-            .coordinateSpace(name: "LibraryScroll")
-            .onPreferenceChange(LibraryScrollOffsetKey.self) { _ in
-                closeActiveSwipe()
-            }
-            .contentMargins(.horizontal, horizontalMargin, for: .scrollContent)
-            .safeAreaPadding(.bottom, 12)
 
             if let expandedCategory = libraryStore.categories.first(where: { $0.id == expandedCategoryID }) {
                 ExpandedCategoryOverlay(
@@ -170,23 +178,74 @@ struct LibraryView: View {
         }
     }
 
-    private var currentlyReadingSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            CompactSectionHeader(title: "最近阅读")
+    private var emptyStateView: some View {
+        VStack(spacing: 22) {
+            ZStack {
+                Circle()
+                    .fill(theme.accent.opacity(0.10))
+                    .frame(width: 124, height: 124)
 
-            LazyVGrid(columns: readingColumns, spacing: 10) {
-                ForEach(Array(libraryStore.currentlyReading.prefix(2))) { novel in
-                    let actions = downloadActions(for: novel)
-                    BookPressableNavigationRow(
-                        rowID: novel.id,
-                        activeSwipeID: $activeSwipeID,
-                        label: { CompactReadingCard(novel: novel) },
-                        onTap: { bookToOpen = novel },
-                        onLongPress: { presentCategoryEditor(for: novel) },
-                        onDownload: actions.onDownload,
-                        onClearDownloadData: actions.onClearDownloadData,
-                        onDelete: { libraryStore.deleteBook(novel) }
-                    )
+                Image(systemName: "books.vertical")
+                    .font(.system(size: 52, weight: .light))
+                    .foregroundStyle(theme.accent.opacity(0.85))
+            }
+
+            VStack(spacing: 10) {
+                Text("书架空空如也")
+                    .font(.system(size: 22, weight: .semibold, design: .rounded))
+                    .foregroundStyle(theme.primaryText)
+
+                Text("点击下方「发现」搜索并导入小说\n也可以先创建一个分类整理书籍")
+                    .font(.system(size: 14))
+                    .foregroundStyle(theme.secondaryText)
+                    .multilineTextAlignment(.center)
+                    .lineSpacing(4)
+            }
+            .padding(.horizontal, 40)
+
+            Button {
+                closeActiveSwipe()
+                newCategoryName = ""
+                isAddingCategory = true
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "folder.badge.plus")
+                        .font(.system(size: 15, weight: .semibold))
+                    Text("新建分类")
+                        .font(.system(size: 15, weight: .semibold))
+                }
+                .foregroundStyle(theme.accent)
+                .padding(.horizontal, 22)
+                .padding(.vertical, 12)
+                .background(Capsule().fill(theme.accent.opacity(0.14)))
+            }
+            .buttonStyle(.plain)
+            .padding(.top, 4)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(.bottom, 60)
+    }
+
+    @ViewBuilder
+    private var currentlyReadingSection: some View {
+        if !libraryStore.currentlyReading.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+                CompactSectionHeader(title: "最近阅读")
+
+                LazyVGrid(columns: readingColumns, spacing: 10) {
+                    ForEach(Array(libraryStore.currentlyReading.prefix(2))) { novel in
+                        let actions = downloadActions(for: novel)
+                        BookPressableNavigationRow(
+                            rowID: novel.id,
+                            activeSwipeID: $activeSwipeID,
+                            label: { CompactReadingCard(novel: novel) },
+                            onTap: { bookToOpen = novel },
+                            onLongPress: { presentCategoryEditor(for: novel) },
+                            onDownload: actions.onDownload,
+                            onClearDownloadData: actions.onClearDownloadData,
+                            onDelete: { libraryStore.deleteBook(novel) }
+                        )
+                    }
                 }
             }
         }
@@ -1204,13 +1263,38 @@ private struct EmptyCategoryRow: View {
     @Environment(\.appTheme) private var theme
 
     var body: some View {
-        Text("暂无书籍")
-            .font(.system(size: 13))
-            .foregroundStyle(theme.secondaryText)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(10)
-            .background(theme.cardBackground.opacity(0.58))
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        HStack(spacing: 12) {
+            Image(systemName: "book.closed")
+                .font(.system(size: 17, weight: .light))
+                .foregroundStyle(theme.accent.opacity(0.85))
+                .frame(width: 36, height: 36)
+                .background(Circle().fill(theme.accent.opacity(0.10)))
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("暂无书籍")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(theme.primaryText.opacity(0.85))
+                Text("前往「发现」搜索并导入")
+                    .font(.system(size: 12))
+                    .foregroundStyle(theme.secondaryText)
+            }
+
+            Spacer()
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(theme.cardBackground.opacity(0.45))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(
+                    theme.accent.opacity(0.28),
+                    style: StrokeStyle(lineWidth: 1, dash: [5, 4])
+                )
+        )
     }
 }
 
