@@ -118,6 +118,11 @@ struct InAppBrowserView: View {
             bookTitle: candidate.title,
             message: "是否将此书导入到书架？",
             primaryButton: .primary("导入") {
+                // Mark this URL as handled before kicking off the import flow,
+                // otherwise the delayed page-load inspections (0.6s/1.5s after
+                // didFinish) will re-detect the same book and re-show this popup
+                // on top of the category prompt.
+                ignoredBookURLs.insert(candidate.sourceURL.absoluteString)
                 withAnimation(ModalStyle.presentationAnimation) {
                     detectedBook = nil
                 }
@@ -159,6 +164,7 @@ struct InAppBrowserView: View {
         print("[Browser] inspect \(url.absoluteString) — htmlBytes=\(html.count) detected=\(detectedBook != nil) ignored=\(ignoredBookURLs.contains(url.absoluteString))")
 #endif
         guard replacementCandidate == nil,
+              categoryPrompt == nil,
               importStatus == nil,
               importResult == nil else { return }
         guard !ignoredBookURLs.contains(url.absoluteString) else { return }
@@ -173,6 +179,7 @@ struct InAppBrowserView: View {
                 print("[Browser] candidate ready for \(url.absoluteString) — title=\(candidate.title)")
 #endif
                 guard replacementCandidate == nil,
+                      categoryPrompt == nil,
                       importStatus == nil,
                       importResult == nil,
                       !ignoredBookURLs.contains(url.absoluteString) else {
