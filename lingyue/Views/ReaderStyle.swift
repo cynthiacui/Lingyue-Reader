@@ -40,8 +40,8 @@ extension ReadingTheme {
     var pageBackground: Color {
         switch self {
         case .paper: return Color(red: 0.97, green: 0.96, blue: 0.93)
-        case .warm:  return Color(red: 0.98, green: 0.92, blue: 0.82)
-        case .mint:  return Color(red: 0.83, green: 0.91, blue: 0.83)
+        case .warm:  return Color(red: 0.9725, green: 0.9373, blue: 0.8510)
+        case .mint:  return Color(red: 0.8980, green: 0.9294, blue: 0.8471)
         case .sky:   return Color(red: 0.85, green: 0.91, blue: 0.96)
         case .night: return Color(red: 0.08, green: 0.08, blue: 0.075)
         }
