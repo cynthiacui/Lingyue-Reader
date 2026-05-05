@@ -316,13 +316,14 @@ struct ReaderView: View {
 
     private func controlsTopBar(safeTop: CGFloat, currentPage: ReaderPageItem) -> some View {
         VStack {
-            HStack {
+            HStack(spacing: 0) {
                 Button {
                     dismiss()
                 } label: {
                     Image(systemName: "chevron.left")
                         .font(.system(size: 19, weight: .semibold))
-                        .frame(width: 50, height: 50)
+                        .frame(width: 64, height: 52)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
 
@@ -343,7 +344,8 @@ struct ReaderView: View {
                 } label: {
                     Image(systemName: "textformat.size")
                         .font(.system(size: 19, weight: .semibold))
-                        .frame(width: 44, height: 50)
+                        .frame(width: 56, height: 52)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
 
@@ -355,12 +357,13 @@ struct ReaderView: View {
                 } label: {
                     Image(systemName: "list.bullet")
                         .font(.system(size: 19, weight: .semibold))
-                        .frame(width: 44, height: 50)
+                        .frame(width: 64, height: 52)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
             }
             .foregroundStyle(pageForeground)
-            .padding(.horizontal, 18)
+            .padding(.horizontal, 8)
             .padding(.top, controlsTopPadding(safeTop: safeTop))
             .padding(.bottom, 14)
             .background(
@@ -391,14 +394,15 @@ struct ReaderView: View {
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(secondaryForeground)
 
-                HStack(spacing: 12) {
+                HStack(spacing: 8) {
                     Button {
                         guard canGoPrevChapter else { return }
                         goToChapter(currentChapterIndex - 1, pageIndex: 0)
                     } label: {
                         Image(systemName: "chevron.left")
                             .font(.system(size: 18, weight: .semibold))
-                            .frame(width: 44, height: 44)
+                            .frame(width: 64, height: 48)
+                            .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                     .disabled(!canGoPrevChapter)
@@ -412,7 +416,8 @@ struct ReaderView: View {
                     } label: {
                         Image(systemName: "chevron.right")
                             .font(.system(size: 18, weight: .semibold))
-                            .frame(width: 44, height: 44)
+                            .frame(width: 64, height: 48)
+                            .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                     .disabled(!canGoNextChapter)
@@ -420,7 +425,7 @@ struct ReaderView: View {
                 }
             }
             .foregroundStyle(pageForeground)
-            .padding(.horizontal, 18)
+            .padding(.horizontal, 8)
             .padding(.top, 12)
             .padding(.bottom, max(safeBottom + 8, 18))
             .background(

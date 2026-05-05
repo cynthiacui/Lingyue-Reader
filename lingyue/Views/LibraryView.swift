@@ -180,8 +180,8 @@ struct LibraryView: View {
                     BookPressableNavigationRow(
                         rowID: novel.id,
                         activeSwipeID: $activeSwipeID,
-                        destination: { ReaderView(novel: novel) },
                         label: { CompactReadingCard(novel: novel) },
+                        onTap: { bookToOpen = novel },
                         onLongPress: { presentCategoryEditor(for: novel) },
                         onDownload: actions.onDownload,
                         onClearDownloadData: actions.onClearDownloadData,
@@ -358,16 +358,15 @@ private struct CenteredOverlay<Content: View>: View {
     }
 }
 
-private struct BookPressableNavigationRow<Destination: View, Label: View>: View {
+private struct BookPressableNavigationRow<Label: View>: View {
     @Environment(\.appTheme) private var theme
-    @State private var isNavigating = false
     @State private var dragOffset: CGFloat = 0
     @State private var isDragging = false
 
     let rowID: UUID
     @Binding var activeSwipeID: UUID?
-    let destination: Destination
     let label: Label
+    let onTap: () -> Void
     let onLongPress: () -> Void
     let onDownload: (() -> Void)?
     let onClearDownloadData: (() -> Void)?
@@ -404,8 +403,8 @@ private struct BookPressableNavigationRow<Destination: View, Label: View>: View 
     init(
         rowID: UUID,
         activeSwipeID: Binding<UUID?>,
-        @ViewBuilder destination: () -> Destination,
         @ViewBuilder label: () -> Label,
+        onTap: @escaping () -> Void,
         onLongPress: @escaping () -> Void,
         onDownload: (() -> Void)? = nil,
         onClearDownloadData: (() -> Void)? = nil,
@@ -413,8 +412,8 @@ private struct BookPressableNavigationRow<Destination: View, Label: View>: View 
     ) {
         self.rowID = rowID
         self._activeSwipeID = activeSwipeID
-        self.destination = destination()
         self.label = label()
+        self.onTap = onTap
         self.onLongPress = onLongPress
         self.onDownload = onDownload
         self.onClearDownloadData = onClearDownloadData
@@ -476,16 +475,13 @@ private struct BookPressableNavigationRow<Destination: View, Label: View>: View 
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .offset(x: displayedOffset)
                 .contentShape(Rectangle())
-                .navigationDestination(isPresented: $isNavigating) {
-                    destination
-                }
                 .onTapGesture {
                     if activeSwipeID != nil {
                         withAnimation(librarySwipeSpring) {
                             activeSwipeID = nil
                         }
                     } else {
-                        isNavigating = true
+                        onTap()
                     }
                 }
                 .contextMenu {
@@ -1190,82 +1186,6 @@ private struct ExpandedCategoryOverlay: View {
     }
 }
 
-private struct CategoryShelf: View {
-    @Environment(\.appTheme) private var theme
-    @EnvironmentObject private var downloadManager: BookDownloadManager
-    let category: LibraryCategory
-    @Binding var categories: [LibraryCategory]
-    @Binding var activeSwipeID: UUID?
-    let onBookLongPress: (Novel) -> Void
-
-    private let previewLimit = 4
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text(category.name)
-                    .font(.system(size: 16, weight: .bold, design: .rounded))
-                    .foregroundStyle(theme.primaryText)
-                    .lineLimit(1)
-
-                Spacer()
-
-                Text("\(category.novels.count) 本")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(theme.secondaryText)
-
-                if !category.novels.isEmpty {
-                    NavigationLink {
-                        CategoryDetailView(
-                            categoryID: category.id,
-                            categories: $categories
-                        )
-                    } label: {
-                        Text("查看全部")
-                            .font(.system(size: 12, weight: .semibold))
-                    }
-                    .foregroundStyle(theme.accent)
-                }
-            }
-
-            if category.novels.isEmpty {
-                EmptyCategoryRow()
-            } else {
-                VStack(spacing: 8) {
-                    ForEach(Array(category.novels.prefix(previewLimit))) { novel in
-                        let actions = bookDownloadActions(for: novel, manager: downloadManager)
-                        BookPressableNavigationRow(
-                            rowID: novel.id,
-                            activeSwipeID: $activeSwipeID,
-                            destination: { ReaderView(novel: novel) },
-                            label: { CategoryBookRow(novel: novel) },
-                            onLongPress: { onBookLongPress(novel) },
-                            onDownload: actions.onDownload,
-                            onClearDownloadData: actions.onClearDownloadData,
-                            onDelete: { delete(novel) }
-                        )
-                    }
-                }
-            }
-        }
-    }
-
-    private func delete(_ novel: Novel) {
-        var updatedCategories = categories
-        for index in updatedCategories.indices {
-            updatedCategories[index].novels.removeAll { $0.id == novel.id }
-        }
-        categories = updatedCategories
-    }
-
-    private func clearDownloadedData(for novel: Novel) {
-        downloadManager.clearState(for: novel)
-        Task {
-            await ChapterContentCache.shared.clearCache(for: novel)
-        }
-    }
-}
-
 private struct EmptyCategoryCard: View {
     @Environment(\.appTheme) private var theme
 
@@ -1363,6 +1283,7 @@ private struct CategoryDetailView: View {
     @State private var categoryEditBook: Novel?
     @State private var newBookCategoryName = ""
     @State private var activeSwipeID: UUID?
+    @State private var bookToOpen: Novel?
 
     private var horizontalMargin: CGFloat {
         if dynamicTypeSize.isAccessibilitySize { return 12 }
@@ -1434,8 +1355,8 @@ private struct CategoryDetailView: View {
                                 BookPressableNavigationRow(
                                     rowID: novel.id,
                                     activeSwipeID: $activeSwipeID,
-                                    destination: { ReaderView(novel: novel) },
                                     label: { CategoryBookRow(novel: novel) },
+                                    onTap: { bookToOpen = novel },
                                     onLongPress: { presentCategoryEditor(for: novel) },
                                     onDownload: actions.onDownload,
                                     onClearDownloadData: actions.onClearDownloadData,
@@ -1481,6 +1402,9 @@ private struct CategoryDetailView: View {
         .navigationTitle(categoryName)
         .navigationBarTitleDisplayMode(.inline)
         .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .always), prompt: "搜索书名、作者或章节")
+        .navigationDestination(item: $bookToOpen) { novel in
+            ReaderView(novel: novel)
+        }
         .onChange(of: categoryEditBook?.id) { _, _ in closeActiveSwipe() }
         .onChange(of: searchText) { _, _ in closeActiveSwipe() }
         .onChange(of: sortMode) { _, _ in closeActiveSwipe() }

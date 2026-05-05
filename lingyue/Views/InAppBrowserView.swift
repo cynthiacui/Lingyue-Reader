@@ -797,7 +797,8 @@ private struct BrandedCategoryCard: View {
     @State private var selectedName: String
     @State private var newCategoryDraft: String = ""
     @State private var locallyCreatedNames: [String] = []
-    @State private var lastCreatedName: String?
+    @State private var scrollTarget: String?
+    @State private var scrollTick = 0
     @FocusState private var newFieldFocused: Bool
 
     init(
@@ -881,8 +882,8 @@ private struct BrandedCategoryCard: View {
                     .animation(.spring(response: 0.42, dampingFraction: 0.84), value: allCategoryNames)
                 }
                 .frame(maxHeight: 280)
-                .onChange(of: lastCreatedName) { _, newValue in
-                    guard let target = newValue else { return }
+                .onChange(of: scrollTick) { _, _ in
+                    guard let target = scrollTarget else { return }
                     withAnimation(.spring(response: 0.42, dampingFraction: 0.84)) {
                         proxy.scrollTo(target, anchor: .bottom)
                     }
@@ -932,11 +933,8 @@ private struct BrandedCategoryCard: View {
         newCategoryDraft = ""
         newFieldFocused = false
 
-        // Trigger scroll-to even if user re-creates the same name in succession.
-        lastCreatedName = nil
-        DispatchQueue.main.async {
-            lastCreatedName = resolvedName
-        }
+        scrollTarget = resolvedName
+        scrollTick &+= 1
     }
 }
 
