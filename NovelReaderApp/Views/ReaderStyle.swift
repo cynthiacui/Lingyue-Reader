@@ -14,6 +14,21 @@ extension Color {
 }
 
 extension ReadingTheme {
+    /// Resolves the reading theme actually shown to the reader. When `followSystemDark` is on,
+    /// the dark `.night` (夜读) variant activates only while the device is in dark mode;
+    /// otherwise the user's manual pick is used (downgraded to `.paper` if it itself was
+    /// `.night`, so the reader doesn't appear "stuck on night" after enabling follow-system).
+    static func effective(
+        rawValue: String,
+        followSystemDark: Bool,
+        systemColorScheme: ColorScheme
+    ) -> ReadingTheme {
+        let manual = ReadingTheme(rawValue: rawValue) ?? .paper
+        guard followSystemDark else { return manual }
+        if systemColorScheme == .dark { return .night }
+        return manual == .night ? .paper : manual
+    }
+
     var pageBackground: Color {
         switch self {
         case .paper: return Color(red: 0.97, green: 0.96, blue: 0.93)

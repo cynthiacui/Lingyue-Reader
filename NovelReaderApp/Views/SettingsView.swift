@@ -4,12 +4,14 @@ struct SettingsView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.appTheme) private var theme
+    @Environment(\.colorScheme) private var systemColorScheme
     @EnvironmentObject private var themeManager: AppThemeManager
     @EnvironmentObject private var downloadManager: BookDownloadManager
 
     @AppStorage("reader.fontSize") private var fontSize = 18.0
     @AppStorage("reader.lineSpacing") private var lineSpacing = 8.0
     @AppStorage("reader.theme") private var themeRawValue = ReadingTheme.paper.rawValue
+    @AppStorage("reader.followSystemDark") private var readerFollowSystemDark = false
     @AppStorage("reader.usesTraditionalChinese") private var usesTraditionalChinese = false
     @AppStorage("reader.autoScroll") private var autoScroll = false
     @AppStorage("reader.autoScrollSeconds") private var autoScrollSeconds = 6.0
@@ -28,7 +30,18 @@ struct SettingsView: View {
         return horizontalSizeClass == .compact ? 16 : 24
     }
 
+    /// Theme actually used to render the preview — respects follow-system when on.
     private var selectedTheme: ReadingTheme {
+        ReadingTheme.effective(
+            rawValue: themeRawValue,
+            followSystemDark: readerFollowSystemDark,
+            systemColorScheme: systemColorScheme
+        )
+    }
+
+    /// Theme the user explicitly picked from the swatches. Used for swatch selection state so
+    /// the user's pick stays highlighted even while follow-system has overridden the preview.
+    private var manualReadingTheme: ReadingTheme {
         ReadingTheme(rawValue: themeRawValue) ?? .paper
     }
 
@@ -93,26 +106,52 @@ struct SettingsView: View {
         VStack(alignment: .leading, spacing: 14) {
             SectionHeader(title: "外观主题")
 
-            HStack(spacing: 12) {
-                ForEach(AppTheme.allCases) { option in
-                    Button {
-                        withAnimation(.easeInOut(duration: 0.2)) {
-                            themeManager.select(option)
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(spacing: 12) {
+                    ForEach(AppTheme.allCases) { option in
+                        Button {
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                themeManager.select(option)
+                            }
+                        } label: {
+                            appThemeSwatch(for: option)
                         }
-                    } label: {
-                        appThemeSwatch(for: option)
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(option.displayName)
+                        // When follow-system is on, the dark theme is auto-managed — block manual
+                        // selection so the swatch reads as informational rather than tappable.
+                        .disabled(themeManager.followSystemDark && option == .starryNight)
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(option.displayName)
+
+                    Spacer(minLength: 0)
                 }
 
-                Spacer(minLength: 0)
+                Toggle(isOn: Binding(
+                    get: { themeManager.followSystemDark },
+                    set: { newValue in
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            themeManager.setFollowSystemDark(newValue)
+                        }
+                    }
+                )) {
+                    Label("跟随系统深色模式", systemImage: "circle.lefthalf.filled")
+                }
+                .font(.subheadline)
+                .foregroundStyle(theme.primaryText)
+
+                if themeManager.followSystemDark {
+                    Text("系统切换深色时自动启用「星夜」，浅色时使用上方所选主题。")
+                        .font(.caption)
+                        .foregroundStyle(theme.secondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
         }
     }
 
     private func appThemeSwatch(for option: AppTheme) -> some View {
         let isSelected = themeManager.current == option
+        let isAutoManaged = themeManager.followSystemDark && option == .starryNight
         return ZStack {
             if let imageName = option.swatchImageName {
                 // Scale past the swatch frame so the white border baked into the source
@@ -132,7 +171,15 @@ struct SettingsView: View {
                     .allowsHitTesting(false)
             }
 
-            if isSelected {
+            if isAutoManaged {
+                // The swatch is locked to system dark mode — show an "Auto" glyph instead of a
+                // checkmark so the user understands the toggle below controls when it activates.
+                Image(systemName: "circle.lefthalf.filled")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(.white)
+                    .frame(width: 20, height: 20)
+                    .background(Circle().fill(option.accent))
+            } else if isSelected {
                 Image(systemName: "checkmark")
                     .font(.system(size: 13, weight: .bold))
                     .foregroundStyle(.white)
@@ -149,6 +196,7 @@ struct SettingsView: View {
                     lineWidth: isSelected ? 2 : 1
                 )
         )
+        .opacity(isAutoManaged ? 0.55 : 1.0)
     }
 
     private var readingControlsSection: some View {
@@ -277,6 +325,8 @@ struct SettingsView: View {
 
             HStack(alignment: .top, spacing: 6) {
                 ForEach(ReadingTheme.allCases) { readingTheme in
+                    let isSelected = readingTheme == manualReadingTheme
+                    let isAutoManaged = readerFollowSystemDark && readingTheme == .night
                     Button {
                         themeRawValue = readingTheme.rawValue
                     } label: {
@@ -287,12 +337,16 @@ struct SettingsView: View {
                                 .overlay(
                                     Circle()
                                         .strokeBorder(
-                                            readingTheme == selectedTheme ? theme.accent : Color.black.opacity(0.12),
-                                            lineWidth: readingTheme == selectedTheme ? 2.5 : 1
+                                            isSelected ? theme.accent : Color.black.opacity(0.12),
+                                            lineWidth: isSelected ? 2.5 : 1
                                         )
                                 )
                                 .overlay(alignment: .center) {
-                                    if readingTheme == selectedTheme {
+                                    if isAutoManaged {
+                                        Image(systemName: "circle.lefthalf.filled")
+                                            .font(.system(size: 13, weight: .bold))
+                                            .foregroundStyle(readingTheme.pageForeground)
+                                    } else if isSelected {
                                         Image(systemName: "checkmark")
                                             .font(.system(size: 13, weight: .bold))
                                             .foregroundStyle(readingTheme.pageForeground)
@@ -301,12 +355,27 @@ struct SettingsView: View {
 
                             Text(readingTheme.rawValue)
                                 .font(.caption)
-                                .foregroundStyle(readingTheme == selectedTheme ? theme.accent : theme.secondaryText)
+                                .foregroundStyle(isSelected ? theme.accent : theme.secondaryText)
                         }
                         .frame(maxWidth: .infinity)
+                        .opacity(isAutoManaged ? 0.55 : 1.0)
                     }
                     .buttonStyle(.plain)
+                    .disabled(isAutoManaged)
                 }
+            }
+
+            Toggle(isOn: $readerFollowSystemDark.animation(.easeInOut(duration: 0.2))) {
+                Label("跟随系统深色模式", systemImage: "circle.lefthalf.filled")
+                    .font(.subheadline)
+            }
+            .padding(.top, 4)
+
+            if readerFollowSystemDark {
+                Text("系统切换深色时自动启用「夜读」，浅色时使用上方所选背景。")
+                    .font(.caption)
+                    .foregroundStyle(theme.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }

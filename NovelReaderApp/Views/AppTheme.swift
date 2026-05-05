@@ -198,17 +198,39 @@ enum AppThemeBackground: Hashable {
 @MainActor
 final class AppThemeManager: ObservableObject {
     static let storageKey = "app.theme"
+    static let followSystemDarkKey = "app.followSystemDark"
 
     @AppStorage(AppThemeManager.storageKey) private var storedRawValue: String = AppTheme.paperGreen.rawValue
+    @AppStorage(AppThemeManager.followSystemDarkKey) private var storedFollowSystemDark: Bool = false
 
+    /// Theme the user picked from the Settings swatches. When `followSystemDark` is on this is
+    /// also the light fallback used while the device is in light mode.
     var current: AppTheme {
         AppTheme(rawValue: storedRawValue) ?? .paperGreen
+    }
+
+    var followSystemDark: Bool { storedFollowSystemDark }
+
+    /// Resolves the actually-displayed theme. When `followSystemDark` is on, `.starryNight`
+    /// activates only while the device is in dark mode; otherwise the manual selection is used
+    /// (downgraded to `.paperGreen` if the manual selection was itself `.starryNight`, so the
+    /// app doesn't appear "stuck on dark" after enabling follow-system).
+    func effectiveTheme(for systemColorScheme: ColorScheme) -> AppTheme {
+        guard storedFollowSystemDark else { return current }
+        if systemColorScheme == .dark { return .starryNight }
+        return current == .starryNight ? .paperGreen : current
     }
 
     func select(_ theme: AppTheme) {
         guard theme != current else { return }
         objectWillChange.send()
         storedRawValue = theme.rawValue
+    }
+
+    func setFollowSystemDark(_ enabled: Bool) {
+        guard enabled != storedFollowSystemDark else { return }
+        objectWillChange.send()
+        storedFollowSystemDark = enabled
     }
 }
 

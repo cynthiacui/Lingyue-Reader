@@ -6,12 +6,14 @@ struct ReaderView: View {
     let novel: Novel
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var systemColorScheme
     @EnvironmentObject private var libraryStore: LibraryStore
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @AppStorage("reader.fontSize") private var fontSize = 18.0
     @AppStorage("reader.lineSpacing") private var lineSpacing = 8.0
     @AppStorage("reader.theme") private var themeRawValue = ReadingTheme.paper.rawValue
+    @AppStorage("reader.followSystemDark") private var followSystemDark = false
     @AppStorage("reader.usesTraditionalChinese") private var usesTraditionalChinese = false
     @AppStorage("reader.autoScroll") private var autoScroll = false
     @AppStorage("reader.autoScrollSeconds") private var autoScrollSeconds = 6.0
@@ -76,6 +78,16 @@ struct ReaderView: View {
     }
 
     private var currentTheme: ReadingTheme {
+        ReadingTheme.effective(
+            rawValue: themeRawValue,
+            followSystemDark: followSystemDark,
+            systemColorScheme: systemColorScheme
+        )
+    }
+
+    /// Theme the user explicitly picked from the swatches — used to draw the "selected"
+    /// highlight on the swatch even when follow-system has overridden the active theme.
+    private var manualTheme: ReadingTheme {
         ReadingTheme(rawValue: themeRawValue) ?? .paper
     }
 
@@ -651,6 +663,8 @@ struct ReaderView: View {
 
             HStack(spacing: 10) {
                 ForEach(ReadingTheme.allCases) { theme in
+                    let isSelected = theme == manualTheme
+                    let isAutoManaged = followSystemDark && theme == .night
                     Button {
                         themeRawValue = theme.rawValue
                     } label: {
@@ -660,19 +674,25 @@ struct ReaderView: View {
                             .overlay(
                                 Circle()
                                     .strokeBorder(
-                                        theme == currentTheme ? Color.readerAccent : Color.black.opacity(0.18),
-                                        lineWidth: theme == currentTheme ? 2.5 : 1
+                                        isSelected ? Color.readerAccent : Color.black.opacity(0.18),
+                                        lineWidth: isSelected ? 2.5 : 1
                                     )
                             )
                             .overlay(alignment: .center) {
-                                if theme == currentTheme {
+                                if isAutoManaged {
+                                    Image(systemName: "circle.lefthalf.filled")
+                                        .font(.system(size: 11, weight: .bold))
+                                        .foregroundStyle(theme.pageForeground)
+                                } else if isSelected {
                                     Image(systemName: "checkmark")
                                         .font(.system(size: 11, weight: .bold))
                                         .foregroundStyle(theme.pageForeground)
                                 }
                             }
+                            .opacity(isAutoManaged ? 0.55 : 1.0)
                     }
                     .buttonStyle(.plain)
+                    .disabled(isAutoManaged)
                 }
                 Spacer(minLength: 0)
             }
