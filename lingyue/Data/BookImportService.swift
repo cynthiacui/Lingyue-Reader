@@ -57,6 +57,8 @@ enum WebBookImportError: LocalizedError {
     case emptyChapterContent
     case sourceBlockedContent
     case badStatus(Int)
+    case unsupportedEncoding
+    case unreadableFile
 
     var errorDescription: String? {
         switch self {
@@ -70,6 +72,10 @@ enum WebBookImportError: LocalizedError {
             return "该来源限制章节正文显示，请尝试其他来源。"
         case .badStatus(let statusCode):
             return "网页请求失败，状态码 \(statusCode)。"
+        case .unsupportedEncoding:
+            return "无法识别文件编码，仅支持 UTF-8 或 GB18030 的 .txt 文件。"
+        case .unreadableFile:
+            return "无法读取所选文件，请重新选择。"
         }
     }
 }
@@ -166,6 +172,92 @@ final class BookImportService: Sendable {
         }
 
         return try await importBook(from: candidate)
+    }
+
+    /// Imports a local `.txt` file as a Novel. Splits chapters using the same
+    /// "第N章" heuristic the web extractor uses; falls back to a single chapter
+    /// when the file has no recognizable chapter headings.
+    func importBook(fromPlainTextFile url: URL) throws -> Novel {
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer {
+            if scoped { url.stopAccessingSecurityScopedResource() }
+        }
+
+        let data: Data
+        do {
+            data = try Data(contentsOf: url)
+        } catch {
+            throw WebBookImportError.unreadableFile
+        }
+
+        let text: String
+        if let utf8 = String(data: data, encoding: .utf8) {
+            text = utf8
+        } else if let gb = String(data: data, encoding: .gb_18030_2000) {
+            text = gb
+        } else if let big5 = String(data: data, encoding: .big5Chinese) {
+            text = big5
+        } else {
+            throw WebBookImportError.unsupportedEncoding
+        }
+
+        let rawTitle = url.deletingPathExtension().lastPathComponent
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let title = rawTitle.isEmpty ? "未命名" : rawTitle
+
+        let chapters = splitPlainTextIntoChapters(text, fallbackTitle: title)
+
+        return Novel(
+            title: title,
+            author: "未知作者",
+            genre: LibraryStore.uncategorizedName,
+            summary: "",
+            lastChapter: chapters.first?.title ?? "",
+            progress: 0,
+            readMinutes: 0,
+            coverPalette: .deterministic(for: title),
+            isFeatured: false,
+            sourceURLString: BookSourceRegistry.localPlainTextSourceURLString(forTitle: title),
+            chapters: chapters
+        )
+    }
+
+    private func splitPlainTextIntoChapters(_ text: String, fallbackTitle: String) -> [NovelChapter] {
+        let chapterMarker = #"^第\s*[\d一二三四五六七八九十百千万零〇两]+\s*[章节節回卷页頁]"#
+
+        let lines = text.components(separatedBy: .newlines)
+
+        var chapters: [NovelChapter] = []
+        var currentTitle: String?
+        var currentBuffer: [String] = []
+
+        func flush() {
+            guard let title = currentTitle else { return }
+            let body = currentBuffer
+                .joined(separator: "\n")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            chapters.append(NovelChapter(title: title, content: body))
+        }
+
+        for rawLine in lines {
+            let trimmed = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty,
+               trimmed.range(of: chapterMarker, options: .regularExpression) != nil {
+                flush()
+                currentTitle = trimmed
+                currentBuffer = []
+            } else if currentTitle != nil {
+                currentBuffer.append(rawLine)
+            }
+        }
+        flush()
+
+        if chapters.isEmpty {
+            let body = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            return [NovelChapter(title: fallbackTitle, content: body)]
+        }
+
+        return chapters
     }
 
     func likelyCatalogURLs(for candidate: WebBookCandidate) -> [URL] {

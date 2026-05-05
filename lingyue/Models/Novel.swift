@@ -187,10 +187,27 @@ enum BookSourceRegistry {
         SourcePattern(name: "52书库", hosts: ["52shuku.net"])
     ]
 
+    /// Custom URL scheme used to mark books imported from a local `.txt` file. We don't store
+    /// the original file URL (which would leak sandbox paths and be tied to a single device),
+    /// so a sentinel URL with the title in the path keeps each imported book's `sourceURLString`
+    /// stable and unique.
+    static let localPlainTextScheme = "lingyue-local-txt"
+    static let localPlainTextDisplayName = "本地TXT"
+
+    static func localPlainTextSourceURLString(forTitle title: String) -> String {
+        let safeTitle = title.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? ""
+        return "\(localPlainTextScheme)://import/\(safeTitle)"
+    }
+
     static func displayName(for sourceURLString: String?) -> String? {
         guard let sourceURLString,
-              let url = URL(string: sourceURLString),
-              let host = url.host(percentEncoded: false) else {
+              let url = URL(string: sourceURLString) else {
+            return nil
+        }
+        if url.scheme == localPlainTextScheme {
+            return localPlainTextDisplayName
+        }
+        guard let host = url.host(percentEncoded: false) else {
             return nil
         }
         return displayName(forHost: host)

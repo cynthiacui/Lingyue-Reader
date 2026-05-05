@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 private let librarySwipeSpring: Animation = .spring(response: 0.32, dampingFraction: 0.86)
 
@@ -25,6 +26,8 @@ struct LibraryView: View {
     @State private var bookToOpen: Novel?
     @State private var isManagingCategories = false
     @State private var isShowingDownloads = false
+    @State private var isShowingTxtPicker = false
+    @State private var txtImportToast: String?
     @Namespace private var stackNamespace
 
     private var horizontalMargin: CGFloat {
@@ -125,9 +128,26 @@ struct LibraryView: View {
                 .transition(InputModalView.transition)
                 .zIndex(12)
             }
+
+            if let txtImportToast {
+                LibraryCenterToast(text: txtImportToast)
+                    .transition(.opacity.combined(with: .scale(scale: 0.92)))
+                    .allowsHitTesting(false)
+                    .zIndex(13)
+            }
         }
+        .animation(.easeInOut(duration: 0.22), value: txtImportToast)
         .navigationDestination(item: $bookToOpen) { novel in
             ReaderView(novel: novel)
+        }
+        .fileImporter(
+            isPresented: $isShowingTxtPicker,
+            allowedContentTypes: [.plainText, .text],
+            allowsMultipleSelection: false
+        ) { result in
+            if case .success(let urls) = result, let url = urls.first {
+                Task { await importTxt(at: url) }
+            }
         }
         .sheet(isPresented: $isManagingCategories) {
             NavigationStack {
@@ -147,6 +167,18 @@ struct LibraryView: View {
             .presentationDragIndicator(.visible)
         }
         .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                Button {
+                    closeActiveSwipe()
+                    isShowingTxtPicker = true
+                } label: {
+                    Image(systemName: "doc.badge.plus")
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(theme.accent)
+                }
+                .accessibilityLabel("从文件导入")
+            }
+
             ToolbarItem(placement: .topBarTrailing) {
                 LibraryDownloadToolbarButton(
                     isPresented: $isShowingDownloads,
@@ -359,6 +391,35 @@ struct LibraryView: View {
         downloadManager.startDownload(novel)
     }
 
+    @MainActor
+    private func importTxt(at url: URL) async {
+        let message: String
+        do {
+            let novel = try BookImportService.shared.importBook(fromPlainTextFile: url)
+            let alreadyInLibrary = libraryStore.containsBook(
+                sourceURLString: nil,
+                title: novel.title
+            )
+            libraryStore.addImportedNovel(novel)
+            if alreadyInLibrary {
+                message = "已替换《\(novel.title)》共 \(novel.chapters.count) 章"
+            } else {
+                message = "已导入《\(novel.title)》共 \(novel.chapters.count) 章"
+            }
+        } catch {
+            message = "导入失败：\(error.localizedDescription)"
+        }
+
+        txtImportToast = message
+        let dismissedNotice = message
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 1_800_000_000)
+            if txtImportToast == dismissedNotice {
+                txtImportToast = nil
+            }
+        }
+    }
+
     fileprivate func downloadActions(for novel: Novel) -> (onDownload: (() -> Void)?, onClearDownloadData: (() -> Void)?) {
         bookDownloadActions(for: novel, manager: downloadManager)
     }
@@ -393,6 +454,27 @@ fileprivate func bookDownloadActions(
         return (download, clear)
     case .downloaded:
         return (nil, clear)
+    }
+}
+
+/// Pill-shaped notice anchored to screen center. Used for one-shot import
+/// confirmations so the result reads as a glanceable acknowledgement.
+private struct LibraryCenterToast: View {
+    let text: String
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: 14, weight: .semibold, design: .rounded))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 18)
+            .padding(.vertical, 12)
+            .multilineTextAlignment(.center)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(Color.black.opacity(0.78))
+            )
+            .shadow(color: Color.black.opacity(0.25), radius: 14, x: 0, y: 6)
+            .accessibilityAddTraits(.isStaticText)
     }
 }
 
