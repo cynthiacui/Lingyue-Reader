@@ -102,44 +102,23 @@ struct DiscoveryView: View {
     }
 
     private var libraryList: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            Text("书库")
-                .font(.system(size: 30, weight: .bold, design: .rounded))
-                .foregroundStyle(theme.primaryText)
-                .padding(.bottom, 2)
+        let sources = DiscoverySourceCatalog.searchableSources
 
-            sourceSection(
-                title: "可搜索书库",
-                subtitle: "会参与上方聚合搜索",
-                sources: DiscoverySourceCatalog.searchableSources
-            )
-
-            sourceSection(
-                title: "暂未接入搜索",
-                subtitle: "目前可直接打开来源网站",
-                sources: DiscoverySourceCatalog.unsearchableSources
-            )
-            .padding(.top, 8)
-        }
-    }
-
-    private func sourceSection(title: String, subtitle: String, sources: [DiscoverySource]) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .lastTextBaseline, spacing: 8) {
-                Text(title)
-                    .font(.system(size: 17, weight: .semibold, design: .rounded))
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .lastTextBaseline, spacing: 10) {
+                Text("书库")
+                    .font(.system(size: 30, weight: .bold, design: .rounded))
                     .foregroundStyle(theme.primaryText)
 
                 Text("\(sources.count)")
-                    .font(.caption.weight(.semibold))
+                    .font(.subheadline.weight(.semibold))
                     .foregroundStyle(theme.secondaryText)
             }
-            .padding(.bottom, 3)
 
-            Text(subtitle)
+            Text("以下来源会参与上方的聚合搜索")
                 .font(.footnote)
                 .foregroundStyle(theme.secondaryText)
-                .padding(.bottom, 6)
+                .padding(.bottom, 4)
 
             VStack(spacing: 0) {
                 ForEach(sources) { source in
@@ -689,10 +668,6 @@ private enum DiscoverySourceCatalog {
         sources.filter { $0.searchRoute != nil }
     }
 
-    static var unsearchableSources: [DiscoverySource] {
-        sources.filter { $0.searchRoute == nil }
-    }
-
     static let sources: [DiscoverySource] = [
         DiscoverySource(name: "破万卷小说", tagline: "各類小說作品齊全", homepageURLString: "https://www.powanjuan.cc/", searchRoute: route(for: "破万卷小说")),
         DiscoverySource(name: "大尾笔趣阁", tagline: "笔趣阁热门书库", homepageURLString: "https://www.daweixs.com/", searchRoute: route(for: "大尾笔趣阁")),
@@ -700,70 +675,16 @@ private enum DiscoverySourceCatalog {
         DiscoverySource(name: "ESJ轻小说", tagline: "日韩轻小说在线阅读", homepageURLString: "https://www.esjzone.cc/", searchRoute: route(for: "ESJ轻小说")),
         DiscoverySource(name: "思兔閱讀", tagline: "繁體熱門在線書庫", homepageURLString: "https://sto9.com/", searchRoute: route(for: "思兔閱讀")),
         DiscoverySource(name: "就爱读小说", tagline: "各类网络文学作品齐全", homepageURLString: "https://www.5dxs.net/", searchRoute: route(for: "就爱读小说")),
-        DiscoverySource(name: "国学导航", tagline: "各类冷门国学典籍"),
-        DiscoverySource(name: "大美书网", tagline: "耽美书网替代网站"),
-        DiscoverySource(name: "256文学", tagline: "热门网络小说齐全速度快"),
-        DiscoverySource(name: "UU看书", tagline: "老牌热门网络小说书库", homepageURLString: "https://www.uuks.org/"),
-        DiscoverySource(name: "玫瑰言情网", tagline: "专业的言情小说阅读平台"),
-        DiscoverySource(name: "同人社", tagline: "各类热门同人小说齐全"),
-        DiscoverySource(name: "全本同人网", tagline: "热门同人全本小说阅读"),
-
-        DiscoverySource(name: "时空小说网", tagline: "热门网络小说齐全"),
-        DiscoverySource(name: "梦想岛中文", tagline: "各类网络文学作品齐全"),
         DiscoverySource(name: "同人圈", tagline: "各類同人小說齊全", homepageURLString: "https://tongrenquan.org/", searchRoute: route(for: "同人圈")),
-        DiscoverySource(name: "虚阁上", tagline: "古典文学经典名作"),
-        DiscoverySource(name: "101小说", tagline: "繁體精品小說典藏網"),
-        DiscoverySource(name: "微风小说1", tagline: "知名人气站点作品齐全"),
-        DiscoverySource(name: "轻小说百科", tagline: "热门轻小说文库", homepageURLString: "https://lnovel.org/"),
-        DiscoverySource(name: "天翼文学", tagline: "知名网络小说站点，书全速度快"),
-        DiscoverySource(name: "梦远书城", tagline: "老牌书城，古典文学经典名作"),
         DiscoverySource(name: "笔趣阁小说", tagline: "知名人气站点繁體版", homepageURLString: "https://m.bqgl.cc/", searchRoute: route(for: "笔趣阁小说")),
-        DiscoverySource(name: "轻小说文库", tagline: "最新最全日系轻小说"),
-        DiscoverySource(name: "饭饭小说", tagline: "热门网络小说齐全"),
-        DiscoverySource(name: "飘天文学网", tagline: "人气站点(副)，书全质优", homepageURLString: "https://www.piaotian8.com/"),
-        DiscoverySource(name: "天涯书库", tagline: "全球华人文学，经典书库"),
         DiscoverySource(name: "52书库", tagline: "快穿甜宠文小说书库", searchRoute: route(for: "52书库")),
-        DiscoverySource(name: "古籍大全", tagline: "国学典籍，古今图书集成"),
-        DiscoverySource(name: "铅笔小说", tagline: "各类图书小说，质好速度快"),
         DiscoverySource(name: "努努书坊", tagline: "国内外各类作品，速度快", homepageURLString: "https://www.nunucom.com/", searchRoute: route(for: "努努书坊")),
-
-        DiscoverySource(name: "樱下书院", tagline: "热门网络小说电子书"),
-        DiscoverySource(name: "零点看书", tagline: "各类热门网络小说质量好"),
         DiscoverySource(name: "宙斯小说", tagline: "各类热门小说，速度快", homepageURLString: "https://www.zhswx.com/", searchRoute: route(for: "宙斯小说")),
-        DiscoverySource(name: "无忧书城", tagline: "古典现代外国等各类文学书籍"),
-        DiscoverySource(name: "神凑轻小说", tagline: "最新最全日系轻小说"),
-        DiscoverySource(name: "书海阁小说", tagline: "各类热门网络小说齐全"),
-        DiscoverySource(name: "福书网", tagline: "完本耽美小说文库"),
-        DiscoverySource(name: "小說王", tagline: "各類熱門小說齊全"),
-        DiscoverySource(name: "笔趣阁移动", tagline: "老牌热门网站移动版，作品齐全"),
-        DiscoverySource(name: "吾要讀", tagline: "热门网文，另类小说等齐全"),
-        DiscoverySource(name: "腐小说", tagline: "完本耽美小说文库"),
         DiscoverySource(name: "同人小说网", tagline: "各类热门同人小说齐全", homepageURLString: "https://trxs.org/", searchRoute: route(for: "同人小说网")),
-        DiscoverySource(name: "小说狂人", tagline: "各類熱門小說齊全"),
-        DiscoverySource(name: "讀小說", tagline: "冷门小说等各类作品全"),
         DiscoverySource(name: "台灣小說網", tagline: "熱門小說台灣站", homepageURLString: "https://www.xsw.tw/", searchRoute: route(for: "台灣小說網")),
         DiscoverySource(name: "黄金屋中文", tagline: "繁體電子書城，書多質量好", homepageURLString: "https://tw.hjwzw.com/", searchRoute: route(for: "黄金屋中文")),
-        DiscoverySource(name: "青柠言情网", tagline: "最全的言情小说书库"),
-        DiscoverySource(name: "69书吧", tagline: "知名人气站点，书全质优", homepageURLString: "https://www.69shuba.com/"),
-
-        DiscoverySource(name: "笔趣阁", tagline: "知名人气站点，作品齐全更新快"),
-        DiscoverySource(name: "全本小说", tagline: "老牌书城各类小说齐全"),
-        DiscoverySource(name: "元小说", tagline: "热门网络小说，速度快"),
-        DiscoverySource(name: "芒果书坊", tagline: "热门网络小说齐全速度快"),
-        DiscoverySource(name: "书书屋小说", tagline: "精选网络文学书多质量好"),
-        DiscoverySource(name: "镇魂小说", tagline: "优质纯爱言情小说"),
-        DiscoverySource(name: "繁體小說網1", tagline: "台灣熱門小說網，書全質量好"),
-        DiscoverySource(name: "2k小说网", tagline: "知名人气站点作品齐全"),
         DiscoverySource(name: "半夏小说", tagline: "優質在線小說閱讀", homepageURLString: "https://www.xbanxia.cc/", searchRoute: route(for: "半夏小说")),
-        DiscoverySource(name: "四库书屋", tagline: "热门网络小说齐全速度快"),
-        DiscoverySource(name: "蜂鸟小说网", tagline: "言情小说，书全更新快"),
-        DiscoverySource(name: "西方奇幻网", tagline: "优质西方奇幻小说"),
-        DiscoverySource(name: "微风小说網", tagline: "热门网络书库，各类作品齐全"),
-        DiscoverySource(name: "提莫書屋", tagline: "熱門繁體書庫，作品齊全"),
-        DiscoverySource(name: "52书库2", tagline: "热门网络小说齐全速度快", searchRoute: route(for: "52书库2")),
-        DiscoverySource(name: "老笔趣阁", tagline: "知名人气站点，作品齐全更新快"),
-        DiscoverySource(name: "天天书吧", tagline: "各类网络小说齐全速度快"),
-        DiscoverySource(name: "飘天文学", tagline: "人气站点(主)，书全质优")
+        DiscoverySource(name: "52书库2", tagline: "热门网络小说齐全速度快", searchRoute: route(for: "52书库2"))
     ]
 }
 
