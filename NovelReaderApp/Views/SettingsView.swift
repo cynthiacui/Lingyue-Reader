@@ -52,7 +52,14 @@ struct SettingsView: View {
             }
             .contentMargins(.horizontal, horizontalMargin, for: .scrollContent)
             .safeAreaPadding(.bottom, 12)
+
+            if let cacheNotice {
+                CenterToast(text: cacheNotice)
+                    .transition(.opacity.combined(with: .scale(scale: 0.92)))
+                    .allowsHitTesting(false)
+            }
         }
+        .animation(.easeInOut(duration: 0.22), value: cacheNotice)
         .navigationTitle("设置")
         .navigationBarTitleDisplayMode(.large)
         .task {
@@ -230,13 +237,6 @@ struct SettingsView: View {
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.large)
-
-                if let cacheNotice {
-                    Text(cacheNotice)
-                        .font(.caption)
-                        .foregroundStyle(theme.secondaryText)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
             }
             .foregroundStyle(theme.primaryText)
             .readerCard()
@@ -256,8 +256,18 @@ struct SettingsView: View {
     private func clearAllCache() async {
         downloadManager.clearAllStates()
         await ChapterContentCache.shared.clearAll()
-        cacheNotice = "已清理全部下载数据"
         await refreshCacheSize()
+        cacheNotice = "已清理全部下载数据"
+        // Auto-dismiss the center toast after a brief read window. Re-tap of
+        // the clear button just resets the same notice, so the latest tap
+        // always controls when it disappears.
+        let dismissedNotice = cacheNotice
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 1_600_000_000)
+            if cacheNotice == dismissedNotice {
+                cacheNotice = nil
+            }
+        }
     }
 
     private var themePicker: some View {
@@ -301,6 +311,26 @@ struct SettingsView: View {
         }
     }
 
+}
+
+/// Transient pill-shaped notice anchored at screen center. Used for one-shot
+/// confirmations (e.g. "已清理全部下载数据") that the user only needs to glance at.
+private struct CenterToast: View {
+    let text: String
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: 14, weight: .semibold, design: .rounded))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 18)
+            .padding(.vertical, 12)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(Color.black.opacity(0.78))
+            )
+            .shadow(color: Color.black.opacity(0.25), radius: 14, x: 0, y: 6)
+            .accessibilityAddTraits(.isStaticText)
+    }
 }
 
 #Preview {
