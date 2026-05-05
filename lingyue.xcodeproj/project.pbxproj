@@ -183,7 +183,7 @@
 			knownRegions = (
 				en,
 				Base,
-				zh-Hans,
+				"zh-Hans",
 			);
 			mainGroup = 010000000000000000000301;
 			productRefGroup = 010000000000000000000303 /* Products */;
@@ -357,6 +357,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_ASSET_PATHS = "";
+				DEVELOPMENT_TEAM = 749JX9NLVL;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = lingyue/SupportingFiles/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
@@ -384,6 +385,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_ASSET_PATHS = "";
+				DEVELOPMENT_TEAM = 749JX9NLVL;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = lingyue/SupportingFiles/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
