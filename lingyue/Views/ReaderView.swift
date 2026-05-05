@@ -58,7 +58,7 @@ struct ReaderView: View {
             return [NovelChapter(title: activeNovel.title, content: message)]
         }
 
-        return activeNovel.chapters.isEmpty ? MockData.chapters(for: activeNovel) : activeNovel.chapters
+        return activeNovel.chapters
     }
 
     private var chapters: [NovelChapter] {
@@ -1562,9 +1562,3 @@ private final class ReaderTextView: UITextView {
     }
 }
 
-#Preview {
-    NavigationStack {
-        ReaderView(novel: MockData.novels[0])
-    }
-    .environmentObject(LibraryStore())
-}

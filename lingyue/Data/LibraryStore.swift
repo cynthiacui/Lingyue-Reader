@@ -11,23 +11,6 @@ struct LibraryCategory: Identifiable, Hashable, Codable, Sendable {
         self.name = name
         self.novels = novels
     }
-
-    static func seeded(from novels: [Novel]) -> [LibraryCategory] {
-        var categoryNames: [String] = []
-
-        for novel in novels {
-            if !categoryNames.contains(novel.genre) {
-                categoryNames.append(novel.genre)
-            }
-        }
-
-        return categoryNames.map { categoryName in
-            LibraryCategory(
-                name: categoryName,
-                novels: novels.filter { $0.genre == categoryName }
-            )
-        }
-    }
 }
 
 @MainActor
@@ -46,11 +29,7 @@ final class LibraryStore: ObservableObject {
     init() {
         self.storageURL = LibraryStore.makeStorageURL()
 
-        if let savedCategories = LibraryStore.loadCategories(from: storageURL) {
-            self.categories = savedCategories
-        } else {
-            self.categories = LibraryCategory.seeded(from: MockData.novels)
-        }
+        self.categories = LibraryStore.loadCategories(from: storageURL) ?? []
     }
 
     func flush() async {

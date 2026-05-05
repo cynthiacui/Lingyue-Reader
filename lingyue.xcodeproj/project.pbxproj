@@ -10,7 +10,6 @@
 		010000000000000000000101 /* LingyueApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000001 /* LingyueApp.swift */; };
 		010000000000000000000102 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000002 /* ContentView.swift */; };
 		010000000000000000000103 /* Novel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000003 /* Novel.swift */; };
-		010000000000000000000104 /* MockData.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000004 /* MockData.swift */; };
 		010000000000000000000105 /* ReaderStyle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000005 /* ReaderStyle.swift */; };
 		010000000000000000000106 /* LibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000006 /* LibraryView.swift */; };
 		010000000000000000000107 /* DiscoveryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000007 /* DiscoveryView.swift */; };
@@ -33,7 +32,6 @@
 		010000000000000000000001 /* LingyueApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LingyueApp.swift; sourceTree = "<group>"; };
 		010000000000000000000002 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		010000000000000000000003 /* Novel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Novel.swift; sourceTree = "<group>"; };
-		010000000000000000000004 /* MockData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MockData.swift; sourceTree = "<group>"; };
 		010000000000000000000005 /* ReaderStyle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReaderStyle.swift; sourceTree = "<group>"; };
 		010000000000000000000006 /* LibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryView.swift; sourceTree = "<group>"; };
 		010000000000000000000007 /* DiscoveryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiscoveryView.swift; sourceTree = "<group>"; };
@@ -106,7 +104,6 @@
 		010000000000000000000305 /* Data */ = {
 			isa = PBXGroup;
 			children = (
-				010000000000000000000004 /* MockData.swift */,
 				01000000000000000000000E /* LibraryStore.swift */,
 				01000000000000000000000F /* BookImportService.swift */,
 				010000000000000000000010 /* WebRenderingService.swift */,
@@ -214,7 +211,6 @@
 				010000000000000000000101 /* LingyueApp.swift in Sources */,
 				010000000000000000000102 /* ContentView.swift in Sources */,
 				010000000000000000000103 /* Novel.swift in Sources */,
-				010000000000000000000104 /* MockData.swift in Sources */,
 				010000000000000000000105 /* ReaderStyle.swift in Sources */,
 				010000000000000000000106 /* LibraryView.swift in Sources */,
 				010000000000000000000107 /* DiscoveryView.swift in Sources */,
