@@ -92,6 +92,19 @@ struct InAppBrowserView: View {
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
+                    let target = browserState.currentURL ?? url
+                    UIApplication.shared.open(target)
+                } label: {
+                    Image(systemName: "safari")
+                        .font(.system(size: 16, weight: .semibold))
+                        .frame(width: 32, height: 32)
+                }
+                .foregroundStyle(Color.readerInk)
+                .accessibilityLabel("在 Safari 中打开")
+            }
+
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
                     dismiss()
                 } label: {
                     Image(systemName: "xmark")
@@ -488,6 +501,11 @@ private struct InAppWebView: UIViewRepresentable {
         webView.allowsBackForwardNavigationGestures = true
         webView.navigationDelegate = context.coordinator
         webView.uiDelegate = context.coordinator
+        // Many Chinese novel mirrors (笔趣阁 family, daweixs.com, …) sit behind
+        // nginx WAF rules that 502 anything missing the Version/* and Safari/*
+        // tokens — WKWebView's default UA omits both. Force a full mobile-Safari
+        // UA so the in-app browser is treated identically to Safari.
+        webView.customUserAgent = Self.mobileSafariUserAgent
 
         state.attach(webView)
         context.coordinator.observe(webView)
@@ -495,6 +513,11 @@ private struct InAppWebView: UIViewRepresentable {
 
         return webView
     }
+
+    private static let mobileSafariUserAgent =
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) "
+        + "AppleWebKit/605.1.15 (KHTML, like Gecko) "
+        + "Version/17.5 Mobile/15E148 Safari/604.1"
 
     func updateUIView(_ webView: WKWebView, context: Context) {
         if webView.url == nil, !webView.isLoading {

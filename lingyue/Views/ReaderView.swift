@@ -46,6 +46,8 @@ struct ReaderView: View {
     @State private var paginationCache: [String: [String]] = [:]
     @State private var lastKnownTextSize: CGSize = .zero
     @State private var autoScrollTask: Task<Void, Never>?
+    @State private var browserDestination: URL?
+    @State private var showSourceSwitcher = false
     private let paginationCacheCapacity = 24
 
     private var activeNovel: Novel {
@@ -208,6 +210,38 @@ struct ReaderView: View {
         .toolbar(.hidden, for: .navigationBar)
         .toolbar(.hidden, for: .tabBar)
         .statusBarHidden(!showControls)
+        .navigationDestination(item: $browserDestination) { url in
+            InAppBrowserView(url: url, title: activeNovel.title)
+        }
+        .sheet(isPresented: $showSourceSwitcher) {
+            BookSourceSwitcherSheet(
+                novelTitle: activeNovel.title,
+                currentSourceURLString: activeNovel.sourceURLString
+            ) { url in
+                showSourceSwitcher = false
+                // Wait for the sheet's dismiss animation to finish before pushing
+                // the in-app browser, otherwise SwiftUI drops the navigation push.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                    browserDestination = url
+                }
+            }
+        }
+    }
+
+    /// URL to open in the in-app browser when the user taps the globe icon. Falls
+    /// back from the chapter's own source URL to the novel's catalog URL so the
+    /// button still works while the chapter content URL is loading. Returns nil
+    /// for locally-imported `.txt` books (sentinel scheme is not a real web page).
+    private func chapterBrowserURL(for chapter: NovelChapter?) -> URL? {
+        let candidates: [String?] = [chapter?.sourceURLString, activeNovel.sourceURLString]
+        for candidate in candidates {
+            guard let candidate,
+                  let url = URL(string: candidate),
+                  let scheme = url.scheme?.lowercased(),
+                  scheme == "http" || scheme == "https" else { continue }
+            return url
+        }
+        return nil
     }
 
     private func headerTopPadding(safeTop: CGFloat) -> CGFloat {
@@ -315,7 +349,10 @@ struct ReaderView: View {
     }
 
     private func controlsTopBar(safeTop: CGFloat, currentPage: ReaderPageItem) -> some View {
-        VStack {
+        let sourceLabel = BookSourceRegistry.displayName(for: activeNovel.sourceURLString)
+        let chapterURL = chapterBrowserURL(for: currentChapter)
+
+        return VStack {
             HStack(spacing: 0) {
                 Button {
                     dismiss()
@@ -329,10 +366,19 @@ struct ReaderView: View {
 
                 Spacer()
 
-                Text(currentPage.chapterTitle)
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(secondaryForeground)
-                    .lineLimit(1)
+                VStack(spacing: 2) {
+                    Text(currentPage.chapterTitle)
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundStyle(secondaryForeground)
+                        .lineLimit(1)
+
+                    if let sourceLabel {
+                        Text(sourceLabel)
+                            .font(.system(size: 11, weight: .regular))
+                            .foregroundStyle(secondaryForeground.opacity(0.65))
+                            .lineLimit(1)
+                    }
+                }
 
                 Spacer()
 
@@ -344,10 +390,34 @@ struct ReaderView: View {
                 } label: {
                     Image(systemName: "textformat.size")
                         .font(.system(size: 19, weight: .semibold))
-                        .frame(width: 56, height: 52)
+                        .frame(width: 40, height: 52)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+
+                if let chapterURL {
+                    Button {
+                        browserDestination = chapterURL
+                    } label: {
+                        Image(systemName: "globe")
+                            .font(.system(size: 18, weight: .semibold))
+                            .frame(width: 40, height: 52)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("在浏览器中查看")
+                }
+
+                Button {
+                    showSourceSwitcher = true
+                } label: {
+                    Image(systemName: "arrow.left.arrow.right")
+                        .font(.system(size: 17, weight: .semibold))
+                        .frame(width: 40, height: 52)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("切换书源")
 
                 Button {
                     withAnimation(ModalStyle.presentationAnimation) {
@@ -357,7 +427,7 @@ struct ReaderView: View {
                 } label: {
                     Image(systemName: "list.bullet")
                         .font(.system(size: 19, weight: .semibold))
-                        .frame(width: 64, height: 52)
+                        .frame(width: 52, height: 52)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -1559,6 +1629,184 @@ private final class ReaderTextView: UITextView {
         guard textContainer.size != bounds.size else { return }
         textContainer.size = bounds.size
         layoutManager.invalidateLayout(forCharacterRange: NSRange(location: 0, length: attributedText.length), actualCharacterRange: nil)
+    }
+}
+
+/// Sheet that re-runs the Discovery aggregated search for the current book and lists every
+/// known source for it. Tapping a row hands the URL back to the reader, which closes the
+/// sheet and pushes the in-app browser — from there the existing detect-and-replace flow
+/// updates the book in the library.
+private struct BookSourceSwitcherSheet: View {
+    let novelTitle: String
+    let currentSourceURLString: String?
+    let onSelectSource: (URL) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.appTheme) private var theme
+
+    @State private var candidates: [BookSourceCandidate] = []
+    @State private var hasFinishedLoading = false
+    @State private var streamTask: Task<Void, Never>?
+
+    private var currentSourceName: String? {
+        BookSourceRegistry.displayName(for: currentSourceURLString)
+    }
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                theme.background.ignoresSafeArea()
+
+                if !hasFinishedLoading && candidates.isEmpty {
+                    loadingView
+                } else if hasFinishedLoading && candidates.isEmpty {
+                    emptyView
+                } else {
+                    candidateList
+                }
+            }
+            .navigationTitle("切换书源")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("关闭") { dismiss() }
+                        .foregroundStyle(theme.accent)
+                }
+            }
+        }
+        .task {
+            await loadCandidates()
+        }
+        .onDisappear {
+            streamTask?.cancel()
+        }
+    }
+
+    private var loadingView: some View {
+        VStack(spacing: 14) {
+            ProgressView()
+                .tint(theme.accent)
+            Text("正在为《\(novelTitle)》搜索书源…")
+                .font(.subheadline)
+                .foregroundStyle(theme.secondaryText)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 24)
+        }
+    }
+
+    private var emptyView: some View {
+        VStack(spacing: 10) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 28, weight: .semibold))
+                .foregroundStyle(theme.secondaryText)
+            Text("未找到其他书源")
+                .font(.headline)
+                .foregroundStyle(theme.primaryText)
+            Text("可以稍后再试，或在“发现”页直接搜索这本书。")
+                .font(.subheadline)
+                .foregroundStyle(theme.secondaryText)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 24)
+        }
+    }
+
+    private var candidateList: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("《\(novelTitle)》")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(theme.primaryText)
+                    .padding(.horizontal, 4)
+
+                Text("点击书源即可在内置浏览器中打开对应章节页。在浏览器中确认导入后，灵阅会用新的书源替换当前书架记录。")
+                    .font(.footnote)
+                    .foregroundStyle(theme.secondaryText)
+                    .padding(.horizontal, 4)
+
+                VStack(spacing: 8) {
+                    ForEach(candidates) { candidate in
+                        candidateRow(candidate)
+                    }
+                }
+                .padding(.top, 4)
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 14)
+            .padding(.bottom, 24)
+        }
+    }
+
+    private func candidateRow(_ candidate: BookSourceCandidate) -> some View {
+        let isCurrent = currentSourceName == candidate.sourceName
+
+        return Button {
+            onSelectSource(candidate.url)
+        } label: {
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 6) {
+                        Text(candidate.sourceName)
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(theme.primaryText)
+                            .lineLimit(1)
+
+                        if isCurrent {
+                            Text("当前")
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundStyle(theme.accent)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(
+                                    Capsule().fill(theme.accent.opacity(0.14))
+                                )
+                        }
+                    }
+
+                    Text(candidate.url.host(percentEncoded: false) ?? candidate.url.absoluteString)
+                        .font(.system(size: 11))
+                        .foregroundStyle(theme.secondaryText)
+                        .lineLimit(1)
+                }
+
+                Spacer()
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(theme.secondaryText.opacity(0.6))
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(theme.cardBackground)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(isCurrent ? theme.accent.opacity(0.5) : Color.clear, lineWidth: 1.5)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func loadCandidates() async {
+        streamTask?.cancel()
+        candidates = []
+        hasFinishedLoading = false
+
+        let task = Task {
+            for await batch in DiscoverySearchService.shared.sourceCandidatesStream(for: novelTitle) {
+                if Task.isCancelled { return }
+                await MainActor.run {
+                    candidates = batch
+                }
+            }
+            await MainActor.run {
+                hasFinishedLoading = true
+            }
+        }
+        streamTask = task
+        await task.value
     }
 }
 

@@ -717,7 +717,16 @@ private struct DiscoverySourceLink: Identifiable {
     }
 }
 
-private actor DiscoverySearchService {
+/// Lightweight (sourceName, URL) pair surfaced by `DiscoverySearchService.sourceCandidatesStream`
+/// so callers outside DiscoveryView (e.g., the reader's source switcher) don't need to depend on
+/// the file-private DiscoverySource / DiscoveryGroupedResult types.
+struct BookSourceCandidate: Identifiable, Hashable, Sendable {
+    let sourceName: String
+    let url: URL
+    var id: String { "\(sourceName)|\(url.absoluteString)" }
+}
+
+actor DiscoverySearchService {
     static let shared = DiscoverySearchService()
 
     private let session: URLSession
@@ -741,7 +750,7 @@ private actor DiscoverySearchService {
     /// Streams partial result sets as each source finishes. Wall-clock time is bound by the
     /// slowest single source (not the sum of sequential batches), and the UI sees the first
     /// hits within a few hundred ms instead of waiting for every source.
-    nonisolated func searchStream(
+    fileprivate nonisolated func searchStream(
         query: String,
         sources: [DiscoverySource]
     ) -> AsyncStream<[DiscoveryGroupedResult]> {
@@ -779,12 +788,49 @@ private actor DiscoverySearchService {
         }
     }
 
-    func search(query: String, sources: [DiscoverySource]) async throws -> [DiscoveryGroupedResult] {
+    fileprivate func search(query: String, sources: [DiscoverySource]) async throws -> [DiscoveryGroupedResult] {
         var latest: [DiscoveryGroupedResult] = []
         for await results in searchStream(query: query, sources: sources) {
             latest = results
         }
         return latest
+    }
+
+    /// Streams the per-source links for a single book, identified by its `novelTitle`. Each
+    /// emission is the live set of (sourceName, URL) pairs whose normalized title key matches
+    /// the requested book — i.e. exactly the one row the user would tap in
+    /// DiscoverySearchResultsView. Used by the reader's source-switcher button.
+    nonisolated func sourceCandidatesStream(for novelTitle: String) -> AsyncStream<[BookSourceCandidate]> {
+        AsyncStream { continuation in
+            let trimmed = novelTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+            let cleanedTitle = DiscoveryTextCleaner.cleanTitle(trimmed)
+            let targetKey = DiscoveryTextCleaner.normalizedTitleKey(cleanedTitle)
+
+            guard !targetKey.isEmpty else {
+                continuation.finish()
+                return
+            }
+
+            let task = Task { [self] in
+                for await grouped in self.searchStream(
+                    query: trimmed,
+                    sources: DiscoverySourceCatalog.searchableSources
+                ) {
+                    if Task.isCancelled { break }
+                    let candidates: [BookSourceCandidate]
+                    if let match = grouped.first(where: { $0.id == targetKey }) {
+                        candidates = match.sourceLinks.map {
+                            BookSourceCandidate(sourceName: $0.source.name, url: $0.url)
+                        }
+                    } else {
+                        candidates = []
+                    }
+                    continuation.yield(candidates)
+                }
+                continuation.finish()
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
     }
 
     private func searchSingleSource(_ source: DiscoverySource, query: String) async -> [DiscoveryRawSearchHit] {
