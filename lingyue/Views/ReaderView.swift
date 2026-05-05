@@ -7,6 +7,7 @@ struct ReaderView: View {
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var systemColorScheme
+    @Environment(\.appForcesColorScheme) private var appForcesColorScheme
     @EnvironmentObject private var libraryStore: LibraryStore
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -81,7 +82,8 @@ struct ReaderView: View {
         ReadingTheme.effective(
             rawValue: themeRawValue,
             followSystemDark: followSystemDark,
-            systemColorScheme: systemColorScheme
+            systemColorScheme: systemColorScheme,
+            appForcesColorScheme: appForcesColorScheme
         )
     }
 

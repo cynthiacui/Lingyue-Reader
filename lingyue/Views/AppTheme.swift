@@ -53,7 +53,8 @@ enum AppTheme: String, CaseIterable, Identifiable, Hashable {
                     Color(red: 0.99, green: 0.93, blue: 0.94),
                     Color(red: 0.98, green: 0.91, blue: 0.92)
                 ],
-                imageOpacity: 1.0
+                imageOpacity: 1.0,
+                imageScale: 1.0
             )
         case .leafGreen:
             return .imagePattern(
@@ -63,7 +64,8 @@ enum AppTheme: String, CaseIterable, Identifiable, Hashable {
                     Color(red: 0.94, green: 0.96, blue: 0.91),
                     Color(red: 0.91, green: 0.93, blue: 0.88)
                 ],
-                imageOpacity: 1.0
+                imageOpacity: 1.0,
+                imageScale: 1.0
             )
         case .ink:
             // Image opacity dialed down so the dramatic ink wash (mountains, fisherman,
@@ -76,7 +78,8 @@ enum AppTheme: String, CaseIterable, Identifiable, Hashable {
                     Color(red: 0.95, green: 0.93, blue: 0.88),
                     Color(red: 0.93, green: 0.91, blue: 0.85)
                 ],
-                imageOpacity: 0.7
+                imageOpacity: 0.7,
+                imageScale: 1.22
             )
         case .starryNight:
             return .starryNight
@@ -222,7 +225,7 @@ enum AppThemeBackground: Hashable {
     /// pattern is hand-painted (e.g. watercolor petals) rather than procedurally drawn.
     /// `imageOpacity` blends the asset over the gradient so it reads as texture, not
     /// foreground.
-    case imagePattern(imageName: String, gradient: [Color], imageOpacity: Double)
+    case imagePattern(imageName: String, gradient: [Color], imageOpacity: Double, imageScale: CGFloat)
     /// Procedurally-drawn dark sky: deep navy gradient + soft nebula radial glow + a
     /// fixed scatter of tiny star dots (some blurred for glow). Star positions are
     /// hardcoded so they don't reshuffle on every redraw.
@@ -265,11 +268,20 @@ final class AppThemeManager: ObservableObject {
         guard enabled != storedFollowSystemDark else { return }
         objectWillChange.send()
         storedFollowSystemDark = enabled
+        // If the user's manual pick was the dark theme itself, downgrade it to the default
+        // light theme so the light-mode fallback doesn't stay stuck on starryNight.
+        if enabled, current == .starryNight {
+            storedRawValue = AppTheme.paperGreen.rawValue
+        }
     }
 }
 
 private struct AppThemeEnvironmentKey: EnvironmentKey {
     static let defaultValue: AppTheme = .paperGreen
+}
+
+private struct AppForcesColorSchemeKey: EnvironmentKey {
+    static let defaultValue: ColorScheme? = nil
 }
 
 extension EnvironmentValues {
@@ -278,6 +290,16 @@ extension EnvironmentValues {
     var appTheme: AppTheme {
         get { self[AppThemeEnvironmentKey.self] }
         set { self[AppThemeEnvironmentKey.self] = newValue }
+    }
+
+    /// The color scheme the app is forcing onto its window via `.preferredColorScheme(...)`,
+    /// or `nil` if the app is letting the system colorScheme stand. When non-nil, child
+    /// views should treat `\.colorScheme` as the app's *override*, not the device's actual
+    /// trait — otherwise reader/follow-system logic would incorrectly read the override as
+    /// "system is in dark mode" and auto-flip the reader to 夜读.
+    var appForcesColorScheme: ColorScheme? {
+        get { self[AppForcesColorSchemeKey.self] }
+        set { self[AppForcesColorSchemeKey.self] = newValue }
     }
 }
 
@@ -306,11 +328,12 @@ struct ThemeBackgroundView: View {
             case .blushPattern(let gradient):
                 BlushPatternBackground(gradient: gradient)
 
-            case .imagePattern(let imageName, let gradient, let imageOpacity):
+            case .imagePattern(let imageName, let gradient, let imageOpacity, let imageScale):
                 ImagePatternBackground(
                     imageName: imageName,
                     gradient: gradient,
-                    imageOpacity: imageOpacity
+                    imageOpacity: imageOpacity,
+                    imageScale: imageScale
                 )
 
             case .starryNight:
@@ -377,6 +400,7 @@ private struct ImagePatternBackground: View {
     let imageName: String
     let gradient: [Color]
     let imageOpacity: Double
+    let imageScale: CGFloat
 
     var body: some View {
         GeometryReader { proxy in
@@ -390,6 +414,7 @@ private struct ImagePatternBackground: View {
                 Image(imageName)
                     .resizable()
                     .scaledToFill()
+                    .scaleEffect(imageScale)
                     .frame(width: proxy.size.width, height: proxy.size.height)
                     .opacity(imageOpacity)
                     .allowsHitTesting(false)

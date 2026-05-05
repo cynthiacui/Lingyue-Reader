@@ -5,6 +5,7 @@ struct SettingsView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.appTheme) private var theme
     @Environment(\.colorScheme) private var systemColorScheme
+    @Environment(\.appForcesColorScheme) private var appForcesColorScheme
     @EnvironmentObject private var themeManager: AppThemeManager
     @EnvironmentObject private var downloadManager: BookDownloadManager
 
@@ -35,7 +36,8 @@ struct SettingsView: View {
         ReadingTheme.effective(
             rawValue: themeRawValue,
             followSystemDark: readerFollowSystemDark,
-            systemColorScheme: systemColorScheme
+            systemColorScheme: systemColorScheme,
+            appForcesColorScheme: appForcesColorScheme
         )
     }
 
@@ -167,7 +169,7 @@ struct SettingsView: View {
                 Image(imageName)
                     .resizable()
                     .scaledToFill()
-                    .scaleEffect(1.22)
+                    .scaleEffect(1.8)
             } else {
                 LinearGradient(
                     colors: option.swatchGradient,
@@ -373,7 +375,20 @@ struct SettingsView: View {
                 }
             }
 
-            Toggle(isOn: $readerFollowSystemDark.animation(.easeInOut(duration: 0.2))) {
+            Toggle(isOn: Binding(
+                get: { readerFollowSystemDark },
+                set: { newValue in
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        readerFollowSystemDark = newValue
+                        // Mirror the app-theme behavior: if the user's manual pick was the
+                        // dark variant, downgrade it to the default light theme so the
+                        // light-mode fallback doesn't stay stuck on 夜读.
+                        if newValue, themeRawValue == ReadingTheme.night.rawValue {
+                            themeRawValue = ReadingTheme.paper.rawValue
+                        }
+                    }
+                }
+            )) {
                 Label("跟随系统深色模式", systemImage: "circle.lefthalf.filled")
                     .font(.subheadline)
             }
