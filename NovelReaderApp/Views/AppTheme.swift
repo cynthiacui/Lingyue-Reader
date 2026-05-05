@@ -10,6 +10,7 @@ enum AppTheme: String, CaseIterable, Identifiable, Hashable {
     case paperGreen
     case pink
     case leafGreen
+    case ink
     case starryNight
 
     var id: String { rawValue }
@@ -17,9 +18,10 @@ enum AppTheme: String, CaseIterable, Identifiable, Hashable {
     /// Localized label shown in Settings.
     var displayName: String {
         switch self {
-        case .paperGreen:  return "纸张绿"
-        case .pink:        return "粉色"
+        case .paperGreen:  return "纸张"
+        case .pink:        return "樱粉"
         case .leafGreen:   return "叶绿"
+        case .ink:         return "水墨"
         case .starryNight: return "星夜"
         }
     }
@@ -32,6 +34,7 @@ enum AppTheme: String, CaseIterable, Identifiable, Hashable {
         case .paperGreen:  return Color(red: 0.97, green: 0.96, blue: 0.93)
         case .pink:        return Color(red: 0.99, green: 0.95, blue: 0.95)
         case .leafGreen:   return Color(red: 0.95, green: 0.96, blue: 0.92)
+        case .ink:         return Color(red: 0.96, green: 0.94, blue: 0.89) // warm rice paper
         case .starryNight: return Color(red: 0.05, green: 0.07, blue: 0.12)
         }
     }
@@ -62,6 +65,19 @@ enum AppTheme: String, CaseIterable, Identifiable, Hashable {
                 ],
                 imageOpacity: 1.0
             )
+        case .ink:
+            // Image opacity dialed down so the dramatic ink wash (mountains, fisherman,
+            // mist) reads as atmospheric texture rather than foreground; the warm paper
+            // gradient warms the otherwise cool grayscale source so it doesn't feel cold.
+            return .imagePattern(
+                imageName: "InkBackground",
+                gradient: [
+                    Color(red: 0.97, green: 0.95, blue: 0.91),
+                    Color(red: 0.95, green: 0.93, blue: 0.88),
+                    Color(red: 0.93, green: 0.91, blue: 0.85)
+                ],
+                imageOpacity: 0.7
+            )
         case .starryNight:
             return .starryNight
         }
@@ -73,6 +89,7 @@ enum AppTheme: String, CaseIterable, Identifiable, Hashable {
         case .paperGreen:  return Color(red: 1.000, green: 0.990, blue: 0.960)
         case .pink:        return Color(red: 1.000, green: 0.957, blue: 0.965) // #FFF4F6
         case .leafGreen:   return Color(red: 0.990, green: 0.992, blue: 0.965)
+        case .ink:         return Color(red: 0.99, green: 0.97, blue: 0.93) // soft paper
         case .starryNight: return Color(red: 0.13, green: 0.15, blue: 0.21)
         }
     }
@@ -85,6 +102,7 @@ enum AppTheme: String, CaseIterable, Identifiable, Hashable {
         case .paperGreen:  return Color(red: 0.93, green: 0.91, blue: 0.87)
         case .pink:        return Color(red: 0.96, green: 0.90, blue: 0.91)
         case .leafGreen:   return Color(red: 0.90, green: 0.92, blue: 0.86)
+        case .ink:         return Color(red: 0.91, green: 0.89, blue: 0.83)
         case .starryNight: return Color(red: 0.10, green: 0.12, blue: 0.18)
         }
     }
@@ -96,6 +114,7 @@ enum AppTheme: String, CaseIterable, Identifiable, Hashable {
         case .paperGreen:  return Color.black.opacity(0.05)
         case .pink:        return Color(red: 0.55, green: 0.30, blue: 0.36).opacity(0.08)
         case .leafGreen:   return Color(red: 0.30, green: 0.40, blue: 0.28).opacity(0.08)
+        case .ink:         return Color(red: 0.18, green: 0.16, blue: 0.14).opacity(0.07)
         // Dark themes barely show shadows; a small black opacity keeps the existing
         // shadow modifiers behaving without making cards look "raised" awkwardly.
         case .starryNight: return Color.black.opacity(0.30)
@@ -108,6 +127,7 @@ enum AppTheme: String, CaseIterable, Identifiable, Hashable {
         case .paperGreen:  return Color(red: 0.36, green: 0.43, blue: 0.32)
         case .pink:        return Color(red: 0.78, green: 0.46, blue: 0.54)
         case .leafGreen:   return Color(red: 0.49, green: 0.60, blue: 0.43)
+        case .ink:         return Color(red: 0.30, green: 0.28, blue: 0.26) // muted ink gray
         case .starryNight: return Color(red: 0.86, green: 0.74, blue: 0.50) // soft champagne gold
         }
     }
@@ -118,6 +138,7 @@ enum AppTheme: String, CaseIterable, Identifiable, Hashable {
         case .paperGreen:  return Color(red: 0.11, green: 0.10, blue: 0.09)
         case .pink:        return Color(red: 0.13, green: 0.10, blue: 0.11)
         case .leafGreen:   return Color(red: 0.14, green: 0.16, blue: 0.12)
+        case .ink:         return Color(red: 0.13, green: 0.12, blue: 0.11) // dark charcoal
         case .starryNight: return Color(red: 0.94, green: 0.92, blue: 0.85) // warm off-white
         }
     }
@@ -128,12 +149,24 @@ enum AppTheme: String, CaseIterable, Identifiable, Hashable {
         case .paperGreen:  return Color(red: 0.43, green: 0.39, blue: 0.34)
         case .pink:        return Color(red: 0.50, green: 0.40, blue: 0.42)
         case .leafGreen:   return Color(red: 0.40, green: 0.45, blue: 0.38)
+        case .ink:         return Color(red: 0.42, green: 0.40, blue: 0.36)
         case .starryNight: return Color(red: 0.66, green: 0.63, blue: 0.57)
         }
     }
 
-    /// Two-stop swatch used in the Settings picker preview.
-    var swatchGradient: [Color] { [background, accent] }
+    /// Gradient stops for the Settings picker swatch (top-leading → bottom-trailing).
+    /// Most themes lean on `accent` so the swatch hints at the interactive color, but
+    /// `.paperGreen` deliberately omits its green accent — that theme's identity is the
+    /// paper-like cream chrome, and showing a green corner made the swatch read as "the
+    /// green theme" rather than "the paper theme".
+    var swatchGradient: [Color] {
+        switch self {
+        case .paperGreen:
+            return [background, cardBackground, subtleCardBackground]
+        case .pink, .leafGreen, .ink, .starryNight:
+            return [background, cardBackground, accent]
+        }
+    }
 
     /// Optional decorative glyph rendered on the Settings theme swatch (e.g. cherry
     /// blossom for Pink). Returning `nil` means the swatch shows just its gradient.
@@ -146,7 +179,7 @@ enum AppTheme: String, CaseIterable, Identifiable, Hashable {
         switch self {
         case .starryNight:
             SwatchStarsOverlay()
-        case .paperGreen, .pink, .leafGreen:
+        case .paperGreen, .pink, .leafGreen, .ink:
             EmptyView()
         }
     }
@@ -159,6 +192,7 @@ enum AppTheme: String, CaseIterable, Identifiable, Hashable {
         case .paperGreen:  return nil
         case .pink:        return "PinkSwatch"
         case .leafGreen:   return "LeafGreenSwatch"
+        case .ink:         return "InkSwatch"
         case .starryNight: return nil
         }
     }

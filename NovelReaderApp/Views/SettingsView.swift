@@ -107,23 +107,31 @@ struct SettingsView: View {
             SectionHeader(title: "外观主题")
 
             VStack(alignment: .leading, spacing: 14) {
-                HStack(spacing: 12) {
+                HStack(alignment: .top, spacing: 6) {
                     ForEach(AppTheme.allCases) { option in
+                        let isSelected = themeManager.current == option
+                        let isAutoManaged = themeManager.followSystemDark && option == .starryNight
                         Button {
                             withAnimation(.easeInOut(duration: 0.2)) {
                                 themeManager.select(option)
                             }
                         } label: {
-                            appThemeSwatch(for: option)
+                            VStack(spacing: 6) {
+                                appThemeSwatch(for: option)
+
+                                Text(option.displayName)
+                                    .font(.caption)
+                                    .foregroundStyle(isSelected ? theme.accent : theme.secondaryText)
+                                    .lineLimit(1)
+                            }
+                            .frame(maxWidth: .infinity)
                         }
                         .buttonStyle(.plain)
                         .accessibilityLabel(option.displayName)
                         // When follow-system is on, the dark theme is auto-managed — block manual
                         // selection so the swatch reads as informational rather than tappable.
-                        .disabled(themeManager.followSystemDark && option == .starryNight)
+                        .disabled(isAutoManaged)
                     }
-
-                    Spacer(minLength: 0)
                 }
 
                 Toggle(isOn: Binding(
@@ -162,7 +170,7 @@ struct SettingsView: View {
                     .scaleEffect(1.22)
             } else {
                 LinearGradient(
-                    colors: [option.background, option.cardBackground, option.accent],
+                    colors: option.swatchGradient,
                     startPoint: .topLeading,
                     endPoint: .bottomTrailing
                 )
