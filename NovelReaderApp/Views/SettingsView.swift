@@ -5,6 +5,7 @@ struct SettingsView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.appTheme) private var theme
     @EnvironmentObject private var themeManager: AppThemeManager
+    @EnvironmentObject private var downloadManager: BookDownloadManager
 
     @AppStorage("reader.fontSize") private var fontSize = 18.0
     @AppStorage("reader.lineSpacing") private var lineSpacing = 8.0
@@ -253,6 +254,7 @@ struct SettingsView: View {
 
     @MainActor
     private func clearAllCache() async {
+        downloadManager.clearAllStates()
         await ChapterContentCache.shared.clearAll()
         cacheNotice = "已清理全部下载数据"
         await refreshCacheSize()

@@ -25,6 +25,8 @@
 		010000000000000000000110 /* ModalContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000012 /* ModalContainer.swift */; };
 		010000000000000000000111 /* InputModalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000013 /* InputModalView.swift */; };
 		010000000000000000000112 /* AppTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000014 /* AppTheme.swift */; };
+		010000000000000000000113 /* BookDownloadManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000015 /* BookDownloadManager.swift */; };
+		010000000000000000000114 /* DownloadsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000016 /* DownloadsView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -48,6 +50,8 @@
 		010000000000000000000012 /* ModalContainer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModalContainer.swift; sourceTree = "<group>"; };
 		010000000000000000000013 /* InputModalView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InputModalView.swift; sourceTree = "<group>"; };
 		010000000000000000000014 /* AppTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppTheme.swift; sourceTree = "<group>"; };
+		010000000000000000000015 /* BookDownloadManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookDownloadManager.swift; sourceTree = "<group>"; };
+		010000000000000000000016 /* DownloadsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadsView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -106,6 +110,7 @@
 				01000000000000000000000E /* LibraryStore.swift */,
 				01000000000000000000000F /* BookImportService.swift */,
 				010000000000000000000010 /* WebRenderingService.swift */,
+				010000000000000000000015 /* BookDownloadManager.swift */,
 			);
 			path = Data;
 			sourceTree = "<group>";
@@ -123,6 +128,7 @@
 				010000000000000000000012 /* ModalContainer.swift */,
 				010000000000000000000013 /* InputModalView.swift */,
 				010000000000000000000014 /* AppTheme.swift */,
+				010000000000000000000016 /* DownloadsView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -222,6 +228,8 @@
 				010000000000000000000110 /* ModalContainer.swift in Sources */,
 				010000000000000000000111 /* InputModalView.swift in Sources */,
 				010000000000000000000112 /* AppTheme.swift in Sources */,
+				010000000000000000000113 /* BookDownloadManager.swift in Sources */,
+				010000000000000000000114 /* DownloadsView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

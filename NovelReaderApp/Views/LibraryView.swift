@@ -14,6 +14,7 @@ struct LibraryView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.appTheme) private var theme
     @EnvironmentObject private var libraryStore: LibraryStore
+    @EnvironmentObject private var downloadManager: BookDownloadManager
 
     @State private var isAddingCategory = false
     @State private var newCategoryName = ""
@@ -23,6 +24,7 @@ struct LibraryView: View {
     @State private var expandedCategoryID: UUID?
     @State private var bookToOpen: Novel?
     @State private var isManagingCategories = false
+    @State private var isShowingDownloads = false
     @Namespace private var stackNamespace
 
     private var horizontalMargin: CGFloat {
@@ -84,6 +86,7 @@ struct LibraryView: View {
                     onDelete: { novel in
                         deleteFromCategories(novel)
                     },
+                    onDownload: downloadBook,
                     onClearDownloadData: clearDownloadedData
                 )
                 .zIndex(10)
@@ -126,11 +129,36 @@ struct LibraryView: View {
             .presentationDetents([.medium, .large])
             .presentationDragIndicator(.visible)
         }
+        .sheet(isPresented: $isShowingDownloads) {
+            NavigationStack {
+                DownloadsView()
+                    .environmentObject(libraryStore)
+                    .environmentObject(downloadManager)
+            }
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
+        }
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                LibraryDownloadToolbarButton(
+                    isPresented: $isShowingDownloads,
+                    novels: libraryStore.allNovels
+                )
+            }
+        }
         .animation(.spring(response: 0.42, dampingFraction: 0.82), value: expandedCategoryID)
         .animation(.easeInOut(duration: 0.18), value: categoryEditBook?.id)
         .animation(InputModalView.presentationAnimation, value: isAddingCategory)
         .navigationTitle("书架")
         .navigationBarTitleDisplayMode(.inline)
+        .task {
+            await downloadManager.refreshStates(for: libraryStore.allNovels)
+        }
+        .onChange(of: libraryStore.categories) { _, _ in
+            Task {
+                await downloadManager.refreshStates(for: libraryStore.allNovels)
+            }
+        }
         .onChange(of: categoryEditBook?.id) { _, _ in closeActiveSwipe() }
         .onChange(of: isAddingCategory) { _, _ in closeActiveSwipe() }
     }
@@ -148,20 +176,17 @@ struct LibraryView: View {
 
             LazyVGrid(columns: readingColumns, spacing: 10) {
                 ForEach(Array(libraryStore.currentlyReading.prefix(2))) { novel in
+                    let actions = downloadActions(for: novel)
                     BookPressableNavigationRow(
                         rowID: novel.id,
-                        activeSwipeID: $activeSwipeID
-                    ) {
-                        ReaderView(novel: novel)
-                    } label: {
-                        CompactReadingCard(novel: novel)
-                    } onLongPress: {
-                        presentCategoryEditor(for: novel)
-                    } onClearDownloadData: {
-                        clearDownloadedData(for: novel)
-                    } onDelete: {
-                        libraryStore.deleteBook(novel)
-                    }
+                        activeSwipeID: $activeSwipeID,
+                        destination: { ReaderView(novel: novel) },
+                        label: { CompactReadingCard(novel: novel) },
+                        onLongPress: { presentCategoryEditor(for: novel) },
+                        onDownload: actions.onDownload,
+                        onClearDownloadData: actions.onClearDownloadData,
+                        onDelete: { libraryStore.deleteBook(novel) }
+                    )
                 }
             }
         }
@@ -214,6 +239,7 @@ struct LibraryView: View {
                                 expandedCategoryID = category.id
                             },
                             onMoveCategory: presentCategoryEditor,
+                            onDownload: downloadBook,
                             onClearDownloadData: clearDownloadedData,
                             onDelete: deleteFromCategories
                         )
@@ -264,9 +290,50 @@ struct LibraryView: View {
     }
 
     private func clearDownloadedData(for novel: Novel) {
+        downloadManager.clearState(for: novel)
         Task {
             await ChapterContentCache.shared.clearCache(for: novel)
         }
+    }
+
+    private func downloadBook(_ novel: Novel) {
+        downloadManager.startDownload(novel)
+    }
+
+    fileprivate func downloadActions(for novel: Novel) -> (onDownload: (() -> Void)?, onClearDownloadData: (() -> Void)?) {
+        bookDownloadActions(for: novel, manager: downloadManager)
+    }
+}
+
+/// Returns the download/clear callbacks that should be exposed in the swipe and
+/// context menu for a given novel. `onDownload` is suppressed once a book is
+/// fully downloaded or already in flight; `onClearDownloadData` is only offered
+/// when there's actually something cached to clear.
+@MainActor
+fileprivate func bookDownloadActions(
+    for novel: Novel,
+    manager: BookDownloadManager
+) -> (onDownload: (() -> Void)?, onClearDownloadData: (() -> Void)?) {
+    let clear: () -> Void = {
+        manager.clearState(for: novel)
+        Task {
+            await ChapterContentCache.shared.clearCache(for: novel)
+        }
+    }
+    let download: () -> Void = { manager.startDownload(novel) }
+
+    switch manager.state(for: novel) {
+    case .idle:
+        return (download, nil)
+    case .downloading, .paused:
+        // Mid-flight or paused — let the user manage from the downloads sheet.
+        // "清理缓存" still offered because clearState cancels the task and
+        // wipes partial cache in one shot.
+        return (nil, clear)
+    case .failed:
+        return (download, clear)
+    case .downloaded:
+        return (nil, clear)
     }
 }
 
@@ -294,7 +361,6 @@ private struct CenteredOverlay<Content: View>: View {
 private struct BookPressableNavigationRow<Destination: View, Label: View>: View {
     @Environment(\.appTheme) private var theme
     @State private var isNavigating = false
-    @State private var didLongPress = false
     @State private var dragOffset: CGFloat = 0
     @State private var isDragging = false
 
@@ -303,6 +369,7 @@ private struct BookPressableNavigationRow<Destination: View, Label: View>: View 
     let destination: Destination
     let label: Label
     let onLongPress: () -> Void
+    let onDownload: (() -> Void)?
     let onClearDownloadData: (() -> Void)?
     let onDelete: (() -> Void)?
 
@@ -340,6 +407,7 @@ private struct BookPressableNavigationRow<Destination: View, Label: View>: View 
         @ViewBuilder destination: () -> Destination,
         @ViewBuilder label: () -> Label,
         onLongPress: @escaping () -> Void,
+        onDownload: (() -> Void)? = nil,
         onClearDownloadData: (() -> Void)? = nil,
         onDelete: (() -> Void)? = nil
     ) {
@@ -348,6 +416,7 @@ private struct BookPressableNavigationRow<Destination: View, Label: View>: View 
         self.destination = destination()
         self.label = label()
         self.onLongPress = onLongPress
+        self.onDownload = onDownload
         self.onClearDownloadData = onClearDownloadData
         self.onDelete = onDelete
     }
@@ -364,7 +433,7 @@ private struct BookPressableNavigationRow<Destination: View, Label: View>: View 
                             VStack(spacing: 4) {
                                 Image(systemName: "arrow.down.circle")
                                     .font(.system(size: 17, weight: .bold))
-                                Text("清缓存")
+                                Text("清理缓存")
                                     .font(.system(size: 12, weight: .bold))
                             }
                             .foregroundStyle(Color.white)
@@ -411,7 +480,6 @@ private struct BookPressableNavigationRow<Destination: View, Label: View>: View 
                     destination
                 }
                 .onTapGesture {
-                    guard !didLongPress else { return }
                     if activeSwipeID != nil {
                         withAnimation(librarySwipeSpring) {
                             activeSwipeID = nil
@@ -420,18 +488,35 @@ private struct BookPressableNavigationRow<Destination: View, Label: View>: View 
                         isNavigating = true
                     }
                 }
-                .onLongPressGesture(minimumDuration: 0.45) {
-                    guard activeSwipeID == nil else {
-                        withAnimation(librarySwipeSpring) {
-                            activeSwipeID = nil
-                        }
-                        return
+                .contextMenu {
+                    Button {
+                        onLongPress()
+                    } label: {
+                        SwiftUI.Label("移动到分类", systemImage: "folder")
                     }
 
-                    didLongPress = true
-                    onLongPress()
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                        didLongPress = false
+                    if let onDownload {
+                        Button {
+                            onDownload()
+                        } label: {
+                            SwiftUI.Label("下载本书", systemImage: "arrow.down.circle")
+                        }
+                    }
+
+                    if let onClearDownloadData {
+                        Button {
+                            onClearDownloadData()
+                        } label: {
+                            SwiftUI.Label("清理缓存", systemImage: "arrow.down.circle.dotted")
+                        }
+                    }
+
+                    if let onDelete {
+                        Button(role: .destructive) {
+                            onDelete()
+                        } label: {
+                            SwiftUI.Label("删除", systemImage: "trash")
+                        }
                     }
                 }
                 .simultaneousGesture(swipeGesture)
@@ -740,14 +825,77 @@ private struct CompactReadingCard: View {
     }
 }
 
+/// Inline pill that surfaces a book's download status on Library cards. Hidden when
+/// a book has never been touched by the download manager (idle), so casually-imported
+/// books don't get visual noise.
+private struct DownloadStatusBadge: View {
+    @Environment(\.appTheme) private var theme
+    let state: BookDownloadState
+    /// Compact variant trims label text; used on small-card layouts.
+    var compact: Bool = false
+
+    var body: some View {
+        switch state {
+        case .idle:
+            EmptyView()
+        case .downloading(let completed, let total):
+            HStack(spacing: 4) {
+                Image(systemName: "arrow.down.circle")
+                    .font(.system(size: 10, weight: .bold))
+                Text(compact ? "\(Int(state.fraction * 100))%" : "下载中 \(completed)/\(total)")
+                    .font(.system(size: 10, weight: .bold, design: .rounded))
+            }
+            .foregroundStyle(theme.accent)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(Capsule().fill(theme.accent.opacity(0.14)))
+        case .paused(let completed, let total):
+            HStack(spacing: 4) {
+                Image(systemName: "pause.circle")
+                    .font(.system(size: 10, weight: .bold))
+                Text(compact ? "\(Int(state.fraction * 100))%" : "已暂停 \(completed)/\(total)")
+                    .font(.system(size: 10, weight: .bold, design: .rounded))
+            }
+            .foregroundStyle(theme.secondaryText)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(Capsule().fill(theme.secondaryText.opacity(0.12)))
+        case .downloaded:
+            HStack(spacing: 3) {
+                Image(systemName: "arrow.down.circle.fill")
+                    .font(.system(size: 10, weight: .bold))
+                Text("已下载")
+                    .font(.system(size: 10, weight: .bold, design: .rounded))
+            }
+            .foregroundStyle(theme.accent)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(Capsule().fill(theme.accent.opacity(0.14)))
+        case .failed:
+            HStack(spacing: 3) {
+                Image(systemName: "exclamationmark.circle")
+                    .font(.system(size: 10, weight: .bold))
+                Text("未完成")
+                    .font(.system(size: 10, weight: .bold, design: .rounded))
+            }
+            .foregroundStyle(Color.red.opacity(0.85))
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(Capsule().fill(Color.red.opacity(0.10)))
+        }
+    }
+}
+
 private struct StackedCategoryShelf: View {
     @Environment(\.appTheme) private var theme
+    @EnvironmentObject private var downloadManager: BookDownloadManager
     let category: LibraryCategory
     let namespace: Namespace.ID
     let isExpanded: Bool
     let onTopTap: (Novel) -> Void
     let onExpand: () -> Void
     let onMoveCategory: (Novel) -> Void
+    let onDownload: (Novel) -> Void
     let onClearDownloadData: (Novel) -> Void
     let onDelete: (Novel) -> Void
 
@@ -819,16 +967,28 @@ private struct StackedCategoryShelf: View {
 
     @ViewBuilder
     private func bookContextMenuButtons(for novel: Novel) -> some View {
+        let actions = bookDownloadActions(for: novel, manager: downloadManager)
+
         Button {
             onMoveCategory(novel)
         } label: {
             Label("移动到分类", systemImage: "folder")
         }
 
-        Button {
-            onClearDownloadData(novel)
-        } label: {
-            Label("清缓存", systemImage: "arrow.down.circle")
+        if actions.onDownload != nil {
+            Button {
+                onDownload(novel)
+            } label: {
+                Label("下载本书", systemImage: "arrow.down.circle")
+            }
+        }
+
+        if actions.onClearDownloadData != nil {
+            Button {
+                onClearDownloadData(novel)
+            } label: {
+                Label("清理缓存", systemImage: "arrow.down.circle.dotted")
+            }
         }
 
         Button(role: .destructive) {
@@ -841,6 +1001,7 @@ private struct StackedCategoryShelf: View {
 
 private struct StackBookCard: View {
     @Environment(\.appTheme) private var theme
+    @EnvironmentObject private var downloadManager: BookDownloadManager
     let novel: Novel
     @AppStorage("reader.usesTraditionalChinese") private var usesTraditionalChinese = false
 
@@ -849,10 +1010,14 @@ private struct StackBookCard: View {
             BookCover(novel: novel, width: 48, height: 68)
 
             VStack(alignment: .leading, spacing: 4) {
-                Text(displayed(novel.title))
-                    .font(.system(size: 15, weight: .semibold, design: .rounded))
-                    .foregroundStyle(theme.primaryText)
-                    .lineLimit(1)
+                HStack(spacing: 6) {
+                    Text(displayed(novel.title))
+                        .font(.system(size: 15, weight: .semibold, design: .rounded))
+                        .foregroundStyle(theme.primaryText)
+                        .lineLimit(1)
+
+                    DownloadStatusBadge(state: downloadManager.state(for: novel), compact: true)
+                }
 
                 BookMetadataLine(novel: novel, usesTraditionalChinese: usesTraditionalChinese)
                     .font(.system(size: 12))
@@ -914,12 +1079,14 @@ private struct BookMetadataLine: View {
 
 private struct ExpandedCategoryOverlay: View {
     @Environment(\.appTheme) private var theme
+    @EnvironmentObject private var downloadManager: BookDownloadManager
     let category: LibraryCategory
     let namespace: Namespace.ID
     let onDismiss: () -> Void
     let onSelect: (Novel) -> Void
     let onLongPress: (Novel) -> Void
     let onDelete: (Novel) -> Void
+    let onDownload: (Novel) -> Void
     let onClearDownloadData: (Novel) -> Void
 
     private var sortedNovels: [Novel] {
@@ -976,16 +1143,28 @@ private struct ExpandedCategoryOverlay: View {
                                     onSelect(novel)
                                 }
                                 .contextMenu {
+                                    let actions = bookDownloadActions(for: novel, manager: downloadManager)
+
                                     Button {
                                         onLongPress(novel)
                                     } label: {
                                         Label("移动到分类", systemImage: "folder")
                                     }
 
-                                    Button {
-                                        onClearDownloadData(novel)
-                                    } label: {
-                                        Label("清缓存", systemImage: "arrow.down.circle")
+                                    if actions.onDownload != nil {
+                                        Button {
+                                            onDownload(novel)
+                                        } label: {
+                                            Label("下载本书", systemImage: "arrow.down.circle")
+                                        }
+                                    }
+
+                                    if actions.onClearDownloadData != nil {
+                                        Button {
+                                            onClearDownloadData(novel)
+                                        } label: {
+                                            Label("清理缓存", systemImage: "arrow.down.circle.dotted")
+                                        }
                                     }
 
                                     Button(role: .destructive) {
@@ -1013,6 +1192,7 @@ private struct ExpandedCategoryOverlay: View {
 
 private struct CategoryShelf: View {
     @Environment(\.appTheme) private var theme
+    @EnvironmentObject private var downloadManager: BookDownloadManager
     let category: LibraryCategory
     @Binding var categories: [LibraryCategory]
     @Binding var activeSwipeID: UUID?
@@ -1053,20 +1233,17 @@ private struct CategoryShelf: View {
             } else {
                 VStack(spacing: 8) {
                     ForEach(Array(category.novels.prefix(previewLimit))) { novel in
+                        let actions = bookDownloadActions(for: novel, manager: downloadManager)
                         BookPressableNavigationRow(
                             rowID: novel.id,
-                            activeSwipeID: $activeSwipeID
-                        ) {
-                            ReaderView(novel: novel)
-                        } label: {
-                            CategoryBookRow(novel: novel)
-                        } onLongPress: {
-                            onBookLongPress(novel)
-                        } onClearDownloadData: {
-                            clearDownloadedData(for: novel)
-                        } onDelete: {
-                            delete(novel)
-                        }
+                            activeSwipeID: $activeSwipeID,
+                            destination: { ReaderView(novel: novel) },
+                            label: { CategoryBookRow(novel: novel) },
+                            onLongPress: { onBookLongPress(novel) },
+                            onDownload: actions.onDownload,
+                            onClearDownloadData: actions.onClearDownloadData,
+                            onDelete: { delete(novel) }
+                        )
                     }
                 }
             }
@@ -1082,6 +1259,7 @@ private struct CategoryShelf: View {
     }
 
     private func clearDownloadedData(for novel: Novel) {
+        downloadManager.clearState(for: novel)
         Task {
             await ChapterContentCache.shared.clearCache(for: novel)
         }
@@ -1118,6 +1296,7 @@ private struct EmptyCategoryRow: View {
 
 private struct CategoryBookRow: View {
     @Environment(\.appTheme) private var theme
+    @EnvironmentObject private var downloadManager: BookDownloadManager
     let novel: Novel
     @AppStorage("reader.usesTraditionalChinese") private var usesTraditionalChinese = false
 
@@ -1126,10 +1305,14 @@ private struct CategoryBookRow: View {
             BookCover(novel: novel, width: 44, height: 62)
 
             VStack(alignment: .leading, spacing: 4) {
-                Text(displayed(novel.title))
-                    .font(.system(size: 15, weight: .semibold, design: .rounded))
-                    .foregroundStyle(theme.primaryText)
-                    .lineLimit(1)
+                HStack(spacing: 6) {
+                    Text(displayed(novel.title))
+                        .font(.system(size: 15, weight: .semibold, design: .rounded))
+                        .foregroundStyle(theme.primaryText)
+                        .lineLimit(1)
+
+                    DownloadStatusBadge(state: downloadManager.state(for: novel), compact: true)
+                }
 
                 BookMetadataLine(novel: novel, usesTraditionalChinese: usesTraditionalChinese)
                     .font(.system(size: 12))
@@ -1174,6 +1357,7 @@ private struct CategoryDetailView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.appTheme) private var theme
+    @EnvironmentObject private var downloadManager: BookDownloadManager
     @State private var searchText = ""
     @State private var sortMode: CategorySortMode = .recent
     @State private var categoryEditBook: Novel?
@@ -1246,20 +1430,17 @@ private struct CategoryDetailView: View {
                     } else {
                         LazyVStack(spacing: 8) {
                             ForEach(visibleNovels) { novel in
+                                let actions = bookDownloadActions(for: novel, manager: downloadManager)
                                 BookPressableNavigationRow(
                                     rowID: novel.id,
-                                    activeSwipeID: $activeSwipeID
-                                ) {
-                                    ReaderView(novel: novel)
-                                } label: {
-                                    CategoryBookRow(novel: novel)
-                                } onLongPress: {
-                                    presentCategoryEditor(for: novel)
-                                } onClearDownloadData: {
-                                    clearDownloadedData(for: novel)
-                                } onDelete: {
-                                    delete(novel)
-                                }
+                                    activeSwipeID: $activeSwipeID,
+                                    destination: { ReaderView(novel: novel) },
+                                    label: { CategoryBookRow(novel: novel) },
+                                    onLongPress: { presentCategoryEditor(for: novel) },
+                                    onDownload: actions.onDownload,
+                                    onClearDownloadData: actions.onClearDownloadData,
+                                    onDelete: { delete(novel) }
+                                )
                             }
                         }
                     }
@@ -1326,6 +1507,7 @@ private struct CategoryDetailView: View {
     }
 
     private func clearDownloadedData(for novel: Novel) {
+        downloadManager.clearState(for: novel)
         Task {
             await ChapterContentCache.shared.clearCache(for: novel)
         }

@@ -3,6 +3,7 @@ import SwiftUI
 struct ContentView: View {
     @StateObject private var libraryStore = LibraryStore()
     @StateObject private var themeManager = AppThemeManager()
+    @StateObject private var downloadManager = BookDownloadManager()
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
@@ -31,6 +32,7 @@ struct ContentView: View {
         .tint(themeManager.current.accent)
         .environmentObject(libraryStore)
         .environmentObject(themeManager)
+        .environmentObject(downloadManager)
         .environment(\.appTheme, themeManager.current)
         .preferredColorScheme(themeManager.current.preferredColorScheme)
         .onChange(of: scenePhase) { _, newPhase in
