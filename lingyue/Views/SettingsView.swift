@@ -72,7 +72,7 @@ struct SettingsView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
-                    previewSection
+                    previewCard
                     readingControlsSection
                     appThemeSection
                     storageSection
@@ -97,26 +97,22 @@ struct SettingsView: View {
         }
     }
 
-    private var previewSection: some View {
+    private var previewCard: some View {
         VStack(alignment: .leading, spacing: 12) {
-            SectionHeader(title: "阅读预览")
+            Text(displayedPreviewText)
+                .font(selectedFontFamily.swiftUIFont(size: fontSize))
+                .foregroundStyle(selectedTheme.pageForeground)
+                .lineSpacing(lineSpacing)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
 
-            VStack(alignment: .leading, spacing: 12) {
-                Text(displayedPreviewText)
-                    .font(selectedFontFamily.swiftUIFont(size: fontSize))
-                    .foregroundStyle(selectedTheme.pageForeground)
-                    .lineSpacing(lineSpacing)
-                    .frame(maxWidth: .infinity, alignment: .topLeading)
-
-                Text("当前：\(selectedTheme.rawValue) · \(selectedFontFamily.displayName) · \(usesTraditionalChinese ? "繁体" : "简体") · 字号 \(Int(fontSize)) · 行距 \(Int(lineSpacing))")
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(selectedTheme.secondaryForeground)
-            }
-            .padding(16)
-            .background(selectedTheme.pageBackground)
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .shadow(color: theme.cardShadow, radius: 12, x: 0, y: 6)
+            Text("当前：\(selectedTheme.rawValue) · \(selectedFontFamily.displayName) · \(usesTraditionalChinese ? "繁体" : "简体") · 字号 \(Int(fontSize)) · 行距 \(Int(lineSpacing))")
+                .font(.caption.weight(.medium))
+                .foregroundStyle(selectedTheme.secondaryForeground)
         }
+        .padding(16)
+        .background(selectedTheme.pageBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .shadow(color: theme.cardShadow, radius: 12, x: 0, y: 6)
     }
 
     private var appThemeSection: some View {
