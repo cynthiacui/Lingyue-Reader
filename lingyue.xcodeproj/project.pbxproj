@@ -26,6 +26,7 @@
 		010000000000000000000112 /* AppTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000014 /* AppTheme.swift */; };
 		010000000000000000000113 /* BookDownloadManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000015 /* BookDownloadManager.swift */; };
 		010000000000000000000114 /* DownloadsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000016 /* DownloadsView.swift */; };
+		010000000000000000000115 /* LXGWWenKaiScreen.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000017 /* LXGWWenKaiScreen.ttf */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -50,6 +51,7 @@
 		010000000000000000000014 /* AppTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppTheme.swift; sourceTree = "<group>"; };
 		010000000000000000000015 /* BookDownloadManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookDownloadManager.swift; sourceTree = "<group>"; };
 		010000000000000000000016 /* DownloadsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadsView.swift; sourceTree = "<group>"; };
+		010000000000000000000017 /* LXGWWenKaiScreen.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = LXGWWenKaiScreen.ttf; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -134,8 +136,17 @@
 			isa = PBXGroup;
 			children = (
 				01000000000000000000000A /* Info.plist */,
+				010000000000000000000308 /* Fonts */,
 			);
 			path = SupportingFiles;
+			sourceTree = "<group>";
+		};
+		010000000000000000000308 /* Fonts */ = {
+			isa = PBXGroup;
+			children = (
+				010000000000000000000017 /* LXGWWenKaiScreen.ttf */,
+			);
+			path = Fonts;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -198,6 +209,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				010000000000000000000109 /* Assets.xcassets in Resources */,
+				010000000000000000000115 /* LXGWWenKaiScreen.ttf in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -13,6 +13,7 @@ struct ReaderView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @AppStorage("reader.fontSize") private var fontSize = 18.0
     @AppStorage("reader.lineSpacing") private var lineSpacing = 8.0
+    @AppStorage("reader.fontFamily") private var fontFamilyRaw = ReaderFontFamily.system.rawValue
     @AppStorage("reader.theme") private var themeRawValue = ReadingTheme.paper.rawValue
     @AppStorage("reader.followSystemDark") private var followSystemDark = false
     @AppStorage("reader.usesTraditionalChinese") private var usesTraditionalChinese = false
@@ -102,6 +103,19 @@ struct ReaderView: View {
     private var pageBackground: Color { currentTheme.pageBackground }
     private var pageForeground: Color { currentTheme.pageForeground }
     private var secondaryForeground: Color { currentTheme.secondaryForeground }
+
+    private var readerFontFamily: ReaderFontFamily {
+        ReaderFontFamily(rawValue: fontFamilyRaw) ?? .system
+    }
+
+    /// Normalizing binding for the in-reader font picker — a stale stored value (e.g. an old
+    /// case that no longer exists) resolves to `.system` so the menu always shows a checkmark.
+    private var fontFamilyBinding: Binding<String> {
+        Binding(
+            get: { readerFontFamily.rawValue },
+            set: { fontFamilyRaw = $0 }
+        )
+    }
 
     var body: some View {
         GeometryReader { proxy in
@@ -269,6 +283,7 @@ struct ReaderView: View {
                 text: page.content,
                 fontSize: fontSize,
                 lineSpacing: lineSpacing,
+                fontFamily: readerFontFamily,
                 color: UIColor(pageForeground)
             )
             .frame(width: textSize.width, height: textSize.height, alignment: .topLeading)
@@ -650,21 +665,25 @@ struct ReaderView: View {
                 Spacer()
 
                 VStack(alignment: .leading, spacing: 16) {
-                    preferenceStepperRow(
+                    preferenceSliderRow(
                         title: "字号",
+                        systemImage: "textformat.size",
                         value: $fontSize,
                         range: 12...32,
                         step: 1,
                         format: { "\(Int($0))" }
                     )
 
-                    preferenceStepperRow(
+                    preferenceSliderRow(
                         title: "行距",
+                        systemImage: "line.3.horizontal",
                         value: $lineSpacing,
                         range: 0...24,
                         step: 1,
                         format: { "\(Int($0))" }
                     )
+
+                    preferenceFontRow
 
                     preferenceThemeRow
 
@@ -682,8 +701,9 @@ struct ReaderView: View {
                     }
 
                     if autoScroll {
-                        preferenceStepperRow(
+                        preferenceSliderRow(
                             title: "停留",
+                            systemImage: "timer",
                             value: $autoScrollSeconds,
                             range: 2...30,
                             step: 1,
@@ -704,30 +724,52 @@ struct ReaderView: View {
         .ignoresSafeArea(edges: .bottom)
     }
 
-    private func preferenceStepperRow(
+    private func preferenceSliderRow(
         title: String,
+        systemImage: String,
         value: Binding<Double>,
         range: ClosedRange<Double>,
         step: Double,
         format: @escaping (Double) -> String
     ) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(pageForeground)
+                Text(title)
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(pageForeground)
+                Spacer(minLength: 0)
+                Text(format(value.wrappedValue))
+                    .font(.system(size: 15, weight: .semibold).monospacedDigit())
+                    .foregroundStyle(pageForeground)
+            }
+
+            Slider(value: value, in: range, step: step)
+                .tint(pageForeground.opacity(0.85))
+        }
+    }
+
+    private var preferenceFontRow: some View {
         HStack(spacing: 12) {
-            Text(title)
+            Text("字体")
                 .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(secondaryForeground)
                 .frame(width: 36, alignment: .leading)
 
             Spacer(minLength: 0)
 
-            CompactStepper(
-                value: value,
-                range: range,
-                step: step,
-                format: format,
-                background: currentTheme.surfaceBackground,
-                foreground: pageForeground,
-                dividerColor: secondaryForeground.opacity(0.18)
-            )
+            Picker("字体", selection: fontFamilyBinding) {
+                ForEach(ReaderFontFamily.allCases) { family in
+                    Text(family.displayName)
+                        .font(family.swiftUIFont(size: 16))
+                        .tag(family.rawValue)
+                }
+            }
+            .pickerStyle(.menu)
+            .labelsHidden()
+            .tint(pageForeground)
         }
     }
 
@@ -1108,6 +1150,7 @@ struct ReaderView: View {
             "\(width)x\(height)",
             "\(fontSize)",
             "\(lineSpacing)",
+            fontFamilyRaw,
             "\(usesTraditionalChinese)"
         ].joined(separator: "|")
     }
@@ -1138,7 +1181,7 @@ struct ReaderView: View {
         let lineSpacing = self.lineSpacing
 
         let work = Task.detached(priority: .userInitiated) {
-            Self.paginate(content: content, textSize: textSize, fontSize: fontSize, lineSpacing: lineSpacing)
+            Self.paginate(content: content, textSize: textSize, fontSize: fontSize, lineSpacing: lineSpacing, fontFamily: readerFontFamily)
         }
         let pageContents = await withTaskCancellationHandler {
             await work.value
@@ -1310,7 +1353,7 @@ struct ReaderView: View {
         let fontSize = self.fontSize
         let lineSpacing = self.lineSpacing
         let pages = await Task.detached(priority: .utility) {
-            Self.paginate(content: displayedContent, textSize: textSize, fontSize: fontSize, lineSpacing: lineSpacing)
+            Self.paginate(content: displayedContent, textSize: textSize, fontSize: fontSize, lineSpacing: lineSpacing, fontFamily: readerFontFamily)
         }.value
 
         guard !pages.isEmpty else { return }
@@ -1462,12 +1505,13 @@ struct ReaderView: View {
         content: String,
         textSize: CGSize,
         fontSize: CGFloat,
-        lineSpacing: CGFloat
+        lineSpacing: CGFloat,
+        fontFamily: ReaderFontFamily
     ) -> [String] {
         var remaining = content.trimmingCharacters(in: .whitespacesAndNewlines)
         if remaining.isEmpty { return [""] }
 
-        let attributes = readerAttributes(fontSize: fontSize, lineSpacing: lineSpacing)
+        let attributes = readerAttributes(fontSize: fontSize, lineSpacing: lineSpacing, fontFamily: fontFamily)
         var result: [String] = []
 
         while !remaining.isEmpty {
@@ -1533,7 +1577,8 @@ struct ReaderView: View {
 
     nonisolated private static func readerAttributes(
         fontSize: CGFloat,
-        lineSpacing: CGFloat
+        lineSpacing: CGFloat,
+        fontFamily: ReaderFontFamily
     ) -> [NSAttributedString.Key: Any] {
         let paragraphStyle = NSMutableParagraphStyle()
         paragraphStyle.alignment = .justified
@@ -1543,7 +1588,7 @@ struct ReaderView: View {
         paragraphStyle.lineBreakMode = .byWordWrapping
 
         return [
-            .font: UIFont.systemFont(ofSize: fontSize, weight: .regular),
+            .font: fontFamily.uiFont(size: fontSize),
             .foregroundColor: UIColor.label,
             .paragraphStyle: paragraphStyle
         ]
@@ -1576,6 +1621,7 @@ private struct JustifiedReaderText: UIViewRepresentable {
     let text: String
     let fontSize: CGFloat
     let lineSpacing: CGFloat
+    let fontFamily: ReaderFontFamily
     let color: UIColor
 
     func makeUIView(context: Context) -> ReaderTextView {
@@ -1609,7 +1655,7 @@ private struct JustifiedReaderText: UIViewRepresentable {
         textView.attributedText = NSAttributedString(
             string: text,
             attributes: [
-                .font: UIFont.systemFont(ofSize: fontSize, weight: .regular),
+                .font: fontFamily.uiFont(size: fontSize),
                 .foregroundColor: color,
                 .paragraphStyle: paragraphStyle
             ]

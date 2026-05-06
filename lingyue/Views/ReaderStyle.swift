@@ -1,4 +1,60 @@
 import SwiftUI
+import UIKit
+
+/// Reader body-text font choice. iOS 17 ships PingFang SC plus the Hiragino Japanese family
+/// (Mincho-style serif and a rounded "Maru" sans), but does *not* bundle Songti / Kaiti /
+/// Yuanti anymore — those families are absent from `UIFont.familyNames`. So 宋体/黑体/圆体
+/// route to the closest visually-distinct on-device face, and 楷体 is satisfied by the
+/// open-source LXGW WenKai Screen TTF bundled in `SupportingFiles/Fonts/`.
+enum ReaderFontFamily: String, CaseIterable, Identifiable {
+    case system
+    case songti
+    case kaiti
+    case heiti
+    case yuanti
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .system: return "苹方"
+        case .songti: return "宋体"
+        case .kaiti:  return "楷体"
+        case .heiti:  return "黑体"
+        case .yuanti: return "圆体"
+        }
+    }
+
+    /// Postscript names to try, in order. The first one that resolves wins. `kaiti` uses the
+    /// bundled LXGW WenKai Screen (registered via `UIAppFonts`); the others are stock iOS.
+    private var postScriptCandidates: [String] {
+        switch self {
+        case .system: return []
+        case .songti: return ["HiraMinProN-W3"]
+        case .kaiti:  return ["LXGWWenKaiScreen"]
+        case .heiti:  return ["HiraginoSans-W6", "HiraginoSans-W3"]
+        case .yuanti: return ["HiraMaruProN-W4"]
+        }
+    }
+
+    var resolvedPostScriptName: String? {
+        postScriptCandidates.first { UIFont(name: $0, size: 12) != nil }
+    }
+
+    func uiFont(size: CGFloat) -> UIFont {
+        if let name = resolvedPostScriptName, let font = UIFont(name: name, size: size) {
+            return font
+        }
+        return UIFont.systemFont(ofSize: size, weight: .regular)
+    }
+
+    func swiftUIFont(size: CGFloat) -> Font {
+        if let name = resolvedPostScriptName {
+            return Font.custom(name, size: size)
+        }
+        return Font.system(size: size, weight: .regular)
+    }
+}
 
 extension Color {
     static let readerBackground = Color(red: 0.97, green: 0.96, blue: 0.93)

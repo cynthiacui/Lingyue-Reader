@@ -11,6 +11,7 @@ struct SettingsView: View {
 
     @AppStorage("reader.fontSize") private var fontSize = 18.0
     @AppStorage("reader.lineSpacing") private var lineSpacing = 8.0
+    @AppStorage("reader.fontFamily") private var fontFamilyRaw = ReaderFontFamily.system.rawValue
     @AppStorage("reader.theme") private var themeRawValue = ReadingTheme.paper.rawValue
     @AppStorage("reader.followSystemDark") private var readerFollowSystemDark = false
     @AppStorage("reader.usesTraditionalChinese") private var usesTraditionalChinese = false
@@ -51,6 +52,20 @@ struct SettingsView: View {
         ChineseTextConverter.display(previewBaseText, usesTraditionalChinese: usesTraditionalChinese)
     }
 
+    private var selectedFontFamily: ReaderFontFamily {
+        ReaderFontFamily(rawValue: fontFamilyRaw) ?? .system
+    }
+
+    /// Routes the picker through `selectedFontFamily` so a stale storage value (e.g. an old
+    /// `"kaiti"` left over from before the case was removed) still resolves to a valid tag,
+    /// otherwise the menu would render with no selection visible.
+    private var fontFamilyBinding: Binding<String> {
+        Binding(
+            get: { selectedFontFamily.rawValue },
+            set: { fontFamilyRaw = $0 }
+        )
+    }
+
     var body: some View {
         ZStack {
             ThemeBackgroundView()
@@ -88,12 +103,12 @@ struct SettingsView: View {
 
             VStack(alignment: .leading, spacing: 12) {
                 Text(displayedPreviewText)
-                    .font(.system(size: fontSize, weight: .regular, design: .serif))
+                    .font(selectedFontFamily.swiftUIFont(size: fontSize))
                     .foregroundStyle(selectedTheme.pageForeground)
                     .lineSpacing(lineSpacing)
                     .frame(maxWidth: .infinity, alignment: .topLeading)
 
-                Text("当前：\(selectedTheme.rawValue) · \(usesTraditionalChinese ? "繁体" : "简体") · 字号 \(Int(fontSize)) · 行距 \(Int(lineSpacing))")
+                Text("当前：\(selectedTheme.rawValue) · \(selectedFontFamily.displayName) · \(usesTraditionalChinese ? "繁体" : "简体") · 字号 \(Int(fontSize)) · 行距 \(Int(lineSpacing))")
                     .font(.caption.weight(.medium))
                     .foregroundStyle(selectedTheme.secondaryForeground)
             }
@@ -240,6 +255,8 @@ struct SettingsView: View {
                         .tint(theme.accent)
                 }
 
+                fontFamilyPicker
+
                 themePicker
 
                 Toggle(isOn: $usesTraditionalChinese) {
@@ -325,6 +342,26 @@ struct SettingsView: View {
             if cacheNotice == dismissedNotice {
                 cacheNotice = nil
             }
+        }
+    }
+
+    private var fontFamilyPicker: some View {
+        HStack {
+            Label("字体", systemImage: "character.book.closed.fill")
+                .font(.headline)
+
+            Spacer()
+
+            Picker("字体", selection: fontFamilyBinding) {
+                ForEach(ReaderFontFamily.allCases) { family in
+                    Text(family.displayName)
+                        .font(family.swiftUIFont(size: 16))
+                        .tag(family.rawValue)
+                }
+            }
+            .pickerStyle(.menu)
+            .labelsHidden()
+            .tint(theme.accent)
         }
     }
 
