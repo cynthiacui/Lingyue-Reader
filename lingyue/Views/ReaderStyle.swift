@@ -75,7 +75,7 @@ enum PageTransitionStyle: String, CaseIterable, Identifiable {
 }
 
 extension Color {
-    static let readerBackground = Color(red: 0.97, green: 0.96, blue: 0.93)
+    static let readerBackground = Color(red: 0.9333, green: 0.9804, blue: 0.9333)
     static let readerSurface = Color(red: 1.0, green: 0.99, blue: 0.96)
     static let readerInk = Color(red: 0.11, green: 0.10, blue: 0.09)
     static let readerMuted = Color(red: 0.43, green: 0.39, blue: 0.34)
@@ -113,7 +113,7 @@ extension ReadingTheme {
 
     var pageBackground: Color {
         switch self {
-        case .paper: return Color(red: 0.97, green: 0.96, blue: 0.93)
+        case .paper: return Color(red: 0.9333, green: 0.9804, blue: 0.9333)
         case .warm:  return Color(red: 0.9725, green: 0.9373, blue: 0.8510)
         case .mint:  return Color(red: 0.8980, green: 0.9294, blue: 0.8471)
         case .sky:   return Color(red: 0.85, green: 0.91, blue: 0.96)
