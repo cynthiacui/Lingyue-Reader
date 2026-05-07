@@ -1081,7 +1081,10 @@ private struct StackedCategoryShelf: View {
                         StackBookCard(novel: novel)
                             .frame(height: cardHeight)
                             .matchedGeometryEffect(id: novel.id, in: namespace, isSource: !isExpanded)
-                            .scaleEffect(1 - CGFloat(index) * 0.012, anchor: .top)
+                            // Keep peek cards close to full width so the visible sliver
+                            // remains an easy tap target (was 0.012, which made a 2-card
+                            // stack's lone peek visibly narrower and easy to misclick).
+                            .scaleEffect(1 - CGFloat(index) * 0.005, anchor: .top)
                             .zIndex(Double(maxVisible - index))
                             .opacity(isExpanded ? 0 : 1)
                             .allowsHitTesting(!isExpanded)
