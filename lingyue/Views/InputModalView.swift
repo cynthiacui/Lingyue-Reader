@@ -95,7 +95,10 @@ struct InputModalView: View {
             }
         }
         .onAppear {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
+            // Next-runloop focus instead of a hard-coded 180ms delay so the
+            // keyboard rises concurrently with the modal's entrance — the old
+            // delay made the tap feel laggy ("卡卡的").
+            DispatchQueue.main.async {
                 fieldFocused = true
             }
         }
