@@ -1489,9 +1489,13 @@ actor DiscoverySearchService {
         var seen: Set<String> = []
 
         for block in blocks {
+            // xsw.tw moved its book content to m.xsw.tw — fetching www.xsw.tw/book/<id>.html
+            // returns a 9-byte "info err." stub regardless of User-Agent, so the in-app
+            // browser would land on a blank page when the user tapped a result. Resolve all
+            // hrefs against the mobile host so book detail URLs actually load.
             guard
                 let href = regexFirstMatch(pattern: #"<div[^>]*class=["']title["'][\s\S]*?<a[^>]+href=["']([^"']+)["']"#, in: block),
-                let url = URL(string: href, relativeTo: URL(string: "https://www.xsw.tw"))
+                let url = URL(string: href, relativeTo: URL(string: "https://m.xsw.tw"))
             else { continue }
 
             let rawTitle = regexFirstMatch(pattern: #"<div[^>]*class=["']title["'][\s\S]*?<a[^>]*>([\s\S]*?)</a>"#, in: block)
