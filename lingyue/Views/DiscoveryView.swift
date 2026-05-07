@@ -742,6 +742,9 @@ actor DiscoverySearchService {
 
     private let session: URLSession
     private let redirectDelegate = DiscoveryRedirectDelegate()
+    // In-memory paywall cache keyed by probe chapter URL. Process-lifetime only — copyright
+    // takedowns shift slowly, so a cold restart will simply re-probe and converge again.
+    private var paywallProbeCache: [String: Bool] = [:]
 
     private init() {
         let configuration = URLSessionConfiguration.ephemeral
@@ -868,7 +871,8 @@ actor DiscoverySearchService {
                 return []
             }
             let parsedResults = Array(parseDirectResults(source: source, html: html).prefix(20))
-            let hits = parsedResults.enumerated().compactMap { index, result in
+            let probedResults = await filterPaywalledHits(parsedResults)
+            let hits = probedResults.enumerated().compactMap { index, result in
                 makeDirectSourceHit(
                     source: source,
                     title: result.title,
@@ -894,6 +898,52 @@ actor DiscoverySearchService {
             print("[DiscoverySearch] request failed: \(source.name) | \(error.localizedDescription)")
 #endif
             return []
+        }
+    }
+
+    /// Drops hits whose `probeChapterURL` returns a copyright-takedown body. Sources that
+    /// don't populate `probeChapterURL` (everything except 努努书坊 today) pass through
+    /// unchanged, so this is effectively a no-op for them. Probes run concurrently so the
+    /// added latency is bounded by the slowest single chapter fetch, not their sum.
+    private func filterPaywalledHits(_ results: [ParsedSourceResult]) async -> [ParsedSourceResult] {
+        let probeIndices = results.indices.filter { results[$0].probeChapterURL != nil }
+        guard !probeIndices.isEmpty else { return results }
+
+        var dropped: Set<Int> = []
+        await withTaskGroup(of: (Int, Bool).self) { group in
+            for i in probeIndices {
+                let url = results[i].probeChapterURL!
+                group.addTask { [self] in
+                    let blocked = await self.isProbeURLPaywalled(url)
+                    return (i, blocked)
+                }
+            }
+            for await (i, blocked) in group {
+                if blocked { dropped.insert(i) }
+            }
+        }
+        return results.enumerated().compactMap { dropped.contains($0.offset) ? nil : $0.element }
+    }
+
+    private func isProbeURLPaywalled(_ url: URL) async -> Bool {
+        let key = url.absoluteString
+        if let cached = paywallProbeCache[key] { return cached }
+        do {
+            let (data, response) = try await session.data(from: url)
+            // Treat non-2xx as "unknown" rather than paywalled — a 404 on a stub chapter
+            // means the book is broken on this source, but that's a different failure mode.
+            guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+                return false
+            }
+            let html = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .gb_18030_2000) ?? ""
+            let blocked = html.contains("请下载努努书坊APP")
+                || html.contains("請下載努努書坊APP")
+                || html.contains("由于版权问题不能显示")
+                || html.contains("由於版權問題不能顯示")
+            paywallProbeCache[key] = blocked
+            return blocked
+        } catch {
+            return false
         }
     }
 
@@ -982,6 +1032,18 @@ actor DiscoverySearchService {
         let title: String
         let summary: String
         let url: URL
+        // For sources with selective paywalling (currently 努努书坊): a chapter URL we can
+        // fetch to detect copyright-takedown markers before showing the source to the user.
+        // nil means "no probe needed" (the source either has no paywall, or we couldn't
+        // extract a chapter URL — in which case we keep the hit rather than filter blindly).
+        let probeChapterURL: URL?
+
+        init(title: String, summary: String, url: URL, probeChapterURL: URL? = nil) {
+            self.title = title
+            self.summary = summary
+            self.url = url
+            self.probeChapterURL = probeChapterURL
+        }
     }
 
     private func parseDirectResults(source: DiscoverySource, html: String) -> [ParsedSourceResult] {
@@ -1488,10 +1550,23 @@ actor DiscoverySearchService {
                 .filter { !$0.isEmpty }
                 .joined(separator: " · ")
 
+            // s3's anchor links to the latest chapter — use it as a paywall probe target
+            // since the chapter body is where 努努书坊 emits "请下载努努书坊APP" / "由于版权问题"
+            // for copyright-blocked books. Detail pages don't carry the marker.
+            let probeChapterURL: URL? = regexFirstMatch(
+                pattern: #"<span[^>]*class=["']s3["'][\s\S]*?<a[^>]+href=["']([^"']+)["']"#,
+                in: block
+            ).flatMap { URL(string: $0, relativeTo: URL(string: "https://www.nunucom.com"))?.absoluteURL }
+
             let key = "\(title)|\(url.absoluteString)"
             guard !seen.contains(key) else { continue }
             seen.insert(key)
-            results.append(ParsedSourceResult(title: title, summary: summary, url: url.absoluteURL))
+            results.append(ParsedSourceResult(
+                title: title,
+                summary: summary,
+                url: url.absoluteURL,
+                probeChapterURL: probeChapterURL
+            ))
         }
 
         return results
