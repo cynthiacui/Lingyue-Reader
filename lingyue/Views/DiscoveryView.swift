@@ -355,10 +355,19 @@ private struct DiscoverySearchResultsView: View {
 
                 ForEach(groupedResults) { result in
                     VStack(alignment: .leading, spacing: 10) {
-                        Text(result.title)
-                            .font(.system(size: 18, weight: .semibold, design: .rounded))
-                            .foregroundStyle(theme.primaryText)
-                            .lineSpacing(3)
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            Text(result.title)
+                                .font(.system(size: 18, weight: .semibold, design: .rounded))
+                                .foregroundStyle(theme.primaryText)
+                                .lineSpacing(3)
+
+                            if !result.author.isEmpty {
+                                Text(result.author)
+                                    .font(.system(size: 13))
+                                    .foregroundStyle(theme.secondaryText)
+                                    .lineLimit(1)
+                            }
+                        }
 
                         if !result.summary.isEmpty {
                             Text(result.summary)
@@ -716,6 +725,7 @@ private struct DiscoveryRawSearchHit: Hashable {
     let source: DiscoverySource
     let title: String
     let novelTitle: String
+    let author: String
     let summary: String
     let url: URL
     let rank: Int
@@ -724,6 +734,7 @@ private struct DiscoveryRawSearchHit: Hashable {
 private struct DiscoveryGroupedResult: Identifiable {
     let id: String
     let title: String
+    let author: String
     let summary: String
     let sourceLinks: [DiscoverySourceLink]
     let relevance: Double
@@ -889,6 +900,7 @@ actor DiscoverySearchService {
                 makeDirectSourceHit(
                     source: source,
                     title: result.title,
+                    author: result.author,
                     summary: result.summary,
                     url: result.url,
                     rank: index,
@@ -963,6 +975,7 @@ actor DiscoverySearchService {
     private func makeDirectSourceHit(
         source: DiscoverySource,
         title: String,
+        author: String,
         summary: String,
         url: URL,
         rank: Int,
@@ -972,13 +985,20 @@ actor DiscoverySearchService {
         guard !cleanedTitle.isEmpty else { return nil }
         guard !DiscoveryTextCleaner.isSearchEngineSuggestionTitle(cleanedTitle) else { return nil }
 
+        // Strip a `_authorName` suffix (or other plausibly-author tail) from the display
+        // title so identical books from different sources collapse into one row at the
+        // grouping step — see `groupAndSort`. Done before storing on the hit so both
+        // grouping and rendering see the same cleaned title.
+        let strippedTitle = DiscoveryTextCleaner.stripAuthorFromTitle(cleanedTitle, author: author)
+
         // Direct source parsers read the source's own result title field.
         // Keep it whole so bracketed tags like [诡秘之主同人] are not mistaken
         // for the entire novel title.
         return DiscoveryRawSearchHit(
             source: source,
-            title: cleanedTitle,
-            novelTitle: cleanedTitle,
+            title: strippedTitle,
+            novelTitle: strippedTitle,
+            author: author,
             summary: summary,
             url: url,
             rank: rank
@@ -1035,6 +1055,7 @@ actor DiscoverySearchService {
             source: source,
             title: cleanedTitle,
             novelTitle: cleanedNovelTitle.isEmpty ? cleanedTitle : cleanedNovelTitle,
+            author: "",
             summary: summary,
             url: url,
             rank: rank
@@ -1043,6 +1064,7 @@ actor DiscoverySearchService {
 
     private struct ParsedSourceResult {
         let title: String
+        let author: String
         let summary: String
         let url: URL
         // For sources with selective paywalling (currently 努努书坊): a chapter URL we can
@@ -1051,8 +1073,9 @@ actor DiscoverySearchService {
         // extract a chapter URL — in which case we keep the hit rather than filter blindly).
         let probeChapterURL: URL?
 
-        init(title: String, summary: String, url: URL, probeChapterURL: URL? = nil) {
+        init(title: String, author: String = "", summary: String, url: URL, probeChapterURL: URL? = nil) {
             self.title = title
+            self.author = author
             self.summary = summary
             self.url = url
             self.probeChapterURL = probeChapterURL
@@ -1134,7 +1157,7 @@ actor DiscoverySearchService {
             let key = "\(title)|\(url.absoluteString)"
             guard !seen.contains(key) else { continue }
             seen.insert(key)
-            results.append(ParsedSourceResult(title: title, summary: author, url: url.absoluteURL))
+            results.append(ParsedSourceResult(title: title, author: author, summary: "", url: url.absoluteURL))
         }
 
         return results
@@ -1309,7 +1332,7 @@ actor DiscoverySearchService {
             let key = "\(title)|\(url.absoluteString)"
             guard !seen.contains(key) else { continue }
             seen.insert(key)
-            results.append(ParsedSourceResult(title: title, summary: author, url: url.absoluteURL))
+            results.append(ParsedSourceResult(title: title, author: author, summary: "", url: url.absoluteURL))
         }
 
         return results
@@ -1339,14 +1362,11 @@ actor DiscoverySearchService {
 
             let author = DiscoveryTextCleaner.cleanSummary((object["author"] as? String) ?? "")
             let intro = DiscoveryTextCleaner.cleanSummary((object["intro"] as? String) ?? "")
-            let summary = [author, intro]
-                .filter { !$0.isEmpty }
-                .joined(separator: " · ")
 
             let key = "\(title)|\(url.absoluteString)"
             guard !seen.contains(key) else { continue }
             seen.insert(key)
-            results.append(ParsedSourceResult(title: title, summary: summary, url: url.absoluteURL))
+            results.append(ParsedSourceResult(title: title, author: author, summary: intro, url: url.absoluteURL))
         }
 
         return results
@@ -1379,14 +1399,11 @@ actor DiscoverySearchService {
             let latestChapter = DiscoveryTextCleaner.cleanSummary(
                 regexFirstMatch(pattern: #"<td[^>]*class=["']td3["'][^>]*>([\s\S]*?)</td>"#, in: row) ?? ""
             )
-            let summary = [author, latestChapter]
-                .filter { !$0.isEmpty }
-                .joined(separator: " · ")
 
             let key = "\(title)|\(url.absoluteString)"
             guard !seen.contains(key) else { continue }
             seen.insert(key)
-            results.append(ParsedSourceResult(title: title, summary: summary, url: url.absoluteURL))
+            results.append(ParsedSourceResult(title: title, author: author, summary: latestChapter, url: url.absoluteURL))
         }
 
         return results
@@ -1419,14 +1436,11 @@ actor DiscoverySearchService {
             let intro = DiscoveryTextCleaner.cleanSummary(
                 regexFirstMatch(pattern: #"<span[^>]*class=["']wd9["'][^>]*>([\s\S]*?)</span>"#, in: block) ?? ""
             )
-            let summary = [author, intro]
-                .filter { !$0.isEmpty }
-                .joined(separator: " · ")
 
             let key = "\(title)|\(url.absoluteString)"
             guard !seen.contains(key) else { continue }
             seen.insert(key)
-            results.append(ParsedSourceResult(title: title, summary: summary, url: url.absoluteURL))
+            results.append(ParsedSourceResult(title: title, author: author, summary: intro, url: url.absoluteURL))
         }
 
         return results
@@ -1456,14 +1470,11 @@ actor DiscoverySearchService {
             let intro = DiscoveryTextCleaner.cleanSummary(
                 regexFirstMatch(pattern: #"<p>\s*简介[：:]\s*([\s\S]*?)</p>"#, in: block) ?? ""
             )
-            let summary = [author, intro]
-                .filter { !$0.isEmpty }
-                .joined(separator: " · ")
 
             let key = "\(title)|\(url.absoluteString)"
             guard !seen.contains(key) else { continue }
             seen.insert(key)
-            results.append(ParsedSourceResult(title: title, summary: summary, url: url.absoluteURL))
+            results.append(ParsedSourceResult(title: title, author: author, summary: intro, url: url.absoluteURL))
         }
 
         return results
@@ -1523,9 +1534,6 @@ actor DiscoverySearchService {
             let author = DiscoveryTextCleaner.cleanSummary(
                 regexFirstMatch(pattern: #"<span[^>]*class=["']s4["'][^>]*>([\s\S]*?)</span>"#, in: block) ?? ""
             )
-            let summary = [author, latestChapter]
-                .filter { !$0.isEmpty }
-                .joined(separator: " · ")
 
             // s3's anchor links to the latest chapter — use it as a paywall probe target
             // since the chapter body is where 努努书坊 emits "请下载努努书坊APP" / "由于版权问题"
@@ -1540,7 +1548,8 @@ actor DiscoverySearchService {
             seen.insert(key)
             results.append(ParsedSourceResult(
                 title: title,
-                summary: summary,
+                author: author,
+                summary: latestChapter,
                 url: url.absoluteURL,
                 probeChapterURL: probeChapterURL
             ))
@@ -1629,6 +1638,7 @@ actor DiscoverySearchService {
 
         struct GroupBucket {
             var canonicalTitle: String
+            var author: String
             var snippets: [String]
             var linksBySourceID: [String: DiscoverySourceLink]
             var relevance: Double
@@ -1656,6 +1666,7 @@ actor DiscoverySearchService {
 
             var bucket = grouped[key] ?? GroupBucket(
                 canonicalTitle: cleanedDisplayTitle,
+                author: "",
                 snippets: [],
                 linksBySourceID: [:],
                 relevance: 0
@@ -1663,6 +1674,10 @@ actor DiscoverySearchService {
 
             if bucket.canonicalTitle.count > cleanedDisplayTitle.count {
                 bucket.canonicalTitle = cleanedDisplayTitle
+            }
+
+            if bucket.author.isEmpty, !hit.author.isEmpty {
+                bucket.author = hit.author
             }
 
             if !hit.summary.isEmpty, bucket.snippets.count < 3 {
@@ -1684,6 +1699,7 @@ actor DiscoverySearchService {
             DiscoveryGroupedResult(
                 id: key,
                 title: bucket.canonicalTitle,
+                author: bucket.author,
                 summary: bucket.snippets.first ?? "",
                 sourceLinks: bucket.linksBySourceID.values.sorted { $0.source.name < $1.source.name },
                 relevance: bucket.relevance
@@ -1751,6 +1767,46 @@ private enum DiscoveryTextCleaner {
 
     static func cleanSummary(_ text: String) -> String {
         clean(text)
+    }
+
+    /// Strip a `_<author>` (or other plausibly-author) tail off a scraped book title so
+    /// e.g. `凡人修仙传_忘语` and `凡人修仙传` from different sources collapse into one
+    /// row at the grouping step. Two passes:
+    ///   1. If the parser handed us a real `author` and the title ends with that exact
+    ///      author after `_`, `|`, `｜`, `-`, ` `, or ` - `, strip it. Always safe.
+    ///   2. Heuristic fallback: when the title contains an underscore separator and the
+    ///      tail looks like a Chinese name (2–4 Hanzi, no spaces/punctuation), strip it.
+    ///      Underscore-separated tails on novel titles are almost exclusively author
+    ///      names in this corpus, so the false-positive risk is low.
+    static func stripAuthorFromTitle(_ title: String, author: String) -> String {
+        var working = title
+        let trimmedAuthor = author.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if !trimmedAuthor.isEmpty {
+            for separator in ["_", "|", "｜", " - ", "-", " "] {
+                let suffix = "\(separator)\(trimmedAuthor)"
+                if working.hasSuffix(suffix) {
+                    working = String(working.dropLast(suffix.count))
+                    break
+                }
+            }
+        }
+
+        // Underscore-suffix heuristic. Only run when no other separator is present so we
+        // don't accidentally chew off a meaningful subtitle like `三国演义 - 罗贯中正版`.
+        if let underscoreRange = working.range(of: "_", options: .backwards) {
+            let tail = String(working[underscoreRange.upperBound...])
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let looksLikeAuthor = tail.range(
+                of: #"^[一-鿿]{2,4}$"#,
+                options: .regularExpression
+            ) != nil
+            if looksLikeAuthor {
+                working = String(working[..<underscoreRange.lowerBound])
+            }
+        }
+
+        return working.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     static func extractNovelTitle(fromTitle title: String, summary: String, query: String, sourceName: String) -> String {
