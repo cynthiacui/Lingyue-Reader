@@ -1507,8 +1507,25 @@ final class BookImportService: Sendable {
         for suffix in suffixes {
             title = title.replacingOccurrences(of: suffix, with: "")
         }
+        // Strip 【…】 only when its contents are a known site-added metadata tag (status,
+        // format, editorial note). Bracketed prefixes that name a fanfic universe or
+        // crossover — e.g. 【综犬夜叉】之机械姬她没有心, 【综漫】, 【HP】 — are part of the
+        // real title and must survive. The earlier blanket strip removed those too.
+        let bracketMetadataPhrases = [
+            "完本", "完結", "完结", "已完", "已完結", "已完结", "已完成",
+            "連載", "连载", "連載中", "连载中", "斷更", "断更", "全本", "完",
+            "TXT", "txt", "Txt", "VIP", "vip", "Vip",
+            "限免", "免费", "免費", "有声", "有聲",
+            "官方", "官方版", "转载", "轉載", "重发", "重發", "重置",
+            "推荐", "推薦", "精校", "校对", "校對", "原创", "原創",
+            "最新章节", "最新章節", "最新", "新书", "新書",
+            "已审核", "已審核", "更新", "已更", "完整版"
+        ].joined(separator: "|")
         return title
-            .replacingOccurrences(of: #"【[^】]{0,30}】"#, with: "", options: .regularExpression)
+            .replacingOccurrences(of: "【\\s*(?:\(bracketMetadataPhrases))\\s*】", with: "", options: .regularExpression)
+            // Tidy up empty brackets left behind after the suffix strip removed
+            // their contents (e.g. 【最新章节】 → 【】 → "").
+            .replacingOccurrences(of: #"【\s*】"#, with: "", options: .regularExpression)
             .replacingOccurrences(of: #"\s*[-_｜|]\s*$"#, with: "", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
