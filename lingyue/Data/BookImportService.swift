@@ -1145,7 +1145,7 @@ final class BookImportService: Sendable {
     }
 
     private func chapterBodyHTML(from html: String) -> String {
-        let containerKeywords = "chaptercontent|chapter-content|chapter_content|read-content|readcontent|read_content|read_chapter|read_chapterdetail|bookcontent|booktxt|textcontent|article-content|articlecontent|nr1|txtnav|mycontent"
+        let containerKeywords = "chaptercontent|chapter-content|chapter_content|read-content|readcontent|read_content|read_chapter|read_chapterdetail|bookcontent|booktxt|textcontent|article-content|articlecontent|nr1|txtnav|mycontent|neirong"
 
         // Sibling-bound capture (txtnav … page1) stays a regex — no balanced walking needed.
         if let match = firstMatch(
@@ -1473,9 +1473,22 @@ final class BookImportService: Sendable {
 
     private func htmlToText(_ html: String) -> String {
         // Strip script/style first — they contain raw text we never want to leak through.
+        // Then strip semantic chrome (head/nav/header/footer/aside/form/button/select):
+        // these never appear inside a real chapter body, but DO leak through when
+        // chapterBodyHTML falls back to whole-page HTML on an unrecognized source —
+        // without this, the page <title>, top-nav, reader-control widgets, and footer
+        // links all show up as text before the actual chapter content.
         var text = html
             .replacingOccurrences(of: #"<script[\s\S]*?</script>"#, with: "", options: [.regularExpression, .caseInsensitive])
             .replacingOccurrences(of: #"<style[\s\S]*?</style>"#, with: "", options: [.regularExpression, .caseInsensitive])
+            .replacingOccurrences(of: #"<head[\s>][\s\S]*?</head>"#, with: "", options: [.regularExpression, .caseInsensitive])
+            .replacingOccurrences(of: #"<nav[\s>][\s\S]*?</nav>"#, with: "", options: [.regularExpression, .caseInsensitive])
+            .replacingOccurrences(of: #"<header[\s>][\s\S]*?</header>"#, with: "", options: [.regularExpression, .caseInsensitive])
+            .replacingOccurrences(of: #"<footer[\s>][\s\S]*?</footer>"#, with: "", options: [.regularExpression, .caseInsensitive])
+            .replacingOccurrences(of: #"<aside[\s>][\s\S]*?</aside>"#, with: "", options: [.regularExpression, .caseInsensitive])
+            .replacingOccurrences(of: #"<form[\s>][\s\S]*?</form>"#, with: "", options: [.regularExpression, .caseInsensitive])
+            .replacingOccurrences(of: #"<button[\s>][\s\S]*?</button>"#, with: "", options: [.regularExpression, .caseInsensitive])
+            .replacingOccurrences(of: #"<select[\s>][\s\S]*?</select>"#, with: "", options: [.regularExpression, .caseInsensitive])
 
         // Decode entities BEFORE the tag strip pass so entity-encoded tags inside the body
         // (e.g., 就爱读小说 wraps the chapter title as &lt;p class="name"&gt;...&lt;/p&gt;
