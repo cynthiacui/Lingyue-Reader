@@ -558,12 +558,6 @@ private enum DiscoverySourceCatalog {
             method: .get
         ),
         DiscoverySourceSearchRoute(
-            sourceID: "书林文学",
-            endpoint: "https://www.baozhijixie.com/search",
-            method: .post,
-            queryKey: "searchkey"
-        ),
-        DiscoverySourceSearchRoute(
             sourceID: "52书库",
             endpoint: "https://www.52shuku.net/so/search.php",
             method: .get,
@@ -664,6 +658,12 @@ private enum DiscoverySourceCatalog {
             method: .post,
             queryKey: "searchkey",
             queryEncoding: .gb18030
+        ),
+        DiscoverySourceSearchRoute(
+            sourceID: "无忧书城",
+            endpoint: "https://www.51shucheng.net/search",
+            method: .get,
+            queryKey: "q"
         )
     ]
 
@@ -682,7 +682,6 @@ private enum DiscoverySourceCatalog {
     static let sources: [DiscoverySource] = [
         DiscoverySource(name: "破万卷小说", tagline: "各類小說作品齊全", homepageURLString: "https://www.powanjuan.cc/", searchRoute: route(for: "破万卷小说")),
         DiscoverySource(name: "大尾笔趣阁", tagline: "笔趣阁热门书库", homepageURLString: "https://www.daweixs.com/", searchRoute: route(for: "大尾笔趣阁")),
-        DiscoverySource(name: "书林文学", tagline: "最新完结小说，速度快", homepageURLString: "https://www.baozhijixie.com/", searchRoute: route(for: "书林文学")),
         DiscoverySource(name: "ESJ轻小说", tagline: "日韩轻小说在线阅读", homepageURLString: "https://www.esjzone.cc/", searchRoute: route(for: "ESJ轻小说")),
         DiscoverySource(name: "思兔閱讀", tagline: "繁體熱門在線書庫", homepageURLString: "https://sto9.com/", searchRoute: route(for: "思兔閱讀")),
         DiscoverySource(name: "就爱读小说", tagline: "各类网络文学作品齐全", homepageURLString: "https://www.5dxs.net/", searchRoute: route(for: "就爱读小说")),
@@ -695,7 +694,8 @@ private enum DiscoverySourceCatalog {
         DiscoverySource(name: "台灣小說網", tagline: "熱門小說台灣站", homepageURLString: "https://www.xsw.tw/", searchRoute: route(for: "台灣小說網")),
         DiscoverySource(name: "黄金屋中文", tagline: "繁體電子書城，書多質量好", homepageURLString: "https://tw.hjwzw.com/", searchRoute: route(for: "黄金屋中文")),
         DiscoverySource(name: "半夏小说", tagline: "優質在線小說閱讀", homepageURLString: "https://www.xbanxia.cc/", searchRoute: route(for: "半夏小说")),
-        DiscoverySource(name: "52书库2", tagline: "热门网络小说齐全速度快", searchRoute: route(for: "52书库2"))
+        DiscoverySource(name: "52书库2", tagline: "热门网络小说齐全速度快", searchRoute: route(for: "52书库2")),
+        DiscoverySource(name: "无忧书城", tagline: "古典名著與經典在線閱讀", homepageURLString: "https://www.51shucheng.net/", searchRoute: route(for: "无忧书城"))
     ]
 }
 
@@ -1050,8 +1050,6 @@ actor DiscoverySearchService {
         switch source.id {
         case "ESJ轻小说":
             return parseESJResults(html: html)
-        case "书林文学":
-            return parseXbiqugeStyleResults(html: html, baseURLString: "https://www.baozhijixie.com")
         case "52书库", "52书库2":
             return parse52ShukuResults(html: html)
         case "思兔閱讀":
@@ -1231,40 +1229,6 @@ actor DiscoverySearchService {
             if seen.contains(key) { continue }
             seen.insert(key)
             results.append(ParsedSourceResult(title: title, summary: summary, url: url))
-        }
-
-        return results
-    }
-
-    private func parseXbiqugeStyleResults(html: String, baseURLString: String) -> [ParsedSourceResult] {
-        let blocks = regexMatches(
-            pattern: #"<div[^>]*class=["']item["'][^>]*>[\s\S]*?<div[^>]*class=["']clear["'][^>]*>\s*</div>\s*</div>"#,
-            in: html
-        )
-        var results: [ParsedSourceResult] = []
-        var seen: Set<String> = []
-
-        for block in blocks {
-            guard
-                let href = regexFirstMatch(pattern: #"<dt>\s*<a[^>]+href=["']([^"']+)["']"#, in: block)
-                    ?? regexFirstMatch(pattern: #"<a[^>]+href=["']([^"']+/kanshu/\d+/?)["']"#, in: block),
-                let url = URL(string: href, relativeTo: URL(string: baseURLString))
-            else { continue }
-
-            let rawTitle = regexFirstMatch(pattern: #"<dt>\s*<a[^>]*>([\s\S]*?)</a>\s*</dt>"#, in: block)
-                ?? regexFirstMatch(pattern: #"<a[^>]+title=["']([^"']+)["']"#, in: block)
-                ?? ""
-            let title = DiscoveryTextCleaner.cleanTitle(rawTitle)
-            guard !title.isEmpty else { continue }
-
-            let summary = DiscoveryTextCleaner.cleanSummary(
-                regexFirstMatch(pattern: #"<dd>([\s\S]*?)</dd>"#, in: block) ?? ""
-            )
-
-            let key = "\(title)|\(url.absoluteString)"
-            guard !seen.contains(key) else { continue }
-            seen.insert(key)
-            results.append(ParsedSourceResult(title: title, summary: summary, url: url.absoluteURL))
         }
 
         return results

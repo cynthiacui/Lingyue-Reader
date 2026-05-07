@@ -169,7 +169,6 @@ enum BookSourceRegistry {
             hostPatterns: [#"(?:^|\.)(?:bq|biq|qu)[a-z]*\d+\.[a-z]{2,}$"#]
         ),
         SourcePattern(name: "破万卷小说", hosts: ["powanjuan.cc"]),
-        SourcePattern(name: "书林文学", hosts: ["baozhijixie.com"]),
         SourcePattern(name: "ESJ轻小说", hosts: ["esjzone.cc"]),
         SourcePattern(name: "思兔閱讀", hosts: ["sto9.com"]),
         SourcePattern(name: "就爱读小说", hosts: ["5dxs.net"]),
@@ -184,7 +183,8 @@ enum BookSourceRegistry {
         SourcePattern(name: "轻小说百科", hosts: ["lnovel.org"]),
         SourcePattern(name: "飘天文学网", hosts: ["piaotian8.com"]),
         SourcePattern(name: "69书吧", hosts: ["69shuba.com"]),
-        SourcePattern(name: "52书库", hosts: ["52shuku.net"])
+        SourcePattern(name: "52书库", hosts: ["52shuku.net"]),
+        SourcePattern(name: "无忧书城", hosts: ["51shucheng.net"])
     ]
 
     /// Custom URL scheme used to mark books imported from a local `.txt` file. We don't store
