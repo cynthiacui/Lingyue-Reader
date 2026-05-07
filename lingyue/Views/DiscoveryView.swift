@@ -104,6 +104,7 @@ struct DiscoveryView: View {
 
     private var libraryList: some View {
         let sources = DiscoverySourceCatalog.searchableSources
+            .sorted { discoveryPinyinSortKey($0.name) < discoveryPinyinSortKey($1.name) }
 
         return VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .lastTextBaseline, spacing: 10) {
@@ -214,6 +215,18 @@ struct DiscoveryView: View {
         guard !Task.isCancelled, searchResultsQuery == query else { return }
         searchIsLoading = false
     }
+}
+
+/// Stable pinyin-based sort key for Discovery source names. Names mix Chinese and
+/// ASCII (e.g. "ESJ轻小说", "52书库"), so a raw `<` would sort by Unicode codepoint
+/// and group all CJK names together. CFStringTransform converts Hanzi to romanized
+/// pinyin while leaving ASCII alone; stripping diacritics drops tone marks so "ān"
+/// and "an" sort the same; lowercasing makes the comparison case-insensitive.
+private func discoveryPinyinSortKey(_ text: String) -> String {
+    let mutable = NSMutableString(string: text)
+    CFStringTransform(mutable, nil, kCFStringTransformMandarinLatin, false)
+    CFStringTransform(mutable, nil, kCFStringTransformStripDiacritics, false)
+    return (mutable as String).lowercased()
 }
 
 private struct DiscoveryBrowserDestination: Identifiable, Hashable {
