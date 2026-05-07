@@ -246,7 +246,7 @@ struct SettingsView: View {
                     }
                     .font(.headline)
 
-                    Slider(value: $fontSize, in: 12...48, step: 1)
+                    Slider(value: $fontSize, in: 12...35, step: 1)
                         .tint(theme.accent)
                 }
 

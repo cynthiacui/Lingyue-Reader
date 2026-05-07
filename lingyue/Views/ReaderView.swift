@@ -891,7 +891,7 @@ struct ReaderView: View {
                         title: "字号",
                         systemImage: "textformat.size",
                         value: $fontSize,
-                        range: 12...48,
+                        range: 12...35,
                         step: 1,
                         format: { "\(Int($0))" }
                     )
