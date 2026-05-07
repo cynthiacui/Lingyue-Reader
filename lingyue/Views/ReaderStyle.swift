@@ -56,6 +56,24 @@ enum ReaderFontFamily: String, CaseIterable, Identifiable {
     }
 }
 
+/// How the reader animates a within-chapter page turn. Chapter-boundary swaps remain
+/// instant regardless of style — V1 only animates inside a chapter.
+enum PageTransitionStyle: String, CaseIterable, Identifiable {
+    case instant
+    case slide
+    case pageCurl
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .instant:  return "无动画"
+        case .slide:    return "滑动"
+        case .pageCurl: return "仿真翻页"
+        }
+    }
+}
+
 extension Color {
     static let readerBackground = Color(red: 0.97, green: 0.96, blue: 0.93)
     static let readerSurface = Color(red: 1.0, green: 0.99, blue: 0.96)

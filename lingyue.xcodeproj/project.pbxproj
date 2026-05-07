@@ -27,6 +27,9 @@
 		010000000000000000000113 /* BookDownloadManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000015 /* BookDownloadManager.swift */; };
 		010000000000000000000114 /* DownloadsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000016 /* DownloadsView.swift */; };
 		010000000000000000000115 /* LXGWWenKaiScreen.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000017 /* LXGWWenKaiScreen.ttf */; };
+		010000000000000000000116 /* PageCurlPager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000018 /* PageCurlPager.swift */; };
+		010000000000000000000117 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000019 /* PrivacyInfo.xcprivacy */; };
+		010000000000000000000118 /* TabBarVisibility.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01000000000000000000001A /* TabBarVisibility.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -52,6 +55,9 @@
 		010000000000000000000015 /* BookDownloadManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookDownloadManager.swift; sourceTree = "<group>"; };
 		010000000000000000000016 /* DownloadsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadsView.swift; sourceTree = "<group>"; };
 		010000000000000000000017 /* LXGWWenKaiScreen.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = LXGWWenKaiScreen.ttf; sourceTree = "<group>"; };
+		010000000000000000000018 /* PageCurlPager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PageCurlPager.swift; sourceTree = "<group>"; };
+		010000000000000000000019 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		01000000000000000000001A /* TabBarVisibility.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabBarVisibility.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -122,6 +128,8 @@
 				010000000000000000000007 /* DiscoveryView.swift */,
 				010000000000000000000008 /* SettingsView.swift */,
 				01000000000000000000000C /* ReaderView.swift */,
+				010000000000000000000018 /* PageCurlPager.swift */,
+				01000000000000000000001A /* TabBarVisibility.swift */,
 				01000000000000000000000D /* InAppBrowserView.swift */,
 				010000000000000000000011 /* CustomAlertView.swift */,
 				010000000000000000000012 /* ModalContainer.swift */,
@@ -136,6 +144,7 @@
 			isa = PBXGroup;
 			children = (
 				01000000000000000000000A /* Info.plist */,
+				010000000000000000000019 /* PrivacyInfo.xcprivacy */,
 				010000000000000000000308 /* Fonts */,
 			);
 			path = SupportingFiles;
@@ -210,6 +219,7 @@
 			files = (
 				010000000000000000000109 /* Assets.xcassets in Resources */,
 				010000000000000000000115 /* LXGWWenKaiScreen.ttf in Resources */,
+				010000000000000000000117 /* PrivacyInfo.xcprivacy in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -228,6 +238,8 @@
 				010000000000000000000107 /* DiscoveryView.swift in Sources */,
 				010000000000000000000108 /* SettingsView.swift in Sources */,
 				01000000000000000000010A /* ReaderView.swift in Sources */,
+				010000000000000000000116 /* PageCurlPager.swift in Sources */,
+				010000000000000000000118 /* TabBarVisibility.swift in Sources */,
 				01000000000000000000010B /* InAppBrowserView.swift in Sources */,
 				01000000000000000000010C /* LibraryStore.swift in Sources */,
 				01000000000000000000010D /* BookImportService.swift in Sources */,
@@ -363,7 +375,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_ASSET_PATHS = "";
 				DEVELOPMENT_TEAM = 749JX9NLVL;
 				GENERATE_INFOPLIST_FILE = NO;
@@ -391,7 +403,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_ASSET_PATHS = "";
 				DEVELOPMENT_TEAM = 749JX9NLVL;
 				GENERATE_INFOPLIST_FILE = NO;

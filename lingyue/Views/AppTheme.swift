@@ -200,14 +200,18 @@ enum AppTheme: String, CaseIterable, Identifiable, Hashable {
         }
     }
 
-    /// Forces the iOS chrome (status bar, tab bar material) into a specific color
-    /// scheme. Returning `nil` lets the system color scheme stand. Currently only the
-    /// dark `starryNight` theme overrides — the light themes inherit from the user's
-    /// system setting so we don't fight whatever they've chosen.
+    /// Forces the iOS chrome (status bar, nav bar text, tab bar material) into a
+    /// specific color scheme so the theme reads consistently regardless of the
+    /// device's system appearance. Without this, navigation-bar titles, system
+    /// materials, and SF Symbols pick up the device dark trait and turn white over
+    /// our pink/paper backgrounds. Each theme owns the color scheme it was designed
+    /// for; only `starryNight` is dark. (When `followSystemDark` is enabled, the
+    /// caller passes `nil` to this modifier instead so the device's system flips
+    /// can drive the theme; see `ContentView`.)
     var preferredColorScheme: ColorScheme? {
         switch self {
         case .starryNight: return .dark
-        default:           return nil
+        case .paperGreen, .pink, .leafGreen, .ink: return .light
         }
     }
 }

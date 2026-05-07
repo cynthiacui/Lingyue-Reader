@@ -10,10 +10,12 @@ struct ReaderView: View {
     @Environment(\.appForcesColorScheme) private var appForcesColorScheme
     @EnvironmentObject private var libraryStore: LibraryStore
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @AppStorage("reader.fontSize") private var fontSize = 18.0
     @AppStorage("reader.lineSpacing") private var lineSpacing = 8.0
     @AppStorage("reader.fontFamily") private var fontFamilyRaw = ReaderFontFamily.system.rawValue
+    @AppStorage("reader.pageTransition") private var pageTransitionRaw = PageTransitionStyle.instant.rawValue
     @AppStorage("reader.theme") private var themeRawValue = ReadingTheme.paper.rawValue
     @AppStorage("reader.followSystemDark") private var followSystemDark = false
     @AppStorage("reader.usesTraditionalChinese") private var usesTraditionalChinese = false
@@ -49,6 +51,15 @@ struct ReaderView: View {
     @State private var autoScrollTask: Task<Void, Never>?
     @State private var browserDestination: URL?
     @State private var showSourceSwitcher = false
+    /// Bumps after a rotation so the page TabView rebuilds with the post-rotation safeArea
+    /// settled. SwiftUI's GeometryReader sometimes reports stale `safeAreaInsets` on the first
+    /// render after rotation when its parent uses `.ignoresSafeArea()`, so the previously-visible
+    /// page renders with the wrong top padding until the next state change kicks a re-render.
+    @State private var rotationLayoutVersion = 0
+    /// Page index at the moment a slide/pageCurl drag begins, so we know whether the user
+    /// started the swipe at a chapter boundary. By `.onEnded` time TabView/UIPageViewController
+    /// may have already mutated `currentChapterPageIndex` to a within-chapter neighbour.
+    @State private var boundarySwipeStartPageIndex: Int?
     private let paginationCacheCapacity = 24
 
     private var activeNovel: Novel {
@@ -117,6 +128,17 @@ struct ReaderView: View {
         )
     }
 
+    private var pageTransitionStyle: PageTransitionStyle {
+        PageTransitionStyle(rawValue: pageTransitionRaw) ?? .instant
+    }
+
+    private var pageTransitionBinding: Binding<String> {
+        Binding(
+            get: { pageTransitionStyle.rawValue },
+            set: { pageTransitionRaw = $0 }
+        )
+    }
+
     var body: some View {
         GeometryReader { proxy in
             let textSize = readerTextSize(containerSize: proxy.size, safeAreaInsets: proxy.safeAreaInsets)
@@ -127,22 +149,34 @@ struct ReaderView: View {
             ZStack {
                 pageBackground.ignoresSafeArea()
 
-                TabView(selection: $currentChapterPageIndex) {
-                    ForEach(pages.indices, id: \.self) { index in
-                        pageView(for: pages[index], safeAreaInsets: proxy.safeAreaInsets, textSize: textSize)
-                            .tag(index)
-                    }
+                // The page renderer branches on the user's pageTransition setting. All three
+                // paths share `pageView(...)` for the page itself — only the container differs.
+                // rotationLayoutVersion forces a re-render after rotation so GeometryReader's
+                // safeAreaInsets settle.
+                switch pageTransitionStyle {
+                case .instant:
+                    instantPageContent(
+                        currentPage: currentPage,
+                        pages: pages,
+                        textSize: textSize,
+                        safeAreaInsets: proxy.safeAreaInsets,
+                        containerSize: proxy.size
+                    )
+                case .slide:
+                    slidePageContent(
+                        pages: pages,
+                        textSize: textSize,
+                        safeAreaInsets: proxy.safeAreaInsets,
+                        containerSize: proxy.size
+                    )
+                case .pageCurl:
+                    pageCurlPageContent(
+                        pages: pages,
+                        textSize: textSize,
+                        safeAreaInsets: proxy.safeAreaInsets,
+                        containerSize: proxy.size
+                    )
                 }
-                .tabViewStyle(.page(indexDisplayMode: .never))
-                // Rebuild the page TabView whenever the chapter changes so its underlying
-                // UIPageViewController doesn't animate the selection-index jump (e.g. 5 → 0)
-                // as a backwards swipe. .transition(.identity) ensures the rebuild is
-                // instant rather than fading/sliding.
-                .id(currentChapterIndex)
-                .transition(.identity)
-                .ignoresSafeArea()
-
-                pageTapZones(pages: pages)
 
                 if showControls {
                     controlsTopBar(safeTop: proxy.safeAreaInsets.top, currentPage: currentPage)
@@ -185,6 +219,19 @@ struct ReaderView: View {
                     lastKnownTextSize = newValue
                 }
             }
+            .onChange(of: verticalSizeClass) { _, _ in
+                // Defer to the next runloop tick so SwiftUI has finished propagating the new
+                // safeAreaInsets through GeometryReader before we rebuild the TabView. Without
+                // the dispatch the rebuild reads the same stale insets we're trying to escape.
+                DispatchQueue.main.async {
+                    rotationLayoutVersion &+= 1
+                }
+            }
+            .onChange(of: horizontalSizeClass) { _, _ in
+                DispatchQueue.main.async {
+                    rotationLayoutVersion &+= 1
+                }
+            }
             .onChange(of: autoScroll) { _, newValue in
                 if newValue {
                     startAutoScroll()
@@ -222,7 +269,7 @@ struct ReaderView: View {
         .ignoresSafeArea()
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
-        .toolbar(.hidden, for: .tabBar)
+        .background(TabBarVisibility(isHidden: true).frame(width: 0, height: 0))
         .statusBarHidden(!showControls)
         .navigationDestination(item: $browserDestination) { url in
             InAppBrowserView(url: url, title: activeNovel.title)
@@ -308,32 +355,195 @@ struct ReaderView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
-    private func pageTapZones(pages: [ReaderPageItem]) -> some View {
-        GeometryReader { proxy in
-            HStack(spacing: 0) {
-                Color.clear
-                    .contentShape(Rectangle())
-                    .frame(width: proxy.size.width * 0.32)
-                    .onTapGesture {
-                        goToPreviousPage(pages: pages)
-                    }
+    /// Discrete swipe-to-turn handler. Uses `predictedEndTranslation` so a quick flick is
+    /// recognized even when the actual finger travel is short — the page only changes on
+    /// release, never during the drag, which avoids the "follow-finger" sliding effect.
+    private func handleReaderSwipe(translation: CGSize, predictedEnd: CGSize, pages: [ReaderPageItem]) {
+        // Ignore drags that are clearly vertical (e.g., the user is just resting a finger
+        // and shifting it slightly downward). Horizontal motion has to dominate.
+        guard abs(predictedEnd.width) > abs(predictedEnd.height) else { return }
 
-                Color.clear
-                    .contentShape(Rectangle())
-                    .frame(width: proxy.size.width * 0.36)
-                    .onTapGesture {
-                        toggleControls()
-                    }
+        let threshold: CGFloat = 50
+        let effective = abs(predictedEnd.width) >= threshold ? predictedEnd.width : translation.width
+        guard abs(effective) >= threshold else { return }
 
-                Color.clear
-                    .contentShape(Rectangle())
-                    .frame(width: proxy.size.width * 0.32)
-                    .onTapGesture {
-                        goToNextPage(pages: pages)
+        // A real swipe — if any overlay is up, dismiss it as part of turning the page so
+        // the user gets the bar out of the way without a separate tap.
+        if showControls || showChapterPicker || showPreferences {
+            hideControls()
+        }
+
+        if effective < 0 {
+            goToNextPage(pages: pages)
+        } else {
+            goToPreviousPage(pages: pages)
+        }
+    }
+
+    /// Parallel drag gesture used in slide/pageCurl modes. TabView and UIPageViewController
+    /// only know about the current chapter's pages and bounce at the ends; this catches
+    /// boundary swipes and routes them to `goToChapter` so the user can swipe through to
+    /// the previous/next chapter (instant transition — V1 doesn't animate across chapters).
+    private func boundarySwipeGesture(pages: [ReaderPageItem]) -> some Gesture {
+        DragGesture(minimumDistance: 20)
+            .onChanged { _ in
+                if boundarySwipeStartPageIndex == nil {
+                    boundarySwipeStartPageIndex = currentChapterPageIndex
+                }
+            }
+            .onEnded { value in
+                let startIndex = boundarySwipeStartPageIndex ?? currentChapterPageIndex
+                boundarySwipeStartPageIndex = nil
+                handleBoundarySwipe(
+                    startPageIndex: startIndex,
+                    pageCount: pages.count,
+                    translation: value.translation,
+                    predictedEnd: value.predictedEndTranslation
+                )
+            }
+    }
+
+    private func handleBoundarySwipe(
+        startPageIndex: Int,
+        pageCount: Int,
+        translation: CGSize,
+        predictedEnd: CGSize
+    ) {
+        guard abs(predictedEnd.width) > abs(predictedEnd.height) else { return }
+
+        let threshold: CGFloat = 60
+        let effective = abs(predictedEnd.width) >= threshold ? predictedEnd.width : translation.width
+        guard abs(effective) >= threshold else { return }
+
+        let atFirstPage = startPageIndex == 0
+        let atLastPage = startPageIndex >= pageCount - 1
+        let overlayVisible = showControls || showChapterPicker || showPreferences
+
+        if effective < 0, atLastPage, currentChapterIndex < baseChapters.count - 1 {
+            if overlayVisible { hideControls() }
+            goToChapter(currentChapterIndex + 1, pageIndex: 0)
+        } else if effective > 0, atFirstPage, currentChapterIndex > 0 {
+            if overlayVisible { hideControls() }
+            goToChapter(currentChapterIndex - 1, pageIndex: 0, landOnLastPage: true)
+        } else if overlayVisible {
+            // Within-chapter swipe: TabView/PageCurlPager already turned the page through the
+            // binding. We just dismiss the overlay so the bar gets out of the user's way.
+            hideControls()
+        }
+    }
+
+    /// Routes a reader-area tap to the matching action based on horizontal position. Apple
+    /// Books-style: left ~30% turns back, right ~30% turns forward, middle toggles controls.
+    private func handleReaderTap(at location: CGPoint, in size: CGSize, pages: [ReaderPageItem]) {
+        // While any overlay (controls / chapter picker / preferences) is visible, treat any
+        // tap as "dismiss overlay" so the user can't accidentally turn pages while interacting
+        // with the chrome.
+        if showControls || showChapterPicker || showPreferences {
+            hideControls()
+            return
+        }
+
+        let width = max(size.width, 1)
+        let x = location.x
+
+        if x < width * 0.32 {
+            goToPreviousPage(pages: pages)
+        } else if x > width * 0.68 {
+            goToNextPage(pages: pages)
+        } else {
+            toggleControls()
+        }
+    }
+
+    /// Discrete page-swap renderer (current behavior). The page replaces in place when the
+    /// user crosses the swipe threshold or taps an edge — no follow-finger motion.
+    private func instantPageContent(
+        currentPage: ReaderPageItem,
+        pages: [ReaderPageItem],
+        textSize: CGSize,
+        safeAreaInsets: EdgeInsets,
+        containerSize: CGSize
+    ) -> some View {
+        pageView(for: currentPage, safeAreaInsets: safeAreaInsets, textSize: textSize)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .contentShape(Rectangle())
+            .id("\(currentChapterIndex)-\(currentChapterPageIndex)-\(rotationLayoutVersion)")
+            .ignoresSafeArea()
+            .gesture(
+                DragGesture(minimumDistance: 12)
+                    .onEnded { value in
+                        handleReaderSwipe(translation: value.translation,
+                                          predictedEnd: value.predictedEndTranslation,
+                                          pages: pages)
                     }
+            )
+            .simultaneousGesture(
+                SpatialTapGesture(coordinateSpace: .local)
+                    .onEnded { event in
+                        handleReaderTap(at: event.location, in: containerSize, pages: pages)
+                    }
+            )
+    }
+
+    /// Follow-finger horizontal slide via TabView's page style. TabView owns the drag, so
+    /// no custom DragGesture — we keep the SpatialTapGesture for tap-zone behavior.
+    private func slidePageContent(
+        pages: [ReaderPageItem],
+        textSize: CGSize,
+        safeAreaInsets: EdgeInsets,
+        containerSize: CGSize
+    ) -> some View {
+        TabView(selection: $currentChapterPageIndex) {
+            ForEach(Array(pages.enumerated()), id: \.offset) { index, page in
+                pageView(for: page, safeAreaInsets: safeAreaInsets, textSize: textSize)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .tag(index)
             }
         }
+        .tabViewStyle(.page(indexDisplayMode: .never))
         .ignoresSafeArea()
+        .id("\(currentChapterIndex)-\(rotationLayoutVersion)")
+        .simultaneousGesture(
+            SpatialTapGesture(coordinateSpace: .local)
+                .onEnded { event in
+                    handleReaderTap(at: event.location, in: containerSize, pages: pages)
+                }
+        )
+        .simultaneousGesture(boundarySwipeGesture(pages: pages))
+    }
+
+    /// Real-book curl via UIPageViewController. Container reacts to currentChapterPageIndex
+    /// changes through the binding (animated within a chapter, rebuilt instantly across).
+    private func pageCurlPageContent(
+        pages: [ReaderPageItem],
+        textSize: CGSize,
+        safeAreaInsets: EdgeInsets,
+        containerSize: CGSize
+    ) -> some View {
+        PageCurlPager(
+            pageCount: pages.count,
+            currentIndex: $currentChapterPageIndex,
+            backgroundColor: UIColor(pageBackground),
+            renderPage: { [pages] index in
+                guard let page = pages.indices.contains(index) ? pages[index] : pages.last else {
+                    return AnyView(self.pageBackground.ignoresSafeArea())
+                }
+                return AnyView(
+                    pageView(for: page, safeAreaInsets: safeAreaInsets, textSize: textSize)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .background(self.pageBackground)
+                )
+            }
+        )
+        .ignoresSafeArea()
+        .id("\(currentChapterIndex)-\(rotationLayoutVersion)")
+        .simultaneousGesture(
+            SpatialTapGesture(coordinateSpace: .local)
+                .onEnded { event in
+                    handleReaderTap(at: event.location, in: containerSize, pages: pages)
+                }
+        )
+        .simultaneousGesture(boundarySwipeGesture(pages: pages))
     }
 
     private func readerHeader(safeTop: CGFloat) -> some View {
@@ -374,38 +584,7 @@ struct ReaderView: View {
                 } label: {
                     Image(systemName: "chevron.left")
                         .font(.system(size: 19, weight: .semibold))
-                        .frame(width: 64, height: 52)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-
-                Spacer()
-
-                VStack(spacing: 2) {
-                    Text(currentPage.chapterTitle)
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundStyle(secondaryForeground)
-                        .lineLimit(1)
-
-                    if let sourceLabel {
-                        Text(sourceLabel)
-                            .font(.system(size: 11, weight: .regular))
-                            .foregroundStyle(secondaryForeground.opacity(0.65))
-                            .lineLimit(1)
-                    }
-                }
-
-                Spacer()
-
-                Button {
-                    withAnimation(.easeInOut(duration: 0.18)) {
-                        showPreferences = true
-                        showChapterPicker = false
-                    }
-                } label: {
-                    Image(systemName: "textformat.size")
-                        .font(.system(size: 19, weight: .semibold))
-                        .frame(width: 40, height: 52)
+                        .frame(width: 52, height: 52)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -433,6 +612,37 @@ struct ReaderView: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("切换书源")
+
+                Spacer()
+
+                VStack(spacing: 2) {
+                    Text(currentPage.chapterTitle)
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundStyle(secondaryForeground)
+                        .lineLimit(1)
+
+                    if let sourceLabel {
+                        Text(sourceLabel)
+                            .font(.system(size: 11, weight: .regular))
+                            .foregroundStyle(secondaryForeground.opacity(0.65))
+                            .lineLimit(1)
+                    }
+                }
+
+                Spacer()
+
+                Button {
+                    withAnimation(.easeInOut(duration: 0.18)) {
+                        showPreferences = true
+                        showChapterPicker = false
+                    }
+                } label: {
+                    Image(systemName: "textformat.size")
+                        .font(.system(size: 19, weight: .semibold))
+                        .frame(width: 44, height: 52)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
 
                 Button {
                     withAnimation(ModalStyle.presentationAnimation) {
@@ -669,7 +879,7 @@ struct ReaderView: View {
                         title: "字号",
                         systemImage: "textformat.size",
                         value: $fontSize,
-                        range: 12...32,
+                        range: 12...48,
                         step: 1,
                         format: { "\(Int($0))" }
                     )
@@ -684,6 +894,8 @@ struct ReaderView: View {
                     )
 
                     preferenceFontRow
+
+                    preferencePageTransitionRow
 
                     preferenceThemeRow
 
@@ -765,6 +977,26 @@ struct ReaderView: View {
                     Text(family.displayName)
                         .font(family.swiftUIFont(size: 16))
                         .tag(family.rawValue)
+                }
+            }
+            .pickerStyle(.menu)
+            .labelsHidden()
+            .tint(pageForeground)
+        }
+    }
+
+    private var preferencePageTransitionRow: some View {
+        HStack(spacing: 12) {
+            Text("翻页")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(secondaryForeground)
+                .frame(width: 36, alignment: .leading)
+
+            Spacer(minLength: 0)
+
+            Picker("翻页", selection: pageTransitionBinding) {
+                ForEach(PageTransitionStyle.allCases) { style in
+                    Text(style.displayName).tag(style.rawValue)
                 }
             }
             .pickerStyle(.menu)
@@ -930,31 +1162,33 @@ struct ReaderView: View {
     }
 
     private func goToPreviousPage(pages: [ReaderPageItem]) {
-        if showControls {
-            hideControls()
-            return
-        }
-
         guard !showChapterPicker else { return }
         if currentChapterPageIndex > 0 {
-            currentChapterPageIndex -= 1
+            setChapterPageIndexAnimatingIfNeeded(currentChapterPageIndex - 1)
         } else if currentChapterIndex > 0 {
-            shouldJumpToLastPageAfterPagination = true
-            goToChapter(currentChapterIndex - 1, pageIndex: 0)
+            goToChapter(currentChapterIndex - 1, pageIndex: 0, landOnLastPage: true)
         }
     }
 
     private func goToNextPage(pages: [ReaderPageItem]) {
-        if showControls {
-            hideControls()
-            return
-        }
-
         guard !showChapterPicker else { return }
         if currentChapterPageIndex < pages.count - 1 {
-            currentChapterPageIndex += 1
+            setChapterPageIndexAnimatingIfNeeded(currentChapterPageIndex + 1)
         } else if currentChapterIndex < baseChapters.count - 1 {
             goToChapter(currentChapterIndex + 1, pageIndex: 0)
+        }
+    }
+
+    /// In slide mode TabView only animates the page change when the binding mutates inside
+    /// `withAnimation`, so tap zones / auto-scroll need the wrap to slide instead of snap.
+    /// Instant mode skips the wrap (its renderer rebuilds via `.id`, and a withAnimation
+    /// would crossfade what should be a hard swap). PageCurl handles its own animation
+    /// via `setViewControllers(animated:)` inside `PageCurlPager.updateUIViewController`.
+    private func setChapterPageIndexAnimatingIfNeeded(_ newIndex: Int) {
+        if pageTransitionStyle == .slide {
+            withAnimation { currentChapterPageIndex = newIndex }
+        } else {
+            currentChapterPageIndex = newIndex
         }
     }
 
@@ -996,18 +1230,33 @@ struct ReaderView: View {
         }
     }
 
-    private func goToChapter(_ chapterIndex: Int, pageIndex: Int) {
+    private func goToChapter(_ chapterIndex: Int, pageIndex: Int, landOnLastPage: Bool = false) {
         guard baseChapters.indices.contains(chapterIndex) else { return }
         // Suppress TabView animation: changing currentChapterPageIndex (e.g., 5 → 0) while
         // pages are being swapped to a new chapter would otherwise animate backwards on a
         // forward jump (and vice versa). Snapping is the right behavior for explicit chapter
-        // navigation.
+        // navigation. The "land on last page" flag is set inside the same transaction so a
+        // partially-applied state (flag set without index, or vice versa) can never leak to
+        // another navigation in flight.
         var transaction = Transaction()
         transaction.disablesAnimations = true
         withTransaction(transaction) {
             currentChapterIndex = chapterIndex
             currentChapterPageIndex = max(pageIndex, 0)
+            shouldJumpToLastPageAfterPagination = landOnLastPage
         }
+        // Stale boundary-swipe state from an interrupted drag in the previous chapter must
+        // not leak into the next chapter's gesture session, or the next swipe could think
+        // it started at a boundary when it didn't.
+        boundarySwipeStartPageIndex = nil
+        // Once the user explicitly navigates, the original auto-restore intent (the page
+        // index recorded for the chapter the book opened to) no longer applies. Without
+        // this, a chapter that was still loading when the user swiped away from it would,
+        // on its delayed pagination completing, snap the page to the originally-saved
+        // position even after the user has navigated back to it expecting page 0 — the
+        // "swipe to next chapter lands in the middle" symptom.
+        pendingRestoreChapterKey = nil
+        pendingRestoreChapterPageIndex = nil
         loadDiskCachedChapterImmediately(at: chapterIndex)
     }
 

@@ -1385,6 +1385,7 @@ final class BookImportService: Sendable {
             .filter { line in
                 guard !line.isEmpty else { return false }
                 if exactBlocked.contains(line) { return false }
+                if Self.isNavigationOnlyLine(line) { return false }
                 if line.range(
                     of: #"^(?:首页|首頁|52书库|52書庫|半夏小说|半夏小說|笔趣阁|筆趣閣|思兔閱讀|思兔阅读|书库|書庫)\s*[>›]"#,
                     options: .regularExpression
@@ -1400,6 +1401,47 @@ final class BookImportService: Sendable {
             }
 
         return stripLeadingBookMetadata(lines).joined(separator: "\n\n")
+    }
+
+    /// Navigation-link footers (e.g. "目录 上一页 下一页 尾页 Top" on 52书库, or
+    /// "上一章 | 章节目录 | 下一章" on笔趣阁-style sites) survive earlier filters because
+    /// they're a *single* line containing multiple labels separated by whitespace or
+    /// punctuation. Tokenize the line and drop it if every token is a known nav label
+    /// — this is source-agnostic, so adding new sources doesn't need a per-site rule.
+    private static let navigationTokens: Set<String> = [
+        "目录", "目錄", "目录页", "目錄頁", "章节列表", "章節列表",
+        "首页", "首頁", "返回", "返回首页", "返回首頁",
+        "上一章", "下一章", "上一頁", "下一頁", "上一页", "下一页",
+        "上一篇", "下一篇", "上一卷", "下一卷",
+        "首章", "末章", "首页章节", "末页", "末頁", "尾页", "尾頁",
+        "回顶部", "回頂部", "返回顶部", "返回頂部",
+        "书签", "書籤", "加入书签", "加入書簽", "加入书架", "加入書架",
+        "书架", "書架", "下载", "下載", "txt下载", "txt下載",
+        "字号", "字體大小", "字体大小",
+        "夜间", "夜間", "日间", "日間",
+        "top", "home", "back", "next", "prev", "previous"
+    ]
+
+    private static func isNavigationOnlyLine(_ line: String) -> Bool {
+        // Cheap upper bound — a true nav footer is short. Saves us tokenizing every
+        // long paragraph in the chapter body.
+        guard line.count <= 60 else { return false }
+
+        let separators = CharacterSet(charactersIn: " \t　|/·›>›→←-—‧•∙、，,")
+        let tokens = line
+            .components(separatedBy: separators)
+            .map { token in
+                token.trimmingCharacters(in: .punctuationCharacters)
+                    .trimmingCharacters(in: .whitespaces)
+                    .lowercased()
+            }
+            .filter { !$0.isEmpty }
+
+        // Single-token lines are handled by exactBlocked / blockedFragments; we only
+        // care about the multi-label nav strip here.
+        guard tokens.count >= 2 else { return false }
+
+        return tokens.allSatisfy { navigationTokens.contains($0) }
     }
 
     /// Strips leading book-metadata noise that some sources wedge before the actual chapter

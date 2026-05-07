@@ -12,6 +12,7 @@ struct SettingsView: View {
     @AppStorage("reader.fontSize") private var fontSize = 18.0
     @AppStorage("reader.lineSpacing") private var lineSpacing = 8.0
     @AppStorage("reader.fontFamily") private var fontFamilyRaw = ReaderFontFamily.system.rawValue
+    @AppStorage("reader.pageTransition") private var pageTransitionRaw = PageTransitionStyle.instant.rawValue
     @AppStorage("reader.theme") private var themeRawValue = ReadingTheme.paper.rawValue
     @AppStorage("reader.followSystemDark") private var readerFollowSystemDark = false
     @AppStorage("reader.usesTraditionalChinese") private var usesTraditionalChinese = false
@@ -63,6 +64,17 @@ struct SettingsView: View {
         Binding(
             get: { selectedFontFamily.rawValue },
             set: { fontFamilyRaw = $0 }
+        )
+    }
+
+    private var selectedPageTransition: PageTransitionStyle {
+        PageTransitionStyle(rawValue: pageTransitionRaw) ?? .instant
+    }
+
+    private var pageTransitionBinding: Binding<String> {
+        Binding(
+            get: { selectedPageTransition.rawValue },
+            set: { pageTransitionRaw = $0 }
         )
     }
 
@@ -224,8 +236,8 @@ struct SettingsView: View {
         VStack(alignment: .leading, spacing: 14) {
             SectionHeader(title: "阅读偏好")
 
-            VStack(spacing: 18) {
-                VStack(alignment: .leading, spacing: 10) {
+            VStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 8) {
                     HStack {
                         Label("字号", systemImage: "textformat.size")
                         Spacer()
@@ -234,11 +246,11 @@ struct SettingsView: View {
                     }
                     .font(.headline)
 
-                    Slider(value: $fontSize, in: 12...32, step: 1)
+                    Slider(value: $fontSize, in: 12...48, step: 1)
                         .tint(theme.accent)
                 }
 
-                VStack(alignment: .leading, spacing: 10) {
+                VStack(alignment: .leading, spacing: 8) {
                     HStack {
                         Label("行距", systemImage: "text.line.first.and.arrowtriangle.forward")
                         Spacer()
@@ -253,15 +265,25 @@ struct SettingsView: View {
 
                 fontFamilyPicker
 
+                pageTransitionPicker
+
+                // The trailing padding pushes the next toggle far enough below themePicker that
+                // the nested 跟随系统深色模式 row reads as part of the 背景颜色 group, not as the
+                // first of the lower toggles.
                 themePicker
+                    .padding(.bottom, 8)
 
                 Toggle(isOn: $usesTraditionalChinese) {
                     Label("繁体中文显示", systemImage: "character.book.closed")
+                        .font(.headline)
                 }
+                .frame(minHeight: 36)
 
                 Toggle(isOn: $autoScroll) {
                     Label("自动滚读", systemImage: "arrow.down.to.line.compact")
+                        .font(.headline)
                 }
+                .frame(minHeight: 36)
 
                 if autoScroll {
                     HStack {
@@ -359,12 +381,36 @@ struct SettingsView: View {
             .labelsHidden()
             .tint(theme.accent)
         }
+        .frame(minHeight: 36)
+    }
+
+    private var pageTransitionPicker: some View {
+        HStack {
+            Label("翻页效果", systemImage: "book.pages")
+                .font(.headline)
+
+            Spacer()
+
+            Picker("翻页效果", selection: pageTransitionBinding) {
+                ForEach(PageTransitionStyle.allCases) { style in
+                    Text(style.displayName).tag(style.rawValue)
+                }
+            }
+            .pickerStyle(.menu)
+            .labelsHidden()
+            .tint(theme.accent)
+        }
+        .frame(minHeight: 36)
     }
 
     private var themePicker: some View {
         VStack(alignment: .leading, spacing: 10) {
+            // minHeight matches fontFamilyPicker / pageTransitionPicker so the visual rhythm
+            // between the three "row" labels in 阅读偏好 is even — without it, the gap above
+            // 背景颜色 is shorter than the gap above 翻页效果.
             Label("背景颜色", systemImage: "paintpalette")
                 .font(.headline)
+                .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
 
             HStack(alignment: .top, spacing: 6) {
                 ForEach(ReadingTheme.allCases) { readingTheme in
@@ -422,6 +468,8 @@ struct SettingsView: View {
                     }
                 }
             )) {
+                // Stays at .subheadline (lighter than the section's .headline labels) because
+                // this toggle is a sub-option of 背景颜色, not a top-level reading setting.
                 Label("跟随系统深色模式", systemImage: "circle.lefthalf.filled")
                     .font(.subheadline)
             }

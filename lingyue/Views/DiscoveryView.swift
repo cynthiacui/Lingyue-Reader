@@ -57,16 +57,17 @@ struct DiscoveryView: View {
                     sources: DiscoverySourceCatalog.searchableSources,
                     isLoading: searchIsLoading,
                     failedMessage: searchFailedMessage,
-                    groupedResults: searchGroupedResults,
-                    onOpenSource: { url, title in
-                        browserDestination = DiscoveryBrowserDestination(url: url, title: title)
-                    }
+                    groupedResults: searchGroupedResults
                 )
                 .task(id: activeSearchQuery) {
                     await runSearchIfNeeded(query: activeSearchQuery)
                 }
             }
         }
+        // Browser pushed from a row tap on Discovery's *main* page (sourceRow).
+        // Search-results-driven browser pushes are owned by DiscoverySearchResultsView
+        // itself so dismissing the browser pops back to the search results, not all
+        // the way to Discovery's home.
         .navigationDestination(item: $browserDestination) { destination in
             InAppBrowserView(url: destination.url, title: destination.title)
         }
@@ -234,7 +235,10 @@ private struct DiscoverySearchResultsView: View {
     let isLoading: Bool
     let failedMessage: String?
     let groupedResults: [DiscoveryGroupedResult]
-    let onOpenSource: (URL, String) -> Void
+
+    // Owned here (not on DiscoveryView) so the browser sits in the stack as a child of
+    // search results — closing the browser pops back here instead of back to Discovery.
+    @State private var browserDestination: DiscoveryBrowserDestination?
 
     var body: some View {
         ZStack {
@@ -252,6 +256,13 @@ private struct DiscoverySearchResultsView: View {
         }
         .navigationTitle("搜索结果")
         .navigationBarTitleDisplayMode(.inline)
+        .navigationDestination(item: $browserDestination) { destination in
+            InAppBrowserView(url: destination.url, title: destination.title)
+        }
+    }
+
+    private func openSource(url: URL, title: String) {
+        browserDestination = DiscoveryBrowserDestination(url: url, title: title)
     }
 
     private var loadingView: some View {
@@ -297,7 +308,7 @@ private struct DiscoverySearchResultsView: View {
                     ForEach(sources) { source in
                         Button {
                             if let url = source.searchURL(for: query) {
-                                onOpenSource(url, source.name)
+                                openSource(url: url, title: source.name)
                             }
                         } label: {
                             Text(source.name)
@@ -347,7 +358,7 @@ private struct DiscoverySearchResultsView: View {
                             HStack(spacing: 8) {
                                 ForEach(result.sourceLinks) { sourceLink in
                                     Button {
-                                        onOpenSource(sourceLink.url, sourceLink.source.name)
+                                        openSource(url: sourceLink.url, title: sourceLink.source.name)
                                     } label: {
                                         Text(sourceLink.source.name)
                                             .font(.caption.weight(.semibold))
@@ -896,6 +907,7 @@ actor DiscoverySearchService {
     ) -> DiscoveryRawSearchHit? {
         let cleanedTitle = DiscoveryTextCleaner.cleanTitle(title)
         guard !cleanedTitle.isEmpty else { return nil }
+        guard !DiscoveryTextCleaner.isSearchEngineSuggestionTitle(cleanedTitle) else { return nil }
 
         // Direct source parsers read the source's own result title field.
         // Keep it whole so bracketed tags like [诡秘之主同人] are not mistaken
@@ -920,6 +932,7 @@ actor DiscoverySearchService {
     ) -> DiscoveryRawSearchHit? {
         let cleanedTitle = DiscoveryTextCleaner.cleanTitle(title)
         guard !cleanedTitle.isEmpty else { return nil }
+        guard !DiscoveryTextCleaner.isSearchEngineSuggestionTitle(cleanedTitle) else { return nil }
 
         let novelTitle = DiscoveryTextCleaner.extractNovelTitle(
             fromTitle: title,
@@ -1001,9 +1014,57 @@ actor DiscoverySearchService {
             return parseNunuResults(html: html)
         case "破万卷小说":
             return parsePowanjuanResults(html: html)
+        case "大尾笔趣阁":
+            return parseDaweixsResults(html: html)
         default:
             return parseGenericLinkResults(html: html, source: source)
         }
+    }
+
+    /// daweixs.com search returns a `<ul class="txt-list txt-list-row5">` whose `<li>`s carry
+    /// the columns `s1` (category) … `s5` (date). The first `<li>` is a header with `<b>`
+    /// labels and no `<a>`, so we filter it by requiring a real link inside the `s2` cell.
+    /// Without this, the generic `<a href>` parser swept up every nav/footer link on the page
+    /// (首页 / 完本 / 排行 / 收藏 / 书架 / 都市言情 …) and listed them as bogus matches.
+    private func parseDaweixsResults(html: String) -> [ParsedSourceResult] {
+        let blocks = regexMatches(
+            pattern: #"<li>\s*<span[^>]*class=["']s1["'][^>]*>[\s\S]*?</li>"#,
+            in: html
+        )
+        var results: [ParsedSourceResult] = []
+        var seen: Set<String> = []
+        let baseURL = URL(string: "https://www.daweixs.com")
+
+        for block in blocks {
+            guard
+                let href = regexFirstMatch(
+                    pattern: #"<span[^>]*class=["']s2["'][^>]*>\s*<a[^>]+href=["']([^"']+)["']"#,
+                    in: block
+                ),
+                let url = URL(string: href, relativeTo: baseURL)
+            else { continue }
+
+            let rawTitle = regexFirstMatch(
+                pattern: #"<span[^>]*class=["']s2["'][^>]*>\s*<a[^>]*>([\s\S]*?)</a>"#,
+                in: block
+            ) ?? ""
+            let title = DiscoveryTextCleaner.cleanTitle(rawTitle)
+            guard !title.isEmpty else { continue }
+
+            let author = DiscoveryTextCleaner.cleanSummary(
+                regexFirstMatch(
+                    pattern: #"<span[^>]*class=["']s4["'][^>]*>([\s\S]*?)</span>"#,
+                    in: block
+                ) ?? ""
+            )
+
+            let key = "\(title)|\(url.absoluteString)"
+            guard !seen.contains(key) else { continue }
+            seen.insert(key)
+            results.append(ParsedSourceResult(title: title, summary: author, url: url.absoluteURL))
+        }
+
+        return results
     }
 
     private func parseESJResults(html: String) -> [ParsedSourceResult] {
@@ -1609,6 +1670,31 @@ private enum DiscoveryTextCleaner {
         clean(text)
             .replacingOccurrences(of: #"^《|》$"#, with: "", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    // 52shuku.net pages embed sogou-style suggestion blocks ("您是不是要找：…") whose
+    // chips parse as fake hits. Drop them at the earliest point so they never reach
+    // the grouped result list.
+    static func isSearchEngineSuggestionTitle(_ text: String) -> Bool {
+        let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else { return false }
+        let markers = [
+            "您是不是要找",
+            "您是不是想找",
+            "您可能想搜",
+            "您可能想找",
+            "相关搜索",
+            "为您找到",
+            "搜狗",
+            "搜狗搜索"
+        ]
+        for marker in markers {
+            if normalized.contains(marker) { return true }
+        }
+        if normalized.range(of: #"约\s*[\d,]+\s*条结果"#, options: .regularExpression) != nil {
+            return true
+        }
+        return false
     }
 
     static func cleanSummary(_ text: String) -> String {
