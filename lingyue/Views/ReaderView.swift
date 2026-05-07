@@ -51,14 +51,14 @@ struct ReaderView: View {
     @State private var autoScrollTask: Task<Void, Never>?
     @State private var browserDestination: URL?
     @State private var showSourceSwitcher = false
-    /// Bumps after a rotation so the page TabView rebuilds with the post-rotation safeArea
+    /// Bumps after a rotation so the pager rebuilds with the post-rotation safeArea
     /// settled. SwiftUI's GeometryReader sometimes reports stale `safeAreaInsets` on the first
     /// render after rotation when its parent uses `.ignoresSafeArea()`, so the previously-visible
     /// page renders with the wrong top padding until the next state change kicks a re-render.
     @State private var rotationLayoutVersion = 0
     /// Page index at the moment a slide/pageCurl drag begins, so we know whether the user
-    /// started the swipe at a chapter boundary. By `.onEnded` time TabView/UIPageViewController
-    /// may have already mutated `currentChapterPageIndex` to a within-chapter neighbour.
+    /// started the swipe at a chapter boundary. By `.onEnded` time UIPageViewController may
+    /// have already committed an in-chapter turn and mutated `currentChapterPageIndex`.
     @State private var boundarySwipeStartPageIndex: Int?
     private let paginationCacheCapacity = 24
 
@@ -221,7 +221,7 @@ struct ReaderView: View {
             }
             .onChange(of: verticalSizeClass) { _, _ in
                 // Defer to the next runloop tick so SwiftUI has finished propagating the new
-                // safeAreaInsets through GeometryReader before we rebuild the TabView. Without
+                // safeAreaInsets through GeometryReader before we rebuild the pager. Without
                 // the dispatch the rebuild reads the same stale insets we're trying to escape.
                 DispatchQueue.main.async {
                     rotationLayoutVersion &+= 1
@@ -380,10 +380,10 @@ struct ReaderView: View {
         }
     }
 
-    /// Parallel drag gesture used in slide/pageCurl modes. TabView and UIPageViewController
-    /// only know about the current chapter's pages and bounce at the ends; this catches
-    /// boundary swipes and routes them to `goToChapter` so the user can swipe through to
-    /// the previous/next chapter (instant transition — V1 doesn't animate across chapters).
+    /// Parallel drag gesture used in slide/pageCurl modes. UIPageViewController only knows
+    /// about the current chapter's pages (its dataSource returns nil at either end); this
+    /// catches boundary swipes and routes them to `goToChapter` so the user can swipe through
+    /// to the previous/next chapter (instant transition — V1 doesn't animate across chapters).
     private func boundarySwipeGesture(pages: [ReaderPageItem]) -> some Gesture {
         DragGesture(minimumDistance: 20)
             .onChanged { _ in
@@ -426,8 +426,8 @@ struct ReaderView: View {
             if overlayVisible { hideControls() }
             goToChapter(currentChapterIndex - 1, pageIndex: 0, landOnLastPage: true)
         } else if overlayVisible {
-            // Within-chapter swipe: TabView/PageCurlPager already turned the page through the
-            // binding. We just dismiss the overlay so the bar gets out of the user's way.
+            // Within-chapter swipe: the pager already turned the page through the binding.
+            // We just dismiss the overlay so the bar gets out of the user's way.
             hideControls()
         }
     }
@@ -485,42 +485,54 @@ struct ReaderView: View {
             )
     }
 
-    /// Follow-finger horizontal slide via TabView's page style. TabView owns the drag, so
-    /// no custom DragGesture — we keep the SpatialTapGesture for tap-zone behavior.
+    /// Follow-finger horizontal slide via UIPageViewController(.scroll). Used to be a
+    /// SwiftUI TabView(.page), but TabView wrote its post-bounce selection to the binding
+    /// asynchronously — racing with `boundarySwipeGesture.onEnded` and stranding the user
+    /// in the middle of the next chapter when they swiped at a chapter boundary.
+    /// UIPageViewController returns nil from `viewControllerAfter` at the last page, so a
+    /// boundary swipe rubber-bands without ever writing a binding value, and goToChapter
+    /// is the only path that mutates currentChapterPageIndex on the boundary.
     private func slidePageContent(
         pages: [ReaderPageItem],
         textSize: CGSize,
         safeAreaInsets: EdgeInsets,
         containerSize: CGSize
     ) -> some View {
-        TabView(selection: $currentChapterPageIndex) {
-            ForEach(Array(pages.enumerated()), id: \.offset) { index, page in
-                pageView(for: page, safeAreaInsets: safeAreaInsets, textSize: textSize)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .tag(index)
-            }
-        }
-        .tabViewStyle(.page(indexDisplayMode: .never))
-        .ignoresSafeArea()
-        .id("\(currentChapterIndex)-\(rotationLayoutVersion)")
-        .simultaneousGesture(
-            SpatialTapGesture(coordinateSpace: .local)
-                .onEnded { event in
-                    handleReaderTap(at: event.location, in: containerSize, pages: pages)
-                }
+        kitPagerContent(
+            transitionStyle: .scroll,
+            pages: pages,
+            textSize: textSize,
+            safeAreaInsets: safeAreaInsets,
+            containerSize: containerSize
         )
-        .simultaneousGesture(boundarySwipeGesture(pages: pages))
     }
 
-    /// Real-book curl via UIPageViewController. Container reacts to currentChapterPageIndex
-    /// changes through the binding (animated within a chapter, rebuilt instantly across).
+    /// Real-book curl via UIPageViewController(.pageCurl). Same shape as slide mode — only
+    /// the transition style differs.
     private func pageCurlPageContent(
         pages: [ReaderPageItem],
         textSize: CGSize,
         safeAreaInsets: EdgeInsets,
         containerSize: CGSize
     ) -> some View {
+        kitPagerContent(
+            transitionStyle: .pageCurl,
+            pages: pages,
+            textSize: textSize,
+            safeAreaInsets: safeAreaInsets,
+            containerSize: containerSize
+        )
+    }
+
+    private func kitPagerContent(
+        transitionStyle: UIPageViewController.TransitionStyle,
+        pages: [ReaderPageItem],
+        textSize: CGSize,
+        safeAreaInsets: EdgeInsets,
+        containerSize: CGSize
+    ) -> some View {
         PageCurlPager(
+            transitionStyle: transitionStyle,
             pageCount: pages.count,
             currentIndex: $currentChapterPageIndex,
             backgroundColor: UIColor(pageBackground),
@@ -1131,7 +1143,7 @@ struct ReaderView: View {
         if shouldJumpToLastPageAfterPagination {
             shouldJumpToLastPageAfterPagination = false
             // After a backward chapter jump (prev-page from page 0), the just-paginated chapter
-            // wants to land on its last page. Snap without animation so the TabView doesn't
+            // wants to land on its last page. Snap without animation so the pager doesn't
             // slide forward (0 → last) immediately after the chapter swap.
             var transaction = Transaction()
             transaction.disablesAnimations = true
@@ -1179,17 +1191,12 @@ struct ReaderView: View {
         }
     }
 
-    /// In slide mode TabView only animates the page change when the binding mutates inside
-    /// `withAnimation`, so tap zones / auto-scroll need the wrap to slide instead of snap.
-    /// Instant mode skips the wrap (its renderer rebuilds via `.id`, and a withAnimation
-    /// would crossfade what should be a hard swap). PageCurl handles its own animation
-    /// via `setViewControllers(animated:)` inside `PageCurlPager.updateUIViewController`.
+    /// Tap zones / auto-scroll mutate the page index directly; the pager observes the
+    /// adjacency in `updateUIViewController` and animates via `setViewControllers(animated:)`
+    /// for both slide and pageCurl. Instant mode renders via `.id` so an animated transaction
+    /// would crossfade what should be a hard swap — we deliberately avoid `withAnimation`.
     private func setChapterPageIndexAnimatingIfNeeded(_ newIndex: Int) {
-        if pageTransitionStyle == .slide {
-            withAnimation { currentChapterPageIndex = newIndex }
-        } else {
-            currentChapterPageIndex = newIndex
-        }
+        currentChapterPageIndex = newIndex
     }
 
     @MainActor
@@ -1232,7 +1239,7 @@ struct ReaderView: View {
 
     private func goToChapter(_ chapterIndex: Int, pageIndex: Int, landOnLastPage: Bool = false) {
         guard baseChapters.indices.contains(chapterIndex) else { return }
-        // Suppress TabView animation: changing currentChapterPageIndex (e.g., 5 → 0) while
+        // Suppress pager animation: changing currentChapterPageIndex (e.g., 5 → 0) while
         // pages are being swapped to a new chapter would otherwise animate backwards on a
         // forward jump (and vice versa). Snapping is the right behavior for explicit chapter
         // navigation. The "land on last page" flag is set inside the same transaction so a

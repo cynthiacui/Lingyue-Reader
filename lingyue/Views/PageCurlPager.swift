@@ -1,16 +1,19 @@
 import SwiftUI
 import UIKit
 
-/// SwiftUI wrapper around a `UIPageViewController` configured for the real-book
-/// `.pageCurl` transition. SwiftUI itself has no native page-curl, so this is the
-/// only way to surface that effect.
+/// SwiftUI wrapper around `UIPageViewController` for both `.pageCurl` (real-book
+/// curl) and `.scroll` (follow-finger horizontal slide). SwiftUI's `TabView(.page)`
+/// drives slide on its own but writes its post-bounce selection back to the binding
+/// asynchronously, racing with our boundary-swipe handler — `UIPageViewController`'s
+/// `dataSource` returns nil at the chapter end, so the user can't scroll past the
+/// last page and no spurious binding write can land in the next chapter.
 ///
-/// The view is index-driven: the parent passes `pageCount` plus a `renderPage`
-/// closure (page index → view), and a binding to the current index. The
-/// coordinator caches `UIHostingController`s so neighbours stay live during a
-/// curl. Backgrounds are forced opaque because `.pageCurl` shows through
-/// transparent pages while turning, leaking whatever's behind.
+/// Index-driven: the parent passes `pageCount` plus a `renderPage` closure
+/// (page index → view), and a binding to the current index. The coordinator caches
+/// `UIHostingController`s so neighbours stay live during a transition. Backgrounds
+/// are forced opaque because `.pageCurl` shows through transparent pages.
 struct PageCurlPager: UIViewControllerRepresentable {
+    let transitionStyle: UIPageViewController.TransitionStyle
     let pageCount: Int
     @Binding var currentIndex: Int
     let backgroundColor: UIColor
@@ -20,7 +23,7 @@ struct PageCurlPager: UIViewControllerRepresentable {
 
     func makeUIViewController(context: Context) -> UIPageViewController {
         let pvc = UIPageViewController(
-            transitionStyle: .pageCurl,
+            transitionStyle: transitionStyle,
             navigationOrientation: .horizontal,
             options: nil
         )
@@ -41,9 +44,9 @@ struct PageCurlPager: UIViewControllerRepresentable {
         let previousIndex = context.coordinator.shownIndex
         if previousIndex != currentIndex,
            let target = context.coordinator.hostingController(for: currentIndex) {
-            // Animate adjacent within-chapter turns (tap zones, auto-scroll) so they curl
-            // like a swipe. Multi-page jumps (slider drag) and explicitly-instant changes
-            // (Transaction.disablesAnimations) skip the curl.
+            // Animate adjacent within-chapter turns (tap zones, auto-scroll) so they
+            // slide / curl like a swipe. Multi-page jumps (slider drag) and explicitly
+            // instant changes (Transaction.disablesAnimations) skip the animation.
             let isAdjacent = abs(currentIndex - previousIndex) == 1
             let shouldAnimate = isAdjacent && !context.transaction.disablesAnimations
             let direction: UIPageViewController.NavigationDirection =
@@ -53,9 +56,15 @@ struct PageCurlPager: UIViewControllerRepresentable {
         }
     }
 
+    static func dismantleUIViewController(_ uiViewController: UIPageViewController,
+                                          coordinator: Coordinator) {
+        coordinator.isDismantled = true
+    }
+
     final class Coordinator: NSObject, UIPageViewControllerDataSource, UIPageViewControllerDelegate {
         var parent: PageCurlPager
         var shownIndex: Int = 0
+        var isDismantled = false
         // ReaderView already discards the pager wholesale on chapter change (via `.id`),
         // so this cache is bounded to one chapter's worth of pages.
         private var hosts: [Int: UIHostingController<AnyView>] = [:]
@@ -107,7 +116,12 @@ struct PageCurlPager: UIViewControllerRepresentable {
                                 didFinishAnimating finished: Bool,
                                 previousViewControllers prev: [UIViewController],
                                 transitionCompleted completed: Bool) {
-            guard completed,
+            // Drop writes after dismantle: the representable was torn down by an .id
+            // rebuild (chapter swap) while a swipe animation was still in flight. Without
+            // this guard, the old coordinator's binding still points at the same @State,
+            // and a late didFinishAnimating callback would clobber the new chapter's
+            // freshly-zeroed page index.
+            guard !isDismantled, completed,
                   let current = pvc.viewControllers?.first,
                   let i = index(of: current) else { return }
             shownIndex = i
