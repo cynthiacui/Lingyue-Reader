@@ -44,9 +44,16 @@ struct DiscoveryView: View {
                         .padding(.top, 10)
                         .overlay(alignment: .bottom) {
                             if isSearchFieldFocused && !filteredRecentSearches.isEmpty {
+                                // The `alignmentGuide` must be the OUTERMOST modifier in the
+                                // overlay's view chain — `.overlay(alignment: .bottom)` reads
+                                // the outermost view's `.bottom` guide. Wrapping it in another
+                                // layer (e.g. padding) afterwards would shadow the override
+                                // with the wrapper's default bottom edge, causing the drop-
+                                // down to align bottom-to-bottom with the search bar (i.e.
+                                // sit on top of it instead of below it).
                                 recentSearchesSection
-                                    .alignmentGuide(.bottom) { d in d[.top] }
                                     .padding(.top, 12)
+                                    .alignmentGuide(.bottom) { d in d[.top] }
                             }
                         }
                         .padding(.bottom, 22)
