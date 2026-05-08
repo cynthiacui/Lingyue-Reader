@@ -22,7 +22,10 @@ struct DiscoveryView: View {
     // history persists across launches. JSON sidesteps separator-collision risks since
     // novel titles can contain almost any character.
     @AppStorage("discovery.recentSearches.v1") private var recentSearchesData = Data()
-    private static let maxRecentSearches = 5
+    /// Storage cap for the persisted history. The visible card clips to two FlowLayout
+    /// rows regardless, so this just bounds how much history is available to fill those
+    /// two rows when chips happen to be narrow (short titles).
+    private static let maxRecentSearches = 20
 
     private var horizontalMargin: CGFloat {
         if dynamicTypeSize.isAccessibilitySize { return 14 }
@@ -34,14 +37,20 @@ struct DiscoveryView: View {
             ThemeBackgroundView()
 
             ScrollView {
-                VStack(alignment: .leading, spacing: 0) {
-                    searchBarWithRecents
+                VStack(alignment: .leading, spacing: 12) {
+                    searchBar
                         .padding(.top, 10)
-                        .padding(.bottom, 22)
+
+                    if !recentSearches.isEmpty {
+                        recentSearchesCard
+                            .transition(.opacity.combined(with: .move(edge: .top)))
+                    }
 
                     libraryList
+                        .padding(.top, 10)
                 }
                 .padding(.bottom, 24)
+                .animation(.easeInOut(duration: 0.18), value: recentSearches)
             }
             .contentMargins(.horizontal, horizontalMargin, for: .scrollContent)
             .safeAreaPadding(.bottom, 12)
@@ -81,8 +90,6 @@ struct DiscoveryView: View {
         }
     }
 
-    /// Search field row only — no background. The fill is applied by `searchBarWithRecents`
-    /// so the field and the recent-searches list share one continuous rounded container.
     private var searchBar: some View {
         HStack(spacing: 10) {
             Image(systemName: "magnifyingglass")
@@ -107,40 +114,75 @@ struct DiscoveryView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 11)
-    }
-
-    /// Search field + recent-searches list inside a single rounded `cardBackground`
-    /// rectangle, separated by a hairline divider. This is the standard iOS pattern
-    /// (Spotlight, Apple Books search) where the suggestions read as a continuation of
-    /// the field rather than a separate floating card. Default insertion/removal lets
-    /// SwiftUI animate the container height when focus changes.
-    @ViewBuilder
-    private var searchBarWithRecents: some View {
-        let filtered = filteredRecentSearches
-        let dropdownVisible = isSearchFieldFocused && !filtered.isEmpty
-
-        VStack(spacing: 0) {
-            searchBar
-
-            if dropdownVisible {
-                Divider()
-                    .overlay(theme.secondaryText.opacity(0.25))
-
-                ForEach(filtered, id: \.self) { query in
-                    recentSearchRow(query)
-                    if query != filtered.last {
-                        Divider()
-                            .overlay(theme.secondaryText.opacity(0.20))
-                    }
-                }
-            }
-        }
         .background(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .fill(theme.cardBackground)
         )
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .animation(.easeInOut(duration: 0.18), value: dropdownVisible)
+    }
+
+    /// Transparent recent-searches card shown beneath the search bar while the field is
+    /// focused. Chips wrap onto multiple rows via `FlowLayout` so titles of any length
+    /// stay readable. The card has no fill — it sits directly on the page background.
+    private var recentSearchesCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("历史记录")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(theme.secondaryText)
+
+                Spacer()
+
+                Button {
+                    saveRecentSearches([])
+                } label: {
+                    Image(systemName: "trash")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundStyle(theme.secondaryText)
+                        .padding(6)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+
+            FlowLayout(spacing: 10, rowSpacing: 10, maxRows: 2) {
+                ForEach(recentSearches, id: \.self) { query in
+                    recentChip(query)
+                }
+            }
+        }
+        .padding(.horizontal, 4)
+    }
+
+    private func recentChip(_ query: String) -> some View {
+        HStack(spacing: 6) {
+            Button {
+                selectRecentSearch(query)
+            } label: {
+                Text(query)
+                    .font(.system(size: 14))
+                    .foregroundStyle(theme.primaryText)
+                    .lineLimit(1)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            Button {
+                removeRecentSearch(query)
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(theme.secondaryText)
+                    .padding(2)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 7)
+        .overlay(
+            Capsule()
+                .stroke(theme.secondaryText.opacity(0.30), lineWidth: 1)
+        )
     }
 
     private var libraryList: some View {
@@ -222,16 +264,6 @@ struct DiscoveryView: View {
         return (try? JSONDecoder().decode([String].self, from: recentSearchesData)) ?? []
     }
 
-    /// Recent searches filtered by what the user has typed so far. Empty input shows the
-    /// full history; once typing begins, only entries containing the substring (case- and
-    /// diacritic-insensitive) survive — matching the iOS-keyboard-style suggestion drop-down.
-    private var filteredRecentSearches: [String] {
-        let trimmed = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        let all = recentSearches
-        guard !trimmed.isEmpty else { return all }
-        return all.filter { $0.localizedCaseInsensitiveContains(trimmed) }
-    }
-
     private func saveRecentSearches(_ searches: [String]) {
         recentSearchesData = (try? JSONEncoder().encode(searches)) ?? Data()
     }
@@ -255,41 +287,6 @@ struct DiscoveryView: View {
     private func selectRecentSearch(_ query: String) {
         searchText = query
         triggerSearch()
-    }
-
-    private func recentSearchRow(_ query: String) -> some View {
-        HStack(spacing: 12) {
-            Button {
-                selectRecentSearch(query)
-            } label: {
-                HStack(spacing: 12) {
-                    Image(systemName: "clock")
-                        .font(.system(size: 16))
-                        .foregroundStyle(theme.secondaryText)
-                    Text(query)
-                        .font(.system(size: 17))
-                        .foregroundStyle(theme.primaryText)
-                        .lineLimit(1)
-                    Spacer(minLength: 0)
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-
-            Button {
-                removeRecentSearch(query)
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(theme.secondaryText)
-                    .padding(8)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-        }
-        .padding(.leading, 16)
-        .padding(.trailing, 6)
-        .padding(.vertical, 14)
     }
 
     private func openSource(_ source: DiscoverySource) {
@@ -2469,6 +2466,80 @@ private extension Array {
             index = end
         }
         return chunks
+    }
+}
+
+/// Wraps subviews onto multiple rows when they exceed the proposed width — used for the
+/// recent-searches chip card. SwiftUI's stock containers can't do this; HStack overflows
+/// and LazyVGrid forces a fixed column count, neither of which fits variable-width chips.
+///
+/// `maxRows` clips the visible content to N rows. The Layout protocol still requires every
+/// subview be placed, so chips beyond row N are parked offscreen and excluded from the
+/// reported size — equivalent to "show as many as fit in N rows, hide the rest."
+private struct FlowLayout: Layout {
+    var spacing: CGFloat = 8
+    var rowSpacing: CGFloat = 8
+    var maxRows: Int? = nil
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let maxWidth = proposal.width ?? .infinity
+        let limit = maxRows ?? Int.max
+        var rowWidth: CGFloat = 0
+        var rowHeight: CGFloat = 0
+        var totalHeight: CGFloat = 0
+        var totalWidth: CGFloat = 0
+        var currentRow = 1
+
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            let widthIfAppended = rowWidth == 0 ? size.width : rowWidth + spacing + size.width
+            if widthIfAppended > maxWidth, rowWidth > 0 {
+                if currentRow >= limit { break }
+                totalHeight += rowHeight + rowSpacing
+                totalWidth = max(totalWidth, rowWidth)
+                currentRow += 1
+                rowWidth = size.width
+                rowHeight = size.height
+            } else {
+                rowWidth = widthIfAppended
+                rowHeight = max(rowHeight, size.height)
+            }
+        }
+        totalHeight += rowHeight
+        totalWidth = max(totalWidth, rowWidth)
+        return CGSize(width: totalWidth, height: totalHeight)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let maxWidth = bounds.width
+        let limit = maxRows ?? Int.max
+        var x: CGFloat = bounds.minX
+        var y: CGFloat = bounds.minY
+        var rowHeight: CGFloat = 0
+        var currentRow = 1
+        var stopped = false
+
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if !stopped, x + size.width > bounds.minX + maxWidth, x > bounds.minX {
+                if currentRow >= limit {
+                    stopped = true
+                } else {
+                    x = bounds.minX
+                    y += rowHeight + rowSpacing
+                    rowHeight = 0
+                    currentRow += 1
+                }
+            }
+            if stopped {
+                // Park overflow chips offscreen with a zero proposal so they're not visible.
+                subview.place(at: CGPoint(x: -10_000, y: -10_000), anchor: .topLeading, proposal: .zero)
+            } else {
+                subview.place(at: CGPoint(x: x, y: y), anchor: .topLeading, proposal: ProposedViewSize(size))
+                x += size.width + spacing
+                rowHeight = max(rowHeight, size.height)
+            }
+        }
     }
 }
 
