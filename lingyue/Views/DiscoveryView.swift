@@ -24,6 +24,13 @@ struct DiscoveryView: View {
     @AppStorage("discovery.recentSearches.v1") private var recentSearchesData = Data()
     private static let maxRecentSearches = 5
 
+    /// Measured height of the search bar plus its top padding, used to position the
+    /// recent-searches drop-down via `.offset(y:)` so it lands just below the visible
+    /// bar (alignmentGuide-on-overlay didn't behave reliably here on iOS 17). Defaults to
+    /// a sensible estimate so the very first frame doesn't show the dropdown overlapping
+    /// the bar before the geometry resolves.
+    @State private var searchBarMeasuredHeight: CGFloat = 60
+
     private var horizontalMargin: CGFloat {
         if dynamicTypeSize.isAccessibilitySize { return 14 }
         return horizontalSizeClass == .compact ? 16 : 24
@@ -36,27 +43,29 @@ struct DiscoveryView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     // Render the recent-searches drop-down as an overlay below the search bar
-                    // so it floats over the library list rather than displacing it. `zIndex`
-                    // keeps it above the sibling that follows in the VStack; `alignmentGuide`
-                    // re-pins the overlay's top edge to the host's bottom edge so it visually
-                    // extends downward outside the host's bounds.
+                    // so it floats over the library list rather than displacing it. The
+                    // search bar's height is measured into `searchBarMeasuredHeight` via a
+                    // hidden `GeometryReader` background, then the overlay is offset by that
+                    // value (plus a 12pt gap) so the drop-down lands cleanly below the bar.
+                    // `zIndex(1)` keeps the overlay above the libraryList sibling.
                     searchBar
                         .padding(.top, 10)
-                        .overlay(alignment: .bottom) {
-                            if isSearchFieldFocused && !filteredRecentSearches.isEmpty {
-                                // The `alignmentGuide` must be the OUTERMOST modifier in the
-                                // overlay's view chain — `.overlay(alignment: .bottom)` reads
-                                // the outermost view's `.bottom` guide. Wrapping it in another
-                                // layer (e.g. padding) afterwards would shadow the override
-                                // with the wrapper's default bottom edge, causing the drop-
-                                // down to align bottom-to-bottom with the search bar (i.e.
-                                // sit on top of it instead of below it).
-                                recentSearchesSection
-                                    .padding(.top, 12)
-                                    .alignmentGuide(.bottom) { d in d[.top] }
+                        .background(
+                            GeometryReader { geo in
+                                Color.clear
+                                    .preference(key: SearchBarHeightKey.self, value: geo.size.height)
                             }
+                        )
+                        .onPreferenceChange(SearchBarHeightKey.self) { height in
+                            searchBarMeasuredHeight = height
                         }
                         .padding(.bottom, 22)
+                        .overlay(alignment: .top) {
+                            if isSearchFieldFocused && !filteredRecentSearches.isEmpty {
+                                recentSearchesSection
+                                    .offset(y: searchBarMeasuredHeight + 12)
+                            }
+                        }
                         .zIndex(1)
 
                     libraryList
@@ -357,6 +366,16 @@ private func discoveryPinyinSortKey(_ text: String) -> String {
     CFStringTransform(mutable, nil, kCFStringTransformMandarinLatin, false)
     CFStringTransform(mutable, nil, kCFStringTransformStripDiacritics, false)
     return (mutable as String).lowercased()
+}
+
+/// Carries the measured height of the Discovery search bar from a hidden
+/// `GeometryReader` background up to the parent `DiscoveryView` so the recent-searches
+/// drop-down can position itself directly below the bar via `.offset(y:)`.
+private struct SearchBarHeightKey: PreferenceKey {
+    static var defaultValue: CGFloat = 60
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
+    }
 }
 
 private struct DiscoveryBrowserDestination: Identifiable, Hashable {
