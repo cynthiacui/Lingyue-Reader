@@ -10,6 +10,23 @@ private struct LibraryScrollOffsetKey: PreferenceKey {
     }
 }
 
+/// One row of the Library first-launch help popup. Each item maps to one
+/// interactive affordance on the screen — icon, short title, one-line detail.
+private struct LibraryHelpItem: Identifiable {
+    let id = UUID()
+    let icon: String
+    let title: String
+    let detail: String
+}
+
+private let libraryHelpItems: [LibraryHelpItem] = [
+    LibraryHelpItem(icon: "doc.badge.plus", title: "导入本地小说", detail: "左上角按钮导入 TXT 文件"),
+    LibraryHelpItem(icon: "arrow.down.circle", title: "下载管理", detail: "右上角查看进度，暂停或重试"),
+    LibraryHelpItem(icon: "magnifyingglass", title: "搜索书架", detail: "下拉呼出搜索栏，按书名或作者查找"),
+    LibraryHelpItem(icon: "square.grid.2x2", title: "分类管理", detail: "用分类整理书架，导入后可随时归类"),
+    LibraryHelpItem(icon: "hand.tap", title: "书籍交互", detail: "点击阅读 · 长按移动分类 · 左滑清理或删除")
+]
+
 struct LibraryView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -30,6 +47,11 @@ struct LibraryView: View {
     @State private var txtImportToast: String?
     @State private var searchText = ""
     @Namespace private var stackNamespace
+
+    /// One-shot onboarding flag. Flipped to `true` the first time the user
+    /// dismisses the help overlay; persists across launches via UserDefaults so
+    /// the overlay never reappears.
+    @AppStorage("library.hasSeenHelpOverlay") private var hasSeenHelpOverlay = false
 
     private var horizontalMargin: CGFloat {
         if dynamicTypeSize.isAccessibilitySize { return 12 }
@@ -165,6 +187,14 @@ struct LibraryView: View {
             }
         }
         .animation(.easeInOut(duration: 0.22), value: txtImportToast)
+        .overlay {
+            if !hasSeenHelpOverlay {
+                LibraryHelpPopup(onDismiss: dismissHelpOverlay)
+                    .transition(.opacity)
+                    .ignoresSafeArea()
+            }
+        }
+        .animation(.easeInOut(duration: 0.28), value: hasSeenHelpOverlay)
         .navigationDestination(item: $bookToOpen) { novel in
             ReaderView(novel: novel)
         }
@@ -241,6 +271,12 @@ struct LibraryView: View {
         guard activeSwipeID != nil else { return }
         withAnimation(librarySwipeSpring) {
             activeSwipeID = nil
+        }
+    }
+
+    private func dismissHelpOverlay() {
+        withAnimation(.easeInOut(duration: 0.28)) {
+            hasSeenHelpOverlay = true
         }
     }
 
@@ -550,6 +586,75 @@ private struct LibraryCenterToast: View {
             )
             .shadow(color: Color.black.opacity(0.25), radius: 14, x: 0, y: 6)
             .accessibilityAddTraits(.isStaticText)
+    }
+}
+
+/// First-launch help popup. Dim scrim + a single centered card listing every
+/// Library affordance with an icon, title, and one-line description. Tapping
+/// the scrim or "知道了" calls `onDismiss`, which flips the @AppStorage flag
+/// so the popup never reappears.
+private struct LibraryHelpPopup: View {
+    @Environment(\.appTheme) private var theme
+
+    let onDismiss: () -> Void
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.45)
+                .contentShape(Rectangle())
+                .onTapGesture(perform: onDismiss)
+
+            VStack(spacing: 18) {
+                VStack(spacing: 6) {
+                    Text("欢迎使用灵阅")
+                        .font(.system(size: 20, weight: .bold, design: .rounded))
+                        .foregroundStyle(theme.primaryText)
+                    Text("书架功能速览")
+                        .font(.system(size: 13))
+                        .foregroundStyle(theme.secondaryText)
+                }
+
+                VStack(alignment: .leading, spacing: 14) {
+                    ForEach(libraryHelpItems) { item in
+                        HStack(alignment: .top, spacing: 12) {
+                            Image(systemName: item.icon)
+                                .font(.system(size: 16, weight: .semibold))
+                                .foregroundStyle(theme.accent)
+                                .frame(width: 28, height: 28)
+                                .background(
+                                    Circle().fill(theme.accent.opacity(0.12))
+                                )
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(item.title)
+                                    .font(.system(size: 14, weight: .semibold))
+                                    .foregroundStyle(theme.primaryText)
+                                Text(item.detail)
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(theme.secondaryText)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            Spacer(minLength: 0)
+                        }
+                    }
+                }
+
+                Button(action: onDismiss) {
+                    Text("知道了")
+                        .font(.system(size: 15, weight: .bold, design: .rounded))
+                        .foregroundStyle(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                        .background(Capsule().fill(theme.accent))
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(22)
+            .frame(maxWidth: 320)
+            .background(theme.cardBackground)
+            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .shadow(color: .black.opacity(0.3), radius: 18, x: 0, y: 10)
+            .padding(.horizontal, 24)
+        }
     }
 }
 
