@@ -83,6 +83,18 @@ enum WebBookImportError: LocalizedError {
 final class BookImportService: Sendable {
     static let shared = BookImportService()
 
+    /// Sentinel content stored in the chapter cache for chapters whose source permanently
+    /// refuses to serve the body (e.g. 努努书坊 paywalls its newest chapters with a
+    /// "请下载努努书坊APP" gate). Distinct from a transient network error: retrying these
+    /// against the same source won't help, so we persist the marker and treat the chapter
+    /// as "accounted for" in download progress while still surfacing the original
+    /// `sourceBlockedContent` error to the reader.
+    static let sourceBlockedContentSentinel = "__lingyue.source_blocked__\n"
+
+    static func isSourceBlockedSentinelContent(_ content: String) -> Bool {
+        content.hasPrefix(sourceBlockedContentSentinel)
+    }
+
     private let maxChapterCount = 2_000
     private let biqugeAPIHosts = ["apiqu.cc", "apige.cc"]
     private let catalogRepairCache = OSAllocatedUnfairLock<[UUID: Bool]>(initialState: [:])
@@ -321,6 +333,12 @@ final class BookImportService: Sendable {
     }
 
     func shouldUseCachedChapter(_ cachedChapter: NovelChapter, for originalChapter: NovelChapter) -> Bool {
+        // Source-blocked sentinels are valid cache entries — they record "this source
+        // permanently refuses to serve this chapter" so we don't keep re-fetching it.
+        // The throw-on-read happens in `ChapterContentCache.chapter(for:)`.
+        if Self.isSourceBlockedSentinelContent(cachedChapter.content) {
+            return true
+        }
         // Reject cached chapters whose title is a site-brand (e.g. "努努书坊", "笔趣阁") rather
         // than a real chapter name. These were produced by the old <h1>-grabs-first bug; force
         // a re-fetch so the new title parser can pick the right heading.
@@ -1962,6 +1980,11 @@ actor ChapterContentCache {
         guard let cachedChapter = try? JSONDecoder().decode(NovelChapter.self, from: data) else {
             return nil
         }
+        // Optimistic preheat callers expect real content; sentinel chapters route through
+        // the throwing `chapter(for:)` path so the reader displays the source-blocked error.
+        if BookImportService.isSourceBlockedSentinelContent(cachedChapter.content) {
+            return nil
+        }
         if BookImportService.shared.shouldUseCachedChapter(cachedChapter, for: chapter) {
             return cachedChapter
         }
@@ -1978,6 +2001,9 @@ actor ChapterContentCache {
 
         if let cached = memory[key] {
             if BookImportService.shared.shouldUseCachedChapter(cached, for: chapter) {
+                if BookImportService.isSourceBlockedSentinelContent(cached.content) {
+                    throw WebBookImportError.sourceBlockedContent
+                }
                 return cached
             }
             memory[key] = nil
@@ -1986,6 +2012,9 @@ actor ChapterContentCache {
         if let diskChapter = readChapterFromDisk(key: key) {
             if BookImportService.shared.shouldUseCachedChapter(diskChapter, for: chapter) {
                 memory[key] = diskChapter
+                if BookImportService.isSourceBlockedSentinelContent(diskChapter.content) {
+                    throw WebBookImportError.sourceBlockedContent
+                }
                 return diskChapter
             }
             try? FileManager.default.removeItem(at: cacheFileURL(for: key))
@@ -2008,6 +2037,20 @@ actor ChapterContentCache {
             return loaded
         } catch {
             inFlight[key] = nil
+            // Persist a sentinel for permanently source-blocked chapters so future probes
+            // count them as cached and the download finishes instead of looping in
+            // .failed. Reader path re-throws this error from the cached-sentinel branch
+            // above, so the user still sees "该来源限制章节正文显示" when they open it.
+            if let webError = error as? WebBookImportError, case .sourceBlockedContent = webError {
+                let sentinel = NovelChapter(
+                    id: chapter.id,
+                    title: chapter.title,
+                    content: BookImportService.sourceBlockedContentSentinel,
+                    sourceURLString: chapter.sourceURLString
+                )
+                memory[key] = sentinel
+                writeChapterToDisk(sentinel, key: key)
+            }
             throw error
         }
     }
@@ -2020,6 +2063,11 @@ actor ChapterContentCache {
         let key = cacheKey(for: chapter)
         if let cached = memory[key] {
             if BookImportService.shared.shouldUseCachedChapter(cached, for: chapter) {
+                // Optimistic preheat callers want real content. Sentinel chapters route
+                // through the throwing `chapter(for:)` path instead.
+                if BookImportService.isSourceBlockedSentinelContent(cached.content) {
+                    return nil
+                }
                 return cached
             }
             memory[key] = nil
@@ -2028,6 +2076,9 @@ actor ChapterContentCache {
         if let diskChapter = readChapterFromDisk(key: key) {
             if BookImportService.shared.shouldUseCachedChapter(diskChapter, for: chapter) {
                 memory[key] = diskChapter
+                if BookImportService.isSourceBlockedSentinelContent(diskChapter.content) {
+                    return nil
+                }
                 return diskChapter
             }
             try? FileManager.default.removeItem(at: cacheFileURL(for: key))

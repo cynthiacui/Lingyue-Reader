@@ -246,6 +246,13 @@ final class BookDownloadManager: ObservableObject {
         }
     }
 
+    private static func isPermanentSkip(_ error: Error) -> Bool {
+        if let webError = error as? WebBookImportError, case .sourceBlockedContent = webError {
+            return true
+        }
+        return false
+    }
+
     private func runDownload(
         novelID: UUID,
         chapters: [NovelChapter],
@@ -300,7 +307,20 @@ final class BookDownloadManager: ObservableObject {
                         states[novelID] = .downloading(completed: completed, total: total)
                     }
                 case .failure(let error):
-                    if failure == nil { failure = error }
+                    if Self.isPermanentSkip(error) {
+                        // Source-blocked chapters can't be obtained from this source no matter
+                        // how many retries (努努书坊 paywalls newest chapters, etc.). The cache
+                        // has already persisted a sentinel for them, so count toward progress
+                        // and let the download finish in `.downloaded` instead of looping in
+                        // `.failed`. Reader still surfaces the original error when the user
+                        // opens one of these chapters.
+                        completed += 1
+                        if !Task.isCancelled {
+                            states[novelID] = .downloading(completed: completed, total: total)
+                        }
+                    } else if failure == nil {
+                        failure = error
+                    }
                 }
 
                 if let chapter = iterator.next() {
