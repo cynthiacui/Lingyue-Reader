@@ -206,7 +206,7 @@ struct ReaderView: View {
                 }
             }
             .onAppear {
-                setInitialChapterIfNeeded()
+                setInitialChapterIfNeeded(textSize: textSize)
                 persistReadingState(pages: pages)
                 lastKnownTextSize = textSize
                 if autoScroll { startAutoScroll() }
@@ -1116,7 +1116,7 @@ struct ReaderView: View {
         )
     }
 
-    private func setInitialChapterIfNeeded() {
+    private func setInitialChapterIfNeeded(textSize: CGSize) {
         guard !didSetInitialPage else { return }
 
         if let chapterIndex = restoredChapterIndex() {
@@ -1124,14 +1124,67 @@ struct ReaderView: View {
             pendingRestoreChapterKey = chapterCacheKey(baseChapters[chapterIndex])
             pendingRestoreChapterPageIndex = chapterPageIndex
             currentChapterIndex = chapterIndex
-            currentChapterPageIndex = chapterPageIndex
+            // Leave the page index at 0 until pagination produces real pages.
+            // Seeding it with `chapterPageIndex` here while `visiblePages` is still
+            // empty makes the slide/pageCurl pager initialize with currentIndex
+            // out of bounds (pageCount == 1, currentIndex == 3), which leaves it
+            // showing a blank page until the user manually flips. Restore happens
+            // in `applyPendingPageRestoreIfNeeded` after pagination completes
+            // (sync below for the cached path, or async via .task for uncached).
+            currentChapterPageIndex = 0
         } else {
             currentChapterIndex = fallbackChapterIndexFromProgress()
             currentChapterPageIndex = 0
         }
 
         loadDiskCachedChapterImmediately(at: currentChapterIndex)
+
+        // Sync paginate when the chapter is already loaded so the first rendered
+        // frame after onAppear lands on the saved page directly. Without this,
+        // the user briefly sees the start of the chapter (the placeholder page,
+        // which renders the entire chapter content as a single page) before the
+        // async .task pagination runs and `applyPendingPageRestoreIfNeeded` snaps
+        // to the saved index. Cost is bounded by single-chapter pagination
+        // (~tens of ms for typical chapters); falls back to the async path if
+        // textSize hasn't settled yet or the chapter content isn't available.
+        paginateSynchronouslyForRestoreIfPossible(textSize: textSize)
+
         didSetInitialPage = true
+    }
+
+    /// Paginates the restored chapter on the main thread when content is already
+    /// in memory (disk cache hit), seeds `visiblePages`, and lets the existing
+    /// `applyPendingPageRestoreIfNeeded` plumbing snap `currentChapterPageIndex`
+    /// to the saved value before SwiftUI renders again. No-ops when the chapter
+    /// hasn't loaded yet, when the saved page is 0 (nothing to restore), or
+    /// when GeometryReader hasn't produced a usable size.
+    private func paginateSynchronouslyForRestoreIfPossible(textSize: CGSize) {
+        guard let chapterPageIndex = pendingRestoreChapterPageIndex,
+              chapterPageIndex > 0,
+              textSize.width > 0, textSize.height > 0,
+              let chapter = currentChapter else { return }
+
+        let content = displayed(readerContent(for: chapter, chapterIndex: currentChapterIndex))
+        guard !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+
+        let signature = paginationSignature(textSize: textSize)
+        let pageContents = Self.paginate(
+            content: content,
+            textSize: textSize,
+            fontSize: fontSize,
+            lineSpacing: lineSpacing,
+            fontFamily: readerFontFamily
+        )
+        guard !pageContents.isEmpty else { return }
+
+        rememberPaginatedPages(pageContents, for: signature)
+        let chapterTitle = displayed(chapter.title)
+        let items = pageItems(
+            from: pageContents,
+            chapterIndex: currentChapterIndex,
+            chapterTitle: chapterTitle
+        )
+        applyVisiblePages(items, signature: signature)
     }
 
     private func clampCurrentPage(to pages: [ReaderPageItem]) {
@@ -1349,7 +1402,14 @@ struct ReaderView: View {
 
         let targetPageIndex = min(max(chapterPageIndex, 0), max(pages.count - 1, 0))
         if currentChapterPageIndex != targetPageIndex {
-            currentChapterPageIndex = targetPageIndex
+            // Snap without animation. Restoring saved state shouldn't visibly
+            // slide / page-curl from page 0 to the saved index — that's a one-frame
+            // setup operation, not user-initiated navigation.
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) {
+                currentChapterPageIndex = targetPageIndex
+            }
         }
 
         let chapter = baseChapters[chapterIndex]

@@ -247,6 +247,14 @@ struct LibraryView: View {
         .animation(.spring(response: 0.42, dampingFraction: 0.82), value: expandedCategoryID)
         .animation(.easeInOut(duration: 0.18), value: categoryEditBook?.id)
         .animation(InputModalView.presentationAnimation, value: isAddingCategory)
+        // While a category is expanded, hide the navigation chrome and the tab
+        // bar so the overlay's dim layer becomes the entire backdrop. Without
+        // this the toolbar buttons / search drawer / tab bar render above the
+        // dim with their own materials, looking highlighted instead of grayed
+        // out — and they remain tappable, which would let the user open
+        // unrelated UI without dismissing the popup first.
+        .toolbar(expandedCategoryID == nil ? .visible : .hidden, for: .navigationBar)
+        .toolbar(expandedCategoryID == nil ? .visible : .hidden, for: .tabBar)
         .navigationTitle("书架")
         .navigationBarTitleDisplayMode(.inline)
         .searchable(
