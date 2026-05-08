@@ -35,14 +35,22 @@ struct DiscoveryView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
+                    // Render the recent-searches drop-down as an overlay below the search bar
+                    // so it floats over the library list rather than displacing it. `zIndex`
+                    // keeps it above the sibling that follows in the VStack; `alignmentGuide`
+                    // re-pins the overlay's top edge to the host's bottom edge so it visually
+                    // extends downward outside the host's bounds.
                     searchBar
                         .padding(.top, 10)
+                        .overlay(alignment: .bottom) {
+                            if isSearchFieldFocused && !filteredRecentSearches.isEmpty {
+                                recentSearchesSection
+                                    .alignmentGuide(.bottom) { d in d[.top] }
+                                    .padding(.top, 12)
+                            }
+                        }
                         .padding(.bottom, 22)
-
-                    if isSearchFieldFocused && !filteredRecentSearches.isEmpty {
-                        recentSearchesSection
-                            .padding(.bottom, 22)
-                    }
+                        .zIndex(1)
 
                     libraryList
                 }
@@ -242,11 +250,16 @@ struct DiscoveryView: View {
                 }
             }
         }
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(theme.cardBackground)
+        )
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .stroke(theme.secondaryText.opacity(0.30), lineWidth: 1)
         )
+        .shadow(color: .black.opacity(0.06), radius: 8, x: 0, y: 4)
     }
 
     private func recentSearchRow(_ query: String) -> some View {
