@@ -39,7 +39,7 @@ struct DiscoveryView: View {
                         .padding(.top, 10)
                         .padding(.bottom, 22)
 
-                    if isSearchFieldFocused && !recentSearches.isEmpty {
+                    if isSearchFieldFocused && !filteredRecentSearches.isEmpty {
                         recentSearchesSection
                             .padding(.bottom, 22)
                     }
@@ -195,6 +195,16 @@ struct DiscoveryView: View {
         return (try? JSONDecoder().decode([String].self, from: recentSearchesData)) ?? []
     }
 
+    /// Recent searches filtered by what the user has typed so far. Empty input shows the
+    /// full history; once typing begins, only entries containing the substring (case- and
+    /// diacritic-insensitive) survive — matching the iOS-keyboard-style suggestion drop-down.
+    private var filteredRecentSearches: [String] {
+        let trimmed = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let all = recentSearches
+        guard !trimmed.isEmpty else { return all }
+        return all.filter { $0.localizedCaseInsensitiveContains(trimmed) }
+    }
+
     private func saveRecentSearches(_ searches: [String]) {
         recentSearchesData = (try? JSONEncoder().encode(searches)) ?? Data()
     }
@@ -222,53 +232,34 @@ struct DiscoveryView: View {
 
     @ViewBuilder
     private var recentSearchesSection: some View {
-        let recents = recentSearches
+        let filtered = filteredRecentSearches
         VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Text("搜索历史")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(theme.secondaryText)
-                Spacer()
-                Button {
-                    saveRecentSearches([])
-                } label: {
-                    Text("清除")
-                        .font(.footnote)
-                        .foregroundStyle(theme.accent)
-                }
-                .buttonStyle(.plain)
-            }
-            .padding(.horizontal, 14)
-            .padding(.top, 12)
-            .padding(.bottom, 6)
-
-            ForEach(recents, id: \.self) { query in
+            ForEach(filtered, id: \.self) { query in
                 recentSearchRow(query)
-                if query != recents.last {
+                if query != filtered.last {
                     Divider()
-                        .overlay(theme.secondaryText.opacity(0.15))
-                        .padding(.leading, 14)
+                        .overlay(theme.secondaryText.opacity(0.20))
                 }
             }
         }
-        .padding(.bottom, 6)
-        .background(
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(theme.cardBackground)
+                .stroke(theme.secondaryText.opacity(0.30), lineWidth: 1)
         )
     }
 
     private func recentSearchRow(_ query: String) -> some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 12) {
             Button {
                 selectRecentSearch(query)
             } label: {
-                HStack(spacing: 10) {
-                    Image(systemName: "clock.arrow.circlepath")
-                        .font(.system(size: 14))
+                HStack(spacing: 12) {
+                    Image(systemName: "clock")
+                        .font(.system(size: 16))
                         .foregroundStyle(theme.secondaryText)
                     Text(query)
-                        .font(.system(size: 15))
+                        .font(.system(size: 17))
                         .foregroundStyle(theme.primaryText)
                         .lineLimit(1)
                     Spacer(minLength: 0)
@@ -283,13 +274,14 @@ struct DiscoveryView: View {
                 Image(systemName: "xmark")
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(theme.secondaryText)
-                    .padding(6)
+                    .padding(8)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
+        .padding(.leading, 16)
+        .padding(.trailing, 6)
+        .padding(.vertical, 14)
     }
 
     private func openSource(_ source: DiscoverySource) {
