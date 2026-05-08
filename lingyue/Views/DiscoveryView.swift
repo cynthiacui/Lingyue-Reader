@@ -9,6 +9,7 @@ struct DiscoveryView: View {
     @State private var searchText = ""
     @State private var activeSearchQuery: String?
     @State private var browserDestination: DiscoveryBrowserDestination?
+    @FocusState private var isSearchFieldFocused: Bool
 
     // Search state lives at this level so popping back from an in-app browser doesn't
     // recreate DiscoverySearchResultsView from scratch and re-fire the search.
@@ -16,6 +17,12 @@ struct DiscoveryView: View {
     @State private var searchIsLoading = false
     @State private var searchFailedMessage: String?
     @State private var searchGroupedResults: [DiscoveryGroupedResult] = []
+
+    // Recent searches are stored as a JSON-encoded `[String]` blob in @AppStorage so the
+    // history persists across launches. JSON sidesteps separator-collision risks since
+    // novel titles can contain almost any character.
+    @AppStorage("discovery.recentSearches.v1") private var recentSearchesData = Data()
+    private static let maxRecentSearches = 5
 
     private var horizontalMargin: CGFloat {
         if dynamicTypeSize.isAccessibilitySize { return 14 }
@@ -32,12 +39,18 @@ struct DiscoveryView: View {
                         .padding(.top, 10)
                         .padding(.bottom, 22)
 
+                    if isSearchFieldFocused && !recentSearches.isEmpty {
+                        recentSearchesSection
+                            .padding(.bottom, 22)
+                    }
+
                     libraryList
                 }
                 .padding(.bottom, 24)
             }
             .contentMargins(.horizontal, horizontalMargin, for: .scrollContent)
             .safeAreaPadding(.bottom, 12)
+            .scrollDismissesKeyboard(.interactively)
         }
         .navigationTitle("发现")
         .navigationBarTitleDisplayMode(.large)
@@ -80,6 +93,7 @@ struct DiscoveryView: View {
                 .foregroundStyle(theme.secondaryText)
 
             TextField("搜索小说名或关键词", text: $searchText)
+                .focused($isSearchFieldFocused)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled(true)
                 .submitLabel(.search)
@@ -163,6 +177,8 @@ struct DiscoveryView: View {
     private func triggerSearch() {
         let trimmed = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
+        recordRecentSearch(trimmed)
+        isSearchFieldFocused = false
         if trimmed != searchResultsQuery {
             // New query — clear stale cache so the results screen shows a loading spinner
             // instead of the previous query's results while the new search runs.
@@ -172,6 +188,108 @@ struct DiscoveryView: View {
             searchResultsQuery = nil
         }
         activeSearchQuery = trimmed
+    }
+
+    private var recentSearches: [String] {
+        guard !recentSearchesData.isEmpty else { return [] }
+        return (try? JSONDecoder().decode([String].self, from: recentSearchesData)) ?? []
+    }
+
+    private func saveRecentSearches(_ searches: [String]) {
+        recentSearchesData = (try? JSONEncoder().encode(searches)) ?? Data()
+    }
+
+    private func recordRecentSearch(_ query: String) {
+        var current = recentSearches
+        current.removeAll { $0 == query }
+        current.insert(query, at: 0)
+        if current.count > Self.maxRecentSearches {
+            current = Array(current.prefix(Self.maxRecentSearches))
+        }
+        saveRecentSearches(current)
+    }
+
+    private func removeRecentSearch(_ query: String) {
+        var current = recentSearches
+        current.removeAll { $0 == query }
+        saveRecentSearches(current)
+    }
+
+    private func selectRecentSearch(_ query: String) {
+        searchText = query
+        triggerSearch()
+    }
+
+    @ViewBuilder
+    private var recentSearchesSection: some View {
+        let recents = recentSearches
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Text("搜索历史")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(theme.secondaryText)
+                Spacer()
+                Button {
+                    saveRecentSearches([])
+                } label: {
+                    Text("清除")
+                        .font(.footnote)
+                        .foregroundStyle(theme.accent)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 14)
+            .padding(.top, 12)
+            .padding(.bottom, 6)
+
+            ForEach(recents, id: \.self) { query in
+                recentSearchRow(query)
+                if query != recents.last {
+                    Divider()
+                        .overlay(theme.secondaryText.opacity(0.15))
+                        .padding(.leading, 14)
+                }
+            }
+        }
+        .padding(.bottom, 6)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(theme.cardBackground)
+        )
+    }
+
+    private func recentSearchRow(_ query: String) -> some View {
+        HStack(spacing: 10) {
+            Button {
+                selectRecentSearch(query)
+            } label: {
+                HStack(spacing: 10) {
+                    Image(systemName: "clock.arrow.circlepath")
+                        .font(.system(size: 14))
+                        .foregroundStyle(theme.secondaryText)
+                    Text(query)
+                        .font(.system(size: 15))
+                        .foregroundStyle(theme.primaryText)
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            Button {
+                removeRecentSearch(query)
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(theme.secondaryText)
+                    .padding(6)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
     }
 
     private func openSource(_ source: DiscoverySource) {
