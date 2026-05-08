@@ -28,6 +28,7 @@ struct LibraryView: View {
     @State private var isShowingDownloads = false
     @State private var isShowingTxtPicker = false
     @State private var txtImportToast: String?
+    @State private var searchText = ""
     @Namespace private var stackNamespace
 
     private var horizontalMargin: CGFloat {
@@ -46,12 +47,39 @@ struct LibraryView: View {
         libraryStore.allNovels.isEmpty && libraryStore.categories.isEmpty
     }
 
+    private var trimmedSearch: String {
+        searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var isSearching: Bool { !trimmedSearch.isEmpty }
+
+    /// Cross-category title+author matches, recent-first. Mirrors the matcher and sort
+    /// CategoryDetailView already uses for in-category search so the two screens behave
+    /// identically.
+    private var searchHits: [Novel] {
+        let q = trimmedSearch
+        guard !q.isEmpty else { return [] }
+        return libraryStore.allNovels
+            .filter {
+                $0.title.localizedCaseInsensitiveContains(q) ||
+                $0.author.localizedCaseInsensitiveContains(q)
+            }
+            .sorted { lhs, rhs in
+                let l = lhs.lastOpenedAt ?? .distantPast
+                let r = rhs.lastOpenedAt ?? .distantPast
+                if l != r { return l > r }
+                return lhs.readMinutes > rhs.readMinutes
+            }
+    }
+
     var body: some View {
         ZStack {
             ThemeBackgroundView()
 
             if isLibraryEmpty {
                 emptyStateView
+            } else if isSearching {
+                searchResultsList
             } else {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 18) {
@@ -191,6 +219,12 @@ struct LibraryView: View {
         .animation(InputModalView.presentationAnimation, value: isAddingCategory)
         .navigationTitle("书架")
         .navigationBarTitleDisplayMode(.inline)
+        .searchable(
+            text: $searchText,
+            placement: .navigationBarDrawer(displayMode: .always),
+            prompt: "搜索书名或作者"
+        )
+        .onChange(of: searchText) { _, _ in closeActiveSwipe() }
         .task {
             await downloadManager.refreshStates(for: libraryStore.allNovels)
         }
@@ -256,6 +290,47 @@ struct LibraryView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(.bottom, 60)
+    }
+
+    /// Flat list shown in place of the wallet-stacked layout while a search query is
+    /// active. Mirrors `CategoryDetailView`'s row composition (BookPressableNavigationRow
+    /// + CategoryBookRow) so swipe-to-delete, long-press category move, and tap-to-open
+    /// all behave consistently with the in-category detail screen.
+    private var searchResultsList: some View {
+        ScrollView {
+            if searchHits.isEmpty {
+                VStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 40, weight: .light))
+                        .foregroundStyle(theme.secondaryText.opacity(0.6))
+                    Text("没有匹配的书籍")
+                        .font(.subheadline)
+                        .foregroundStyle(theme.secondaryText)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.top, 60)
+            } else {
+                LazyVStack(spacing: 8) {
+                    ForEach(searchHits) { novel in
+                        let actions = downloadActions(for: novel)
+                        BookPressableNavigationRow(
+                            rowID: novel.id,
+                            activeSwipeID: $activeSwipeID,
+                            label: { CategoryBookRow(novel: novel) },
+                            onTap: { bookToOpen = novel },
+                            onLongPress: { presentCategoryEditor(for: novel) },
+                            onDownload: actions.onDownload,
+                            onClearDownloadData: actions.onClearDownloadData,
+                            onDelete: { deleteFromCategories(novel) }
+                        )
+                    }
+                }
+                .padding(.top, 8)
+                .padding(.bottom, 18)
+            }
+        }
+        .contentMargins(.horizontal, horizontalMargin, for: .scrollContent)
+        .safeAreaPadding(.bottom, 12)
     }
 
     @ViewBuilder
