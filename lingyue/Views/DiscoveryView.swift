@@ -62,8 +62,11 @@ struct DiscoveryView: View {
                         .padding(.bottom, 22)
                         .overlay(alignment: .top) {
                             if isSearchFieldFocused && !filteredRecentSearches.isEmpty {
+                                // Butt the drop-down flush against the search bar's bottom
+                                // edge so the two read as one continuous container — see the
+                                // squared-off top corners on `recentSearchesSection`.
                                 recentSearchesSection
-                                    .offset(y: searchBarMeasuredHeight + 12)
+                                    .offset(y: searchBarMeasuredHeight)
                             }
                         }
                         .zIndex(1)
@@ -254,10 +257,25 @@ struct DiscoveryView: View {
         triggerSearch()
     }
 
+    /// Drop-down has its top corners squared off and bottom corners rounded so it sits
+    /// flush against the search bar's bottom edge as one continuous "search-field +
+    /// suggestions" container — this is the standard iOS combobox/Spotlight pattern.
+    private var recentSearchesShape: UnevenRoundedRectangle {
+        UnevenRoundedRectangle(
+            cornerRadii: .init(topLeading: 0, bottomLeading: 10, bottomTrailing: 10, topTrailing: 0),
+            style: .continuous
+        )
+    }
+
     @ViewBuilder
     private var recentSearchesSection: some View {
         let filtered = filteredRecentSearches
         VStack(alignment: .leading, spacing: 0) {
+            // Hairline at the top reads as the divider between the search field and the
+            // suggestions list inside the unified container.
+            Divider()
+                .overlay(theme.secondaryText.opacity(0.25))
+
             ForEach(filtered, id: \.self) { query in
                 recentSearchRow(query)
                 if query != filtered.last {
@@ -267,14 +285,10 @@ struct DiscoveryView: View {
             }
         }
         .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
+            recentSearchesShape
                 .fill(theme.cardBackground)
         )
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(theme.secondaryText.opacity(0.30), lineWidth: 1)
-        )
+        .clipShape(recentSearchesShape)
         .shadow(color: .black.opacity(0.06), radius: 8, x: 0, y: 4)
     }
 
