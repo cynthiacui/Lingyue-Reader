@@ -24,13 +24,6 @@ struct DiscoveryView: View {
     @AppStorage("discovery.recentSearches.v1") private var recentSearchesData = Data()
     private static let maxRecentSearches = 5
 
-    /// Measured height of the search bar plus its top padding, used to position the
-    /// recent-searches drop-down via `.offset(y:)` so it lands just below the visible
-    /// bar (alignmentGuide-on-overlay didn't behave reliably here on iOS 17). Defaults to
-    /// a sensible estimate so the very first frame doesn't show the dropdown overlapping
-    /// the bar before the geometry resolves.
-    @State private var searchBarMeasuredHeight: CGFloat = 60
-
     private var horizontalMargin: CGFloat {
         if dynamicTypeSize.isAccessibilitySize { return 14 }
         return horizontalSizeClass == .compact ? 16 : 24
@@ -42,34 +35,9 @@ struct DiscoveryView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
-                    // Render the recent-searches drop-down as an overlay below the search bar
-                    // so it floats over the library list rather than displacing it. The
-                    // search bar's height is measured into `searchBarMeasuredHeight` via a
-                    // hidden `GeometryReader` background, then the overlay is offset by that
-                    // value (plus a 12pt gap) so the drop-down lands cleanly below the bar.
-                    // `zIndex(1)` keeps the overlay above the libraryList sibling.
-                    searchBar
+                    searchBarWithRecents
                         .padding(.top, 10)
-                        .background(
-                            GeometryReader { geo in
-                                Color.clear
-                                    .preference(key: SearchBarHeightKey.self, value: geo.size.height)
-                            }
-                        )
-                        .onPreferenceChange(SearchBarHeightKey.self) { height in
-                            searchBarMeasuredHeight = height
-                        }
                         .padding(.bottom, 22)
-                        .overlay(alignment: .top) {
-                            if isSearchFieldFocused && !filteredRecentSearches.isEmpty {
-                                // Butt the drop-down flush against the search bar's bottom
-                                // edge so the two read as one continuous container — see the
-                                // squared-off top corners on `recentSearchesSection`.
-                                recentSearchesSection
-                                    .offset(y: searchBarMeasuredHeight)
-                            }
-                        }
-                        .zIndex(1)
 
                     libraryList
                 }
@@ -113,6 +81,8 @@ struct DiscoveryView: View {
         }
     }
 
+    /// Search field row only — no background. The fill is applied by `searchBarWithRecents`
+    /// so the field and the recent-searches list share one continuous rounded container.
     private var searchBar: some View {
         HStack(spacing: 10) {
             Image(systemName: "magnifyingglass")
@@ -137,10 +107,40 @@ struct DiscoveryView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 11)
+    }
+
+    /// Search field + recent-searches list inside a single rounded `cardBackground`
+    /// rectangle, separated by a hairline divider. This is the standard iOS pattern
+    /// (Spotlight, Apple Books search) where the suggestions read as a continuation of
+    /// the field rather than a separate floating card. Default insertion/removal lets
+    /// SwiftUI animate the container height when focus changes.
+    @ViewBuilder
+    private var searchBarWithRecents: some View {
+        let filtered = filteredRecentSearches
+        let dropdownVisible = isSearchFieldFocused && !filtered.isEmpty
+
+        VStack(spacing: 0) {
+            searchBar
+
+            if dropdownVisible {
+                Divider()
+                    .overlay(theme.secondaryText.opacity(0.25))
+
+                ForEach(filtered, id: \.self) { query in
+                    recentSearchRow(query)
+                    if query != filtered.last {
+                        Divider()
+                            .overlay(theme.secondaryText.opacity(0.20))
+                    }
+                }
+            }
+        }
         .background(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .fill(theme.cardBackground)
         )
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .animation(.easeInOut(duration: 0.18), value: dropdownVisible)
     }
 
     private var libraryList: some View {
@@ -257,41 +257,6 @@ struct DiscoveryView: View {
         triggerSearch()
     }
 
-    /// Drop-down has its top corners squared off and bottom corners rounded so it sits
-    /// flush against the search bar's bottom edge as one continuous "search-field +
-    /// suggestions" container — this is the standard iOS combobox/Spotlight pattern.
-    private var recentSearchesShape: UnevenRoundedRectangle {
-        UnevenRoundedRectangle(
-            cornerRadii: .init(topLeading: 0, bottomLeading: 10, bottomTrailing: 10, topTrailing: 0),
-            style: .continuous
-        )
-    }
-
-    @ViewBuilder
-    private var recentSearchesSection: some View {
-        let filtered = filteredRecentSearches
-        VStack(alignment: .leading, spacing: 0) {
-            // Hairline at the top reads as the divider between the search field and the
-            // suggestions list inside the unified container.
-            Divider()
-                .overlay(theme.secondaryText.opacity(0.25))
-
-            ForEach(filtered, id: \.self) { query in
-                recentSearchRow(query)
-                if query != filtered.last {
-                    Divider()
-                        .overlay(theme.secondaryText.opacity(0.20))
-                }
-            }
-        }
-        .background(
-            recentSearchesShape
-                .fill(theme.cardBackground)
-        )
-        .clipShape(recentSearchesShape)
-        .shadow(color: .black.opacity(0.06), radius: 8, x: 0, y: 4)
-    }
-
     private func recentSearchRow(_ query: String) -> some View {
         HStack(spacing: 12) {
             Button {
@@ -380,16 +345,6 @@ private func discoveryPinyinSortKey(_ text: String) -> String {
     CFStringTransform(mutable, nil, kCFStringTransformMandarinLatin, false)
     CFStringTransform(mutable, nil, kCFStringTransformStripDiacritics, false)
     return (mutable as String).lowercased()
-}
-
-/// Carries the measured height of the Discovery search bar from a hidden
-/// `GeometryReader` background up to the parent `DiscoveryView` so the recent-searches
-/// drop-down can position itself directly below the bar via `.offset(y:)`.
-private struct SearchBarHeightKey: PreferenceKey {
-    static var defaultValue: CGFloat = 60
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = nextValue()
-    }
 }
 
 private struct DiscoveryBrowserDestination: Identifiable, Hashable {
