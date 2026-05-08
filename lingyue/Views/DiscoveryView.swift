@@ -961,10 +961,16 @@ actor DiscoverySearchService {
                 return false
             }
             let html = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .gb_18030_2000) ?? ""
+            // xsw.tw responds with a tiny `info err.` body (≈9 bytes, HTTP 200) for book
+            // IDs that no longer exist in the catalog. Treat that as a takedown so dead
+            // search hits get filtered out the same way as 努努书坊 paywall stubs.
+            let looksLikeXSWInfoErr = data.count < 32
+                && html.lowercased().contains("info err")
             let blocked = html.contains("请下载努努书坊APP")
                 || html.contains("請下載努努書坊APP")
                 || html.contains("由于版权问题不能显示")
                 || html.contains("由於版權問題不能顯示")
+                || looksLikeXSWInfoErr
             paywallProbeCache[key] = blocked
             return blocked
         } catch {
@@ -1525,7 +1531,18 @@ actor DiscoverySearchService {
             let key = "\(title)|\(url.absoluteString)"
             guard !seen.contains(key) else { continue }
             seen.insert(key)
-            results.append(ParsedSourceResult(title: title, summary: summary, url: url.absoluteURL))
+            // xsw.tw's search index still references books that have been removed from the
+            // catalog — those IDs return a 9-byte `info err.` stub at every path. Use the
+            // book detail URL as its own probe so `filterPaywalledHits` drops dead entries
+            // before they reach the user.
+            results.append(
+                ParsedSourceResult(
+                    title: title,
+                    summary: summary,
+                    url: url.absoluteURL,
+                    probeChapterURL: url.absoluteURL
+                )
+            )
         }
 
         return results
