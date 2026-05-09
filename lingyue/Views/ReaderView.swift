@@ -716,7 +716,7 @@ struct ReaderView: View {
         let titleSidePadding = max(leftGroupWidth, rightGroupWidth) + minGap
 
         return VStack {
-            VStack(spacing: 6) {
+            VStack(spacing: 0) {
                 // Row 1 — Book title. Full bar width, centered, semibold so it reads
                 // as the primary identifier; truncates middle for long titles.
                 Text(displayed(activeNovel.title))
