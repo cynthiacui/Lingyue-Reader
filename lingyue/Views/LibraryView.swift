@@ -1,7 +1,93 @@
 import SwiftUI
+import UIKit
 import UniformTypeIdentifiers
 
 private let librarySwipeSpring: Animation = .spring(response: 0.32, dampingFraction: 0.86)
+
+/// Window-level tap/pan catcher used to dismiss an open Library swipe panel from
+/// areas SwiftUI gestures can't reach — the navigation bar (`书架` title), the
+/// search-bar drawer hit area outside the SwiftUI tree, and the toolbar buttons.
+/// `cancelsTouchesInView = false` means the recognizer observes touches without
+/// stealing them, so taps still navigate, the search field still focuses, etc.
+/// Active only while `isActive == true` (i.e. there's an open swipe), so the
+/// recognizer doesn't sit on the window during normal use.
+private struct WindowDismissCatcher: UIViewRepresentable {
+    let isActive: Bool
+    let onDismiss: () -> Void
+
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView()
+        view.isUserInteractionEnabled = false
+        return view
+    }
+
+    func updateUIView(_ uiView: UIView, context: Context) {
+        context.coordinator.onDismiss = onDismiss
+        DispatchQueue.main.async {
+            context.coordinator.sync(window: uiView.window, isActive: isActive)
+        }
+    }
+
+    static func dismantleUIView(_ uiView: UIView, coordinator: Coordinator) {
+        coordinator.detach()
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+        var onDismiss: (() -> Void)?
+        private weak var window: UIWindow?
+        private var tap: UITapGestureRecognizer?
+        private var pan: UIPanGestureRecognizer?
+
+        func sync(window: UIWindow?, isActive: Bool) {
+            guard isActive, let window else {
+                detach()
+                return
+            }
+            // Already attached to the same window — nothing to do.
+            if window === self.window, tap != nil { return }
+            detach()
+            self.window = window
+
+            let tap = UITapGestureRecognizer(target: self, action: #selector(fire))
+            tap.cancelsTouchesInView = false
+            tap.delegate = self
+            window.addGestureRecognizer(tap)
+            self.tap = tap
+
+            let pan = UIPanGestureRecognizer(target: self, action: #selector(handlePan))
+            pan.cancelsTouchesInView = false
+            pan.delegate = self
+            window.addGestureRecognizer(pan)
+            self.pan = pan
+        }
+
+        func detach() {
+            if let tap, let window { window.removeGestureRecognizer(tap) }
+            if let pan, let window { window.removeGestureRecognizer(pan) }
+            tap = nil
+            pan = nil
+            window = nil
+        }
+
+        @objc func fire() { onDismiss?() }
+
+        @objc func handlePan(_ recognizer: UIPanGestureRecognizer) {
+            // Fire once at gesture start so the swipe panel slides closed as soon
+            // as the user begins moving their finger — matches the in-SwiftUI
+            // simultaneousGesture behavior.
+            if recognizer.state == .began { onDismiss?() }
+        }
+
+        // Recognize alongside every other gesture so we don't break scrolling,
+        // button taps, search focus, navigation pops, etc.
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+                               shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
+            true
+        }
+    }
+}
 
 private struct LibraryScrollOffsetKey: PreferenceKey {
     static var defaultValue: CGFloat = 0
@@ -123,6 +209,27 @@ struct LibraryView: View {
                 .onPreferenceChange(LibraryScrollOffsetKey.self) { _ in
                     closeActiveSwipe()
                 }
+                // Mail-style global dismissal: any tap inside the library closes an
+                // open swipe alongside whatever the tapped child does. simultaneous
+                // means action-button taps still fire (the button's own closeSwipe()
+                // is redundant with this but harmless), and a tap on a different row
+                // both closes the swipe and forwards the tap. Excludes the toolbar /
+                // navigation chrome — those use onChange hooks below.
+                .simultaneousGesture(
+                    TapGesture().onEnded { closeActiveSwipe() }
+                )
+                // Vertical drag (scroll attempt) closes too — covers the case where the
+                // content fits the viewport and offset never changes, so the preference
+                // path above can't fire. We only close on predominantly vertical drags
+                // so a horizontal swipe still reaches IconSwipeRow's own gesture.
+                .simultaneousGesture(
+                    DragGesture(minimumDistance: 10)
+                        .onChanged { value in
+                            if abs(value.translation.height) > abs(value.translation.width) {
+                                closeActiveSwipe()
+                            }
+                        }
+                )
                 .contentMargins(.horizontal, horizontalMargin, for: .scrollContent)
                 .safeAreaPadding(.bottom, 12)
             }
@@ -273,6 +380,26 @@ struct LibraryView: View {
         }
         .onChange(of: categoryEditBook?.id) { _, _ in closeActiveSwipe() }
         .onChange(of: isAddingCategory) { _, _ in closeActiveSwipe() }
+        // Toolbar buttons live outside the ScrollView, so the simultaneousGesture
+        // above doesn't see their taps. Closing on sheet presentation keeps the
+        // swipe panel from lingering behind the modal.
+        .onChange(of: isShowingDownloads) { _, _ in closeActiveSwipe() }
+        .onChange(of: bookToOpen?.id) { _, newValue in
+            // Pushing the reader navigation also dismisses any open swipe.
+            if newValue != nil { closeActiveSwipe() }
+        }
+        // Window-level catcher for taps/drags in UIKit-rendered chrome the
+        // SwiftUI simultaneousGesture can't see — navigation title (书架),
+        // search-bar drawer, toolbar items. Only attached while a swipe is
+        // open, so it doesn't sit on the window during normal use.
+        .background(
+            WindowDismissCatcher(
+                isActive: activeSwipeID != nil,
+                onDismiss: { closeActiveSwipe() }
+            )
+            .frame(width: 0, height: 0)
+            .allowsHitTesting(false)
+        )
     }
 
     private func closeActiveSwipe() {
@@ -371,8 +498,31 @@ struct LibraryView: View {
                 }
                 .padding(.top, 8)
                 .padding(.bottom, 18)
+                .background(
+                    GeometryReader { proxy in
+                        Color.clear.preference(
+                            key: LibraryScrollOffsetKey.self,
+                            value: proxy.frame(in: .named("LibrarySearchScroll")).minY
+                        )
+                    }
+                )
             }
         }
+        .coordinateSpace(name: "LibrarySearchScroll")
+        .onPreferenceChange(LibraryScrollOffsetKey.self) { _ in
+            closeActiveSwipe()
+        }
+        .simultaneousGesture(
+            TapGesture().onEnded { closeActiveSwipe() }
+        )
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 10)
+                .onChanged { value in
+                    if abs(value.translation.height) > abs(value.translation.width) {
+                        closeActiveSwipe()
+                    }
+                }
+        )
         .contentMargins(.horizontal, horizontalMargin, for: .scrollContent)
         .safeAreaPadding(.bottom, 12)
     }
@@ -386,16 +536,38 @@ struct LibraryView: View {
                 LazyVGrid(columns: readingColumns, spacing: 10) {
                     ForEach(Array(libraryStore.currentlyReading.prefix(2))) { novel in
                         let actions = downloadActions(for: novel)
-                        BookPressableNavigationRow(
-                            rowID: novel.id,
-                            activeSwipeID: $activeSwipeID,
-                            label: { CompactReadingCard(novel: novel) },
-                            onTap: { bookToOpen = novel },
-                            onLongPress: { presentCategoryEditor(for: novel) },
-                            onDownload: actions.onDownload,
-                            onClearDownloadData: actions.onClearDownloadData,
-                            onDelete: { libraryStore.deleteBook(novel) }
-                        )
+                        CompactReadingCard(novel: novel)
+                            .contentShape(Rectangle())
+                            .onTapGesture { bookToOpen = novel }
+                            .contextMenu {
+                                Button {
+                                    presentCategoryEditor(for: novel)
+                                } label: {
+                                    Label("移动到分类", systemImage: "folder")
+                                }
+
+                                if let onDownload = actions.onDownload {
+                                    Button {
+                                        onDownload()
+                                    } label: {
+                                        Label("下载本书", systemImage: "arrow.down.circle")
+                                    }
+                                }
+
+                                if let onClearDownloadData = actions.onClearDownloadData {
+                                    Button {
+                                        onClearDownloadData()
+                                    } label: {
+                                        Label("清理缓存", systemImage: "arrow.down.circle.dotted")
+                                    }
+                                }
+
+                                Button(role: .destructive) {
+                                    libraryStore.deleteBook(novel)
+                                } label: {
+                                    Label("删除", systemImage: "trash")
+                                }
+                            }
                     }
                 }
             }
@@ -442,6 +614,7 @@ struct LibraryView: View {
                             category: category,
                             namespace: stackNamespace,
                             isExpanded: expandedCategoryID == category.id,
+                            activeSwipeID: $activeSwipeID,
                             onTopTap: { novel in
                                 bookToOpen = novel
                             },
@@ -701,8 +874,9 @@ private struct BookPressableNavigationRow<Label: View>: View {
     let onClearDownloadData: (() -> Void)?
     let onDelete: (() -> Void)?
 
-    private let actionWidth: CGFloat = 86
-    private let actionSpacing: CGFloat = 6
+    private let actionWidth: CGFloat = 62
+    private let actionSpacing: CGFloat = 8
+    private let actionCircleSize: CGFloat = 46
 
     private var actionCount: Int {
         (onClearDownloadData == nil ? 0 : 1) + (onDelete == nil ? 0 : 1)
@@ -723,10 +897,12 @@ private struct BookPressableNavigationRow<Label: View>: View {
         return isOpen ? -revealedWidth : 0
     }
 
-    private var deleteActionOpacity: CGFloat {
+    /// Native iOS swipe-actions slide in anchored to the row's trailing edge — they
+    /// don't fade in. Action HStack is parked off-screen to the right when idle and
+    /// pulled in 1:1 with the gesture.
+    private var actionTrailingInset: CGFloat {
         guard revealedWidth > 0 else { return 0 }
-        let progress = min(1, max(0, abs(displayedOffset) / (revealedWidth * 0.25)))
-        return progress
+        return max(0, revealedWidth + displayedOffset)
     }
 
     init(
@@ -758,17 +934,11 @@ private struct BookPressableNavigationRow<Label: View>: View {
                             closeSwipe()
                             onClearDownloadData()
                         } label: {
-                            VStack(spacing: 4) {
-                                Image(systemName: "arrow.down.circle")
-                                    .font(.system(size: 17, weight: .bold))
-                                Text("清理缓存")
-                                    .font(.system(size: 12, weight: .bold))
-                            }
-                            .foregroundStyle(Color.white)
-                            .frame(width: actionWidth)
-                            .frame(maxHeight: .infinity)
-                            .background(theme.accent)
-                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                            mailStyleAction(
+                                icon: "trash.slash.fill",
+                                label: "清理缓存",
+                                background: theme.accent
+                            )
                         }
                         .buttonStyle(.plain)
                     }
@@ -779,23 +949,17 @@ private struct BookPressableNavigationRow<Label: View>: View {
                                 onDelete()
                             }
                         } label: {
-                            VStack(spacing: 4) {
-                                Image(systemName: "trash")
-                                    .font(.system(size: 17, weight: .bold))
-                                Text("删除")
-                                    .font(.system(size: 12, weight: .bold))
-                            }
-                            .foregroundStyle(Color.white)
-                            .frame(width: actionWidth)
-                            .frame(maxHeight: .infinity)
-                            .background(Color.red)
-                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                            mailStyleAction(
+                                icon: "trash.fill",
+                                label: "删除",
+                                background: Color.red
+                            )
                         }
                         .buttonStyle(.plain)
                     }
                 }
                 .frame(width: revealedWidth)
-                .opacity(deleteActionOpacity)
+                .offset(x: actionTrailingInset)
                 .allowsHitTesting(isOpen)
                 .zIndex(1)
             }
@@ -805,11 +969,16 @@ private struct BookPressableNavigationRow<Label: View>: View {
                 .offset(x: displayedOffset)
                 .contentShape(Rectangle())
                 .onTapGesture {
-                    if activeSwipeID != nil {
+                    if isOpen {
+                        // Tapping the body of the row whose swipe is open just closes it,
+                        // matching iOS Mail. Don't push into the reader from the open row.
                         withAnimation(librarySwipeSpring) {
                             activeSwipeID = nil
                         }
                     } else {
+                        // Tapping a different row both opens the book and closes any active
+                        // swipe (the LibraryView's simultaneousGesture handles the close in
+                        // parallel — Mail behavior).
                         onTap()
                     }
                 }
@@ -853,6 +1022,320 @@ private struct BookPressableNavigationRow<Label: View>: View {
                 isDragging = false
             }
         }
+    }
+
+    private var swipeGesture: some Gesture {
+        DragGesture(minimumDistance: 20)
+            .onChanged { value in
+                guard actionCount > 0 else { return }
+                guard abs(value.translation.width) > abs(value.translation.height) else { return }
+
+                if !isDragging {
+                    isDragging = true
+                    if let active = activeSwipeID, active != rowID {
+                        withAnimation(librarySwipeSpring) {
+                            activeSwipeID = nil
+                        }
+                    }
+                }
+
+                let baseOffset: CGFloat = isOpen ? -revealedWidth : 0
+                let raw = baseOffset + value.translation.width
+                dragOffset = rubberBanded(raw)
+            }
+            .onEnded { value in
+                guard actionCount > 0 else {
+                    isDragging = false
+                    return
+                }
+                let isHorizontal = abs(value.translation.width) > abs(value.translation.height)
+                guard isHorizontal else {
+                    isDragging = false
+                    return
+                }
+
+                let velocity = value.predictedEndTranslation.width - value.translation.width
+                let projected = dragOffset + velocity * 0.25
+
+                let shouldOpen: Bool
+                if isOpen {
+                    shouldOpen = projected < -revealedWidth * 0.5
+                } else {
+                    shouldOpen = projected < -revealedWidth * 0.4
+                }
+
+                withAnimation(librarySwipeSpring) {
+                    activeSwipeID = shouldOpen ? rowID : (isOpen ? nil : activeSwipeID)
+                    isDragging = false
+                }
+            }
+    }
+
+    private func closeSwipe() {
+        withAnimation(librarySwipeSpring) {
+            if isOpen { activeSwipeID = nil }
+            isDragging = false
+        }
+    }
+
+    /// Mail-style action: a colored circle with a centered SF symbol, with a short
+    /// label below in secondary text color.
+    @ViewBuilder
+    private func mailStyleAction(icon: String, label: String, background: Color) -> some View {
+        VStack(spacing: 4) {
+            ZStack {
+                Circle()
+                    .fill(background)
+                    .frame(width: actionCircleSize, height: actionCircleSize)
+                Image(systemName: icon)
+                    .font(.system(size: 17, weight: .bold))
+                    .foregroundStyle(Color.white)
+            }
+            Text(label)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(theme.secondaryText)
+                .lineLimit(1)
+        }
+        .frame(width: actionWidth)
+        .frame(maxHeight: .infinity)
+        .contentShape(Rectangle())
+    }
+
+    private func rubberBanded(_ raw: CGFloat) -> CGFloat {
+        if raw <= 0 && raw >= -revealedWidth { return raw }
+        let limit: CGFloat = 140
+        if raw > 0 {
+            return rubberBandValue(raw, range: limit)
+        }
+        let over = -revealedWidth - raw
+        return -revealedWidth - rubberBandValue(over, range: limit)
+    }
+
+    private func rubberBandValue(_ x: CGFloat, range: CGFloat) -> CGFloat {
+        let constant: CGFloat = 0.55
+        return (1 - 1 / (x * constant / range + 1)) * range
+    }
+}
+
+/// Icon-only swipe wrapper used by surfaces where text labels would crowd the row
+/// (the category popup and the wallet front card). Surfaces all four book actions —
+/// move-to-category, download, clear cache, delete — driven by optional closures so
+/// download/clear show up only when applicable for the book's current state.
+private struct IconSwipeRow<Label: View>: View {
+    @Environment(\.appTheme) private var theme
+    @State private var dragOffset: CGFloat = 0
+    @State private var isDragging = false
+
+    let rowID: UUID
+    @Binding var activeSwipeID: UUID?
+    let label: Label
+    let onTap: () -> Void
+    let onMoveToCategory: (() -> Void)?
+    let onDownload: (() -> Void)?
+    let onClearDownloadData: (() -> Void)?
+    let onDelete: (() -> Void)?
+
+    /// Mail-style swipe actions — each "button" is a tap target with a colored circle
+    /// (icon) on top and a short label below. Width is wide enough for 4 CJK chars.
+    private let actionWidth: CGFloat = 62
+    private let actionSpacing: CGFloat = 8
+    private let actionCircleSize: CGFloat = 38
+
+    init(
+        rowID: UUID,
+        activeSwipeID: Binding<UUID?>,
+        @ViewBuilder label: () -> Label,
+        onTap: @escaping () -> Void,
+        onMoveToCategory: (() -> Void)? = nil,
+        onDownload: (() -> Void)? = nil,
+        onClearDownloadData: (() -> Void)? = nil,
+        onDelete: (() -> Void)? = nil
+    ) {
+        self.rowID = rowID
+        self._activeSwipeID = activeSwipeID
+        self.label = label()
+        self.onTap = onTap
+        self.onMoveToCategory = onMoveToCategory
+        self.onDownload = onDownload
+        self.onClearDownloadData = onClearDownloadData
+        self.onDelete = onDelete
+    }
+
+    private var actionCount: Int {
+        (onMoveToCategory == nil ? 0 : 1) +
+        (onDownload == nil ? 0 : 1) +
+        (onClearDownloadData == nil ? 0 : 1) +
+        (onDelete == nil ? 0 : 1)
+    }
+
+    private var revealedWidth: CGFloat {
+        guard actionCount > 0 else { return 0 }
+        return CGFloat(actionCount) * actionWidth + CGFloat(actionCount - 1) * actionSpacing
+    }
+
+    private var isOpen: Bool { activeSwipeID == rowID }
+
+    private var displayedOffset: CGFloat {
+        guard actionCount > 0 else { return 0 }
+        if isDragging { return dragOffset }
+        return isOpen ? -revealedWidth : 0
+    }
+
+    /// Native iOS swipe-actions slide in from the trailing edge anchored to the row's
+    /// trailing edge — they don't fade in, they're pulled into view by the gesture.
+    /// `displayedOffset` is negative when swiping left, so this clamps the actions to
+    /// the right of the trailing edge until the row starts moving, then 1:1 follows
+    /// the row in.
+    private var actionTrailingInset: CGFloat {
+        guard revealedWidth > 0 else { return 0 }
+        return max(0, revealedWidth + displayedOffset)
+    }
+
+    var body: some View {
+        ZStack(alignment: .trailing) {
+            if actionCount > 0 {
+                HStack(spacing: actionSpacing) {
+                    if let onMoveToCategory {
+                        actionButton(
+                            icon: "folder.fill",
+                            label: "分类",
+                            background: theme.secondaryText.opacity(0.85)
+                        ) {
+                            closeSwipe()
+                            onMoveToCategory()
+                        }
+                    }
+                    if let onDownload {
+                        actionButton(
+                            icon: "arrow.down",
+                            label: "下载",
+                            background: theme.accent
+                        ) {
+                            closeSwipe()
+                            onDownload()
+                        }
+                    }
+                    if let onClearDownloadData {
+                        actionButton(
+                            icon: "trash.slash.fill",
+                            label: "清理缓存",
+                            background: theme.accent.opacity(0.65)
+                        ) {
+                            closeSwipe()
+                            onClearDownloadData()
+                        }
+                    }
+                    if let onDelete {
+                        actionButton(
+                            icon: "trash.fill",
+                            label: "删除",
+                            background: Color.red,
+                            role: .destructive
+                        ) {
+                            withAnimation(librarySwipeSpring) {
+                                onDelete()
+                            }
+                        }
+                    }
+                }
+                .frame(width: revealedWidth)
+                .offset(x: actionTrailingInset)
+                .allowsHitTesting(isOpen)
+                .zIndex(1)
+            }
+
+            label
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .offset(x: displayedOffset)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    if isOpen {
+                        // Tapping the body of the row whose swipe is open just closes it,
+                        // matching iOS Mail. Don't push into the reader from the open row.
+                        withAnimation(librarySwipeSpring) {
+                            activeSwipeID = nil
+                        }
+                    } else {
+                        // Tapping a different row both opens the book and closes any active
+                        // swipe (LibraryView's simultaneousGesture handles the close in
+                        // parallel — Mail behavior).
+                        onTap()
+                    }
+                }
+                .contextMenu {
+                    if let onMoveToCategory {
+                        Button {
+                            onMoveToCategory()
+                        } label: {
+                            SwiftUI.Label("移动到分类", systemImage: "folder")
+                        }
+                    }
+                    if let onDownload {
+                        Button {
+                            onDownload()
+                        } label: {
+                            SwiftUI.Label("下载本书", systemImage: "arrow.down.circle")
+                        }
+                    }
+                    if let onClearDownloadData {
+                        Button {
+                            onClearDownloadData()
+                        } label: {
+                            SwiftUI.Label("清理缓存", systemImage: "arrow.down.circle.dotted")
+                        }
+                    }
+                    if let onDelete {
+                        Button(role: .destructive) {
+                            onDelete()
+                        } label: {
+                            SwiftUI.Label("删除", systemImage: "trash")
+                        }
+                    }
+                }
+                .simultaneousGesture(swipeGesture)
+                .zIndex(0)
+        }
+        .clipped()
+        .onChange(of: activeSwipeID) { _, newValue in
+            if newValue != rowID && isDragging {
+                isDragging = false
+            }
+        }
+    }
+
+    private func actionButton(
+        icon: String,
+        label: String,
+        background: Color,
+        role: ButtonRole? = nil,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(role: role, action: action) {
+            ZStack {
+                // Circle anchored to the row's vertical center.
+                Circle()
+                    .fill(background)
+                    .frame(width: actionCircleSize, height: actionCircleSize)
+                    .overlay {
+                        Image(systemName: icon)
+                            .font(.system(size: 15, weight: .bold))
+                            .foregroundStyle(Color.white)
+                    }
+
+                // Label trails the circle; doesn't have to be centered to the row.
+                // Offset = circle radius + small gap + half the text line height.
+                Text(label)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(theme.secondaryText)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                    .offset(y: actionCircleSize / 2 + 4 + 7)
+            }
+            .frame(width: actionWidth)
+            .frame(maxHeight: .infinity)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     private var swipeGesture: some Gesture {
@@ -1217,6 +1700,7 @@ private struct StackedCategoryShelf: View {
     let category: LibraryCategory
     let namespace: Namespace.ID
     let isExpanded: Bool
+    @Binding var activeSwipeID: UUID?
     let onTopTap: (Novel) -> Void
     let onExpand: () -> Void
     let onMoveCategory: (Novel) -> Void
@@ -1264,31 +1748,54 @@ private struct StackedCategoryShelf: View {
                 // correct card (.offset() alone keeps every card at y=0 in the layout system,
                 // so taps always go to the topmost zIndex card no matter where you actually
                 // press).
+                let frontID = visible.first?.id
+                let isSwipeActive = frontID != nil && activeSwipeID == frontID
                 VStack(spacing: -(cardHeight - peekOffset)) {
                     ForEach(Array(visible.enumerated()), id: \.element.id) { index, novel in
-                        StackBookCard(novel: novel)
-                            .frame(height: cardHeight)
-                            .matchedGeometryEffect(id: novel.id, in: namespace, isSource: !isExpanded)
-                            // Keep peek cards close to full width so the visible sliver
-                            // remains an easy tap target (was 0.012, which made a 2-card
-                            // stack's lone peek visibly narrower and easy to misclick).
-                            .scaleEffect(1 - CGFloat(index) * 0.005, anchor: .top)
-                            .zIndex(Double(maxVisible - index))
+                        if index == 0 {
+                            let actions = bookDownloadActions(for: novel, manager: downloadManager)
+                            IconSwipeRow(
+                                rowID: novel.id,
+                                activeSwipeID: $activeSwipeID,
+                                label: {
+                                    StackBookCard(novel: novel)
+                                        .frame(height: cardHeight)
+                                        .matchedGeometryEffect(id: novel.id, in: namespace, isSource: !isExpanded)
+                                },
+                                onTap: { onTopTap(novel) },
+                                onMoveToCategory: { onMoveCategory(novel) },
+                                onDownload: actions.onDownload == nil ? nil : { onDownload(novel) },
+                                onClearDownloadData: actions.onClearDownloadData == nil ? nil : { onClearDownloadData(novel) },
+                                onDelete: { onDelete(novel) }
+                            )
+                            .zIndex(Double(maxVisible))
                             .opacity(isExpanded ? 0 : 1)
                             .allowsHitTesting(!isExpanded)
-                            .contentShape(Rectangle())
-                            .onTapGesture {
-                                if index == 0 {
-                                    onTopTap(novel)
-                                } else {
+                        } else {
+                            StackBookCard(novel: novel)
+                                .frame(height: cardHeight)
+                                .matchedGeometryEffect(id: novel.id, in: namespace, isSource: !isExpanded)
+                                // Keep peek cards close to full width so the visible sliver
+                                // remains an easy tap target (was 0.012, which made a 2-card
+                                // stack's lone peek visibly narrower and easy to misclick).
+                                .scaleEffect(1 - CGFloat(index) * 0.005, anchor: .top)
+                                .zIndex(Double(maxVisible - index))
+                                // Fade peek cards while a swipe is open so the action
+                                // labels under the front card don't compete visually
+                                // with the next card's title/last-chapter line.
+                                .opacity(isExpanded ? 0 : (isSwipeActive ? 0.25 : 1))
+                                .allowsHitTesting(!isExpanded && !isSwipeActive)
+                                .contentShape(Rectangle())
+                                .onTapGesture {
                                     onExpand()
                                 }
-                            }
-                            .contextMenu {
-                                bookContextMenuButtons(for: novel)
-                            }
+                                .contextMenu {
+                                    bookContextMenuButtons(for: novel)
+                                }
+                        }
                     }
                 }
+                .animation(librarySwipeSpring, value: isSwipeActive)
             }
         }
     }
@@ -1408,6 +1915,7 @@ private struct BookMetadataLine: View {
 private struct ExpandedCategoryOverlay: View {
     @Environment(\.appTheme) private var theme
     @EnvironmentObject private var downloadManager: BookDownloadManager
+    @State private var activeSwipeID: UUID?
     let category: LibraryCategory
     let namespace: Namespace.ID
     let onDismiss: () -> Void
@@ -1460,52 +1968,58 @@ private struct ExpandedCategoryOverlay: View {
                 }
                 .padding(.horizontal, 18)
                 .padding(.top, 16)
+                // Tapping the header area closes any open swipe — Mail-style: any
+                // interaction that isn't an action button hides the actions.
+                .contentShape(Rectangle())
+                .onTapGesture { closeActiveSwipe() }
 
                 ScrollView {
                     LazyVStack(spacing: 8) {
                         ForEach(sortedNovels) { novel in
-                            StackBookCard(novel: novel)
-                                .matchedGeometryEffect(id: novel.id, in: namespace, isSource: true)
-                                .contentShape(Rectangle())
-                                .onTapGesture {
-                                    onSelect(novel)
-                                }
-                                .contextMenu {
-                                    let actions = bookDownloadActions(for: novel, manager: downloadManager)
-
-                                    Button {
-                                        onLongPress(novel)
-                                    } label: {
-                                        Label("移动到分类", systemImage: "folder")
-                                    }
-
-                                    if actions.onDownload != nil {
-                                        Button {
-                                            onDownload(novel)
-                                        } label: {
-                                            Label("下载本书", systemImage: "arrow.down.circle")
-                                        }
-                                    }
-
-                                    if actions.onClearDownloadData != nil {
-                                        Button {
-                                            onClearDownloadData(novel)
-                                        } label: {
-                                            Label("清理缓存", systemImage: "arrow.down.circle.dotted")
-                                        }
-                                    }
-
-                                    Button(role: .destructive) {
-                                        onDelete(novel)
-                                    } label: {
-                                        Label("删除", systemImage: "trash")
-                                    }
-                                }
+                            let actions = bookDownloadActions(for: novel, manager: downloadManager)
+                            IconSwipeRow(
+                                rowID: novel.id,
+                                activeSwipeID: $activeSwipeID,
+                                label: {
+                                    StackBookCard(novel: novel)
+                                        .matchedGeometryEffect(id: novel.id, in: namespace, isSource: true)
+                                },
+                                onTap: { onSelect(novel) },
+                                onMoveToCategory: { onLongPress(novel) },
+                                onDownload: actions.onDownload == nil ? nil : { onDownload(novel) },
+                                onClearDownloadData: actions.onClearDownloadData == nil ? nil : { onClearDownloadData(novel) },
+                                onDelete: { onDelete(novel) }
+                            )
                         }
                     }
                     .padding(.horizontal, 16)
                     .padding(.vertical, 8)
+                    .background(
+                        GeometryReader { proxy in
+                            Color.clear.preference(
+                                key: LibraryScrollOffsetKey.self,
+                                value: proxy.frame(in: .named("OverlayScroll")).minY
+                            )
+                        }
+                    )
                 }
+                .coordinateSpace(name: "OverlayScroll")
+                .onPreferenceChange(LibraryScrollOffsetKey.self) { _ in
+                    closeActiveSwipe()
+                }
+                // Mail-style global dismissal inside the popup: tap or vertical drag
+                // anywhere closes the open swipe alongside whatever the child does.
+                .simultaneousGesture(
+                    TapGesture().onEnded { closeActiveSwipe() }
+                )
+                .simultaneousGesture(
+                    DragGesture(minimumDistance: 10)
+                        .onChanged { value in
+                            if abs(value.translation.height) > abs(value.translation.width) {
+                                closeActiveSwipe()
+                            }
+                        }
+                )
             }
             .frame(maxWidth: .infinity)
             .background(theme.background)
@@ -1514,6 +2028,14 @@ private struct ExpandedCategoryOverlay: View {
             .padding(.horizontal, 16)
             .padding(.top, 60)
             .padding(.bottom, 32)
+        }
+        .onChange(of: category.novels.count) { _, _ in closeActiveSwipe() }
+    }
+
+    private func closeActiveSwipe() {
+        guard activeSwipeID != nil else { return }
+        withAnimation(librarySwipeSpring) {
+            activeSwipeID = nil
         }
     }
 }

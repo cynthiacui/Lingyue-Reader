@@ -189,6 +189,11 @@ struct DiscoveryView: View {
         let sources = DiscoverySourceCatalog.searchableSources
             .sorted { discoveryPinyinSortKey($0.name) < discoveryPinyinSortKey($1.name) }
 
+        let columns = [
+            GridItem(.flexible(), spacing: 10),
+            GridItem(.flexible(), spacing: 10)
+        ]
+
         return VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .lastTextBaseline, spacing: 10) {
                 Text("书库")
@@ -205,42 +210,80 @@ struct DiscoveryView: View {
                 .foregroundStyle(theme.secondaryText)
                 .padding(.bottom, 4)
 
-            VStack(spacing: 0) {
+            LazyVGrid(columns: columns, spacing: 10) {
                 ForEach(sources) { source in
-                    sourceRow(source)
-
-                    if source.id != sources.last?.id {
-                        Divider()
-                            .overlay(theme.secondaryText.opacity(0.18))
-                    }
+                    sourceCard(source)
                 }
             }
         }
     }
 
-    private func sourceRow(_ source: DiscoverySource) -> some View {
-        Button {
+    private func sourceCard(_ source: DiscoverySource) -> some View {
+        let monogram = sourceMonogram(for: source.name)
+        let tint = sourceTint(for: source.name)
+
+        return Button {
             openSource(source)
         } label: {
-            HStack(alignment: .top, spacing: 12) {
-                Text(source.name)
-                    .font(.system(size: 19, weight: .bold, design: .rounded))
-                    .foregroundStyle(theme.primaryText)
-                    .multilineTextAlignment(.leading)
-                    .lineLimit(2)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+            HStack(spacing: 10) {
+                ZStack {
+                    Circle()
+                        .fill(tint.opacity(0.16))
+                        .frame(width: 32, height: 32)
+                    Text(monogram)
+                        .font(.system(size: monogram.count > 1 ? 12 : 15, weight: .bold, design: .rounded))
+                        .foregroundStyle(tint)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                }
 
-                Text(source.tagline)
-                    .font(.system(size: 15))
-                    .foregroundStyle(theme.secondaryText)
-                    .multilineTextAlignment(.trailing)
-                    .lineLimit(2)
-                    .frame(width: dynamicTypeSize.isAccessibilitySize ? 150 : 172, alignment: .trailing)
+                Text(source.name)
+                    .font(.system(size: 15, weight: .semibold, design: .rounded))
+                    .foregroundStyle(theme.primaryText)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .padding(.vertical, 14)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(theme.cardBackground)
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .shadow(color: theme.cardShadow, radius: 6, x: 0, y: 3)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+    }
+
+    /// Pulls a 1–2 character "monogram" off the front of a source name. ASCII/digit
+    /// runs (e.g. "52书库", "ESJ轻小说") get up to 2 chars so the avatar carries enough
+    /// signal; CJK names get the leading character only.
+    private func sourceMonogram(for name: String) -> String {
+        guard let first = name.first else { return "" }
+        let isAsciiAlphanumeric: (Character) -> Bool = { ch in
+            ch.isASCII && (ch.isLetter || ch.isNumber)
+        }
+        if isAsciiAlphanumeric(first) {
+            return String(name.prefix(while: isAsciiAlphanumeric).prefix(2))
+        }
+        return String(first)
+    }
+
+    /// Stable per-source accent — uses unicode-scalar sum so the same name always
+    /// maps to the same swatch across launches (Swift's `hashValue` is randomized).
+    private func sourceTint(for name: String) -> Color {
+        let palette: [Color] = [
+            Color(red: 0.78, green: 0.41, blue: 0.42),
+            Color(red: 0.36, green: 0.55, blue: 0.78),
+            Color(red: 0.30, green: 0.62, blue: 0.55),
+            Color(red: 0.74, green: 0.54, blue: 0.30),
+            Color(red: 0.55, green: 0.40, blue: 0.66),
+            Color(red: 0.46, green: 0.56, blue: 0.40),
+            Color(red: 0.72, green: 0.46, blue: 0.62),
+            Color(red: 0.40, green: 0.50, blue: 0.62)
+        ]
+        let sum = name.unicodeScalars.reduce(0) { $0 &+ Int($1.value) }
+        return palette[abs(sum) % palette.count]
     }
 
     private func triggerSearch() {

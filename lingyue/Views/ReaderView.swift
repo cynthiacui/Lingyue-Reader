@@ -589,43 +589,86 @@ struct ReaderView: View {
         let sourceLabel = BookSourceRegistry.displayName(for: activeNovel.sourceURLString)
         let chapterURL = chapterBrowserURL(for: currentChapter)
 
-        return VStack {
-            HStack(spacing: 0) {
-                Button {
-                    dismiss()
-                } label: {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 19, weight: .semibold))
-                        .frame(width: 52, height: 52)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
+        // Layer a screen-centered title over the button row so the chapter / source
+        // labels sit at the actual midpoint of the screen instead of the midpoint
+        // of the gap between the (wider) left group and the (narrower) right group.
+        // Horizontal padding on the title clamps it so it can never get closer than
+        // `minGap` to either button group — the "minimum gap is the baseline" rule.
+        let backWidth: CGFloat = 52
+        let globeWidth: CGFloat = chapterURL != nil ? 40 : 0
+        let switcherWidth: CGFloat = 40
+        let fontWidth: CGFloat = 44
+        let listWidth: CGFloat = 52
+        let leftGroupWidth = backWidth + globeWidth + switcherWidth
+        let rightGroupWidth = fontWidth + listWidth
+        let minGap: CGFloat = 8
+        let titleSidePadding = max(leftGroupWidth, rightGroupWidth) + minGap
 
-                if let chapterURL {
+        return VStack {
+            ZStack {
+                HStack(spacing: 0) {
                     Button {
-                        browserDestination = chapterURL
+                        dismiss()
                     } label: {
-                        Image(systemName: "globe")
-                            .font(.system(size: 18, weight: .semibold))
-                            .frame(width: 40, height: 52)
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 19, weight: .semibold))
+                            .frame(width: backWidth, height: 52)
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel("在浏览器中查看")
-                }
 
-                Button {
-                    showSourceSwitcher = true
-                } label: {
-                    Image(systemName: "arrow.left.arrow.right")
-                        .font(.system(size: 17, weight: .semibold))
-                        .frame(width: 40, height: 52)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("切换书源")
+                    if let chapterURL {
+                        Button {
+                            browserDestination = chapterURL
+                        } label: {
+                            Image(systemName: "globe")
+                                .font(.system(size: 18, weight: .semibold))
+                                .frame(width: globeWidth, height: 52)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("在浏览器中查看")
+                    }
 
-                Spacer()
+                    Button {
+                        showSourceSwitcher = true
+                    } label: {
+                        Image(systemName: "arrow.left.arrow.right")
+                            .font(.system(size: 17, weight: .semibold))
+                            .frame(width: switcherWidth, height: 52)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("切换书源")
+
+                    Spacer()
+
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.18)) {
+                            showPreferences = true
+                            showChapterPicker = false
+                        }
+                    } label: {
+                        Image(systemName: "textformat.size")
+                            .font(.system(size: 19, weight: .semibold))
+                            .frame(width: fontWidth, height: 52)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+
+                    Button {
+                        withAnimation(ModalStyle.presentationAnimation) {
+                            showChapterPicker = true
+                            showPreferences = false
+                        }
+                    } label: {
+                        Image(systemName: "list.bullet")
+                            .font(.system(size: 19, weight: .semibold))
+                            .frame(width: listWidth, height: 52)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
 
                 VStack(spacing: 2) {
                     Text(currentPage.chapterTitle)
@@ -640,34 +683,8 @@ struct ReaderView: View {
                             .lineLimit(1)
                     }
                 }
-
-                Spacer()
-
-                Button {
-                    withAnimation(.easeInOut(duration: 0.18)) {
-                        showPreferences = true
-                        showChapterPicker = false
-                    }
-                } label: {
-                    Image(systemName: "textformat.size")
-                        .font(.system(size: 19, weight: .semibold))
-                        .frame(width: 44, height: 52)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-
-                Button {
-                    withAnimation(ModalStyle.presentationAnimation) {
-                        showChapterPicker = true
-                        showPreferences = false
-                    }
-                } label: {
-                    Image(systemName: "list.bullet")
-                        .font(.system(size: 19, weight: .semibold))
-                        .frame(width: 52, height: 52)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
+                .padding(.horizontal, titleSidePadding)
+                .allowsHitTesting(false)
             }
             .foregroundStyle(pageForeground)
             .padding(.horizontal, 8)
