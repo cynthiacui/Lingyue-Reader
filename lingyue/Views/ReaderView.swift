@@ -1739,7 +1739,10 @@ struct ReaderView: View {
         }
 
         if !chapter.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return chapter.content
+            return stripLeadingTitleRepeats(
+                in: chapter.content,
+                chapterTitle: chapter.title
+            )
         }
 
         guard chapter.sourceURLString != nil else {
@@ -1758,7 +1761,10 @@ struct ReaderView: View {
         // disk directly is fast enough to do inline on the render pass.
         if let cached = ChapterContentCache.diskCachedChapter(for: chapter),
            !cached.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return cached.content
+            return stripLeadingTitleRepeats(
+                in: cached.content,
+                chapterTitle: chapter.title
+            )
         }
 
         if loadingChapterKeys.contains(key) {
@@ -1843,7 +1849,11 @@ struct ReaderView: View {
         let textSize = lastKnownTextSize
         guard textSize.width > 0, textSize.height > 0 else { return }
 
-        let displayedContent = displayed(chapter.content)
+        let strippedContent = stripLeadingTitleRepeats(
+            in: chapter.content,
+            chapterTitle: chapter.title
+        )
+        let displayedContent = displayed(strippedContent)
         guard !displayedContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
 
         let signature = paginationSignature(
@@ -1967,6 +1977,61 @@ struct ReaderView: View {
 
         let remainder = body.dropFirst(trimmedOld.count)
         return String(leadingWhitespace) + newTitle + String(remainder)
+    }
+
+    /// Drop leading lines from scraped chapter content that just repeat the book title,
+    /// the chapter title, or the two concatenated. Many sources (黄金屋, 笔趣阁 forks,
+    /// etc.) prepend the chapter header to the body, which is redundant once the
+    /// reader chrome already shows both. We compare against the live `activeNovel`
+    /// title — and the catalog `chapterTitle` rather than `chapter.title` — so this
+    /// also strips the source's own header even when it doesn't match the catalog
+    /// title verbatim.
+    private func stripLeadingTitleRepeats(in content: String, chapterTitle: String) -> String {
+        let bookTitle = activeNovel.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let chapter = chapterTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // Build the set of leading-line variants worth stripping. Combinations cover
+        // "{book} {chapter}" and "{chapter} {book}" with optional separator whitespace.
+        var candidates: Set<String> = []
+        if !bookTitle.isEmpty { candidates.insert(bookTitle) }
+        if !chapter.isEmpty { candidates.insert(chapter) }
+        if !bookTitle.isEmpty && !chapter.isEmpty {
+            candidates.insert("\(bookTitle) \(chapter)")
+            candidates.insert("\(bookTitle)\(chapter)")
+            candidates.insert("\(chapter) \(bookTitle)")
+            candidates.insert("\(chapter)\(bookTitle)")
+        }
+        guard !candidates.isEmpty else { return content }
+
+        // Inspect at most the first 4 lines — anything further in is unlikely to be a
+        // header repeat and we don't want to accidentally swallow real story text.
+        var lines = content.components(separatedBy: "\n")
+        var droppedAny = false
+        var inspected = 0
+        while inspected < 4, let first = lines.first {
+            let trimmed = first.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.isEmpty {
+                // Blank line at the top; just drop it and keep scanning.
+                lines.removeFirst()
+                droppedAny = true
+                continue
+            }
+            if candidates.contains(trimmed) {
+                lines.removeFirst()
+                droppedAny = true
+                inspected += 1
+                continue
+            }
+            break
+        }
+
+        guard droppedAny else { return content }
+        // Also clean any blank lines left behind at the new top.
+        while let first = lines.first,
+              first.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            lines.removeFirst()
+        }
+        return lines.joined(separator: "\n")
     }
 
     private func isChapterDownloaded(_ chapter: NovelChapter) -> Bool {
