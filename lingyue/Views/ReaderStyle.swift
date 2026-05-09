@@ -113,9 +113,12 @@ extension ReadingTheme {
 
     var pageBackground: Color {
         switch self {
-        case .paper: return Color(red: 0.9333, green: 0.9804, blue: 0.9333)
+        // Soft warm cream — closer to a real paperback page. The light-green that
+        // used to live here was actually the eye-strain-reducing tint, and now
+        // labels itself correctly under `.mint` ("护眼") below.
+        case .paper: return Color(red: 0.9686, green: 0.9529, blue: 0.9098)
         case .warm:  return Color(red: 0.9725, green: 0.9373, blue: 0.8510)
-        case .mint:  return Color(red: 0.8980, green: 0.9294, blue: 0.8471)
+        case .mint:  return Color(red: 0.9333, green: 0.9804, blue: 0.9333)
         case .sky:   return Color(red: 0.85, green: 0.91, blue: 0.96)
         case .night: return Color(red: 0.08, green: 0.08, blue: 0.075)
         }
