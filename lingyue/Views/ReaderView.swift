@@ -56,11 +56,39 @@ struct ReaderView: View {
     /// render after rotation when its parent uses `.ignoresSafeArea()`, so the previously-visible
     /// page renders with the wrong top padding until the next state change kicks a re-render.
     @State private var rotationLayoutVersion = 0
+    /// Max-seen safe-area top/bottom insets. Toggling `.statusBarHidden(!showControls)`
+    /// shrinks `safeAreaInsets.top` on devices where the status bar contributes to the
+    /// inset (older iPhones, iPad in some configs), which would otherwise reflow the page
+    /// content by a few points on every controls-toggle. Stabilizing against the maximum
+    /// observed inset matches how Apple Books / Kindle hold their text steady while the
+    /// system bar fades in and out.
+    @State private var stableSafeAreaTop: CGFloat
+    @State private var stableSafeAreaBottom: CGFloat
     /// Page index at the moment a slide/pageCurl drag begins, so we know whether the user
     /// started the swipe at a chapter boundary. By `.onEnded` time UIPageViewController may
     /// have already committed an in-chapter turn and mutated `currentChapterPageIndex`.
     @State private var boundarySwipeStartPageIndex: Int?
     private let paginationCacheCapacity = 24
+
+    init(novel: Novel) {
+        self.novel = novel
+        // Seed stabilized insets from the active key window *before* the first body
+        // evaluation. The previous screen's status bar is still visible at this moment,
+        // so the window's `safeAreaInsets` reflect the with-status-bar maximum — the
+        // value pagination should lock onto. Without this, first render would compute
+        // textSize against `proxy.safeAreaInsets = 0`, then re-paginate a frame later
+        // once the inset settled, causing a visible content shift.
+        let insets = Self.currentKeyWindowSafeAreaInsets()
+        _stableSafeAreaTop = State(initialValue: insets.top)
+        _stableSafeAreaBottom = State(initialValue: insets.bottom)
+    }
+
+    private static func currentKeyWindowSafeAreaInsets() -> UIEdgeInsets {
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        let window = scenes.flatMap(\.windows).first(where: { $0.isKeyWindow })
+            ?? scenes.first?.windows.first
+        return window?.safeAreaInsets ?? .zero
+    }
 
     private var activeNovel: Novel {
         repairedNovel ?? novel
@@ -141,7 +169,21 @@ struct ReaderView: View {
 
     var body: some View {
         GeometryReader { proxy in
-            let textSize = readerTextSize(containerSize: proxy.size, safeAreaInsets: proxy.safeAreaInsets)
+            // Pin the insets we feed into layout to the maximum value we've observed so
+            // far. The page text reads against `stableInsets`, so toggling the system
+            // status bar (which mutates `proxy.safeAreaInsets.top` on non-notched devices)
+            // never reflows the body. Chrome that visually tracks the status bar — the
+            // controls top bar, the readerHeader, the bottom bar — also reads the stable
+            // value, so they sit where the status bar would be even when it's hidden.
+            let stableTop = max(stableSafeAreaTop, proxy.safeAreaInsets.top)
+            let stableBottom = max(stableSafeAreaBottom, proxy.safeAreaInsets.bottom)
+            let stableInsets = EdgeInsets(
+                top: stableTop,
+                leading: proxy.safeAreaInsets.leading,
+                bottom: stableBottom,
+                trailing: proxy.safeAreaInsets.trailing
+            )
+            let textSize = readerTextSize(containerSize: proxy.size, safeAreaInsets: stableInsets)
             let pages = activeVisiblePages()
             let currentPage = currentPage(in: pages)
             let pageSignature = paginationSignature(textSize: textSize)
@@ -159,31 +201,31 @@ struct ReaderView: View {
                         currentPage: currentPage,
                         pages: pages,
                         textSize: textSize,
-                        safeAreaInsets: proxy.safeAreaInsets,
+                        safeAreaInsets: stableInsets,
                         containerSize: proxy.size
                     )
                 case .slide:
                     slidePageContent(
                         pages: pages,
                         textSize: textSize,
-                        safeAreaInsets: proxy.safeAreaInsets,
+                        safeAreaInsets: stableInsets,
                         containerSize: proxy.size
                     )
                 case .pageCurl:
                     pageCurlPageContent(
                         pages: pages,
                         textSize: textSize,
-                        safeAreaInsets: proxy.safeAreaInsets,
+                        safeAreaInsets: stableInsets,
                         containerSize: proxy.size
                     )
                 }
 
                 if showControls {
-                    controlsTopBar(safeTop: proxy.safeAreaInsets.top, currentPage: currentPage)
+                    controlsTopBar(safeTop: stableTop, currentPage: currentPage)
                         .transition(.move(edge: .top).combined(with: .opacity))
 
                     controlsBottomBar(
-                        safeBottom: proxy.safeAreaInsets.bottom,
+                        safeBottom: stableBottom,
                         pages: pages,
                         currentPage: currentPage
                     )
@@ -191,7 +233,7 @@ struct ReaderView: View {
                 }
 
                 if !showControls {
-                    readerHeader(safeTop: proxy.safeAreaInsets.top)
+                    readerHeader(safeTop: stableTop)
                         .transition(.opacity)
                 }
 
@@ -201,15 +243,23 @@ struct ReaderView: View {
                 }
 
                 if showPreferences {
-                    preferencesOverlay(safeBottom: proxy.safeAreaInsets.bottom)
+                    preferencesOverlay(safeBottom: stableBottom)
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
             }
             .onAppear {
+                ratchetStableSafeAreaInsets(top: proxy.safeAreaInsets.top,
+                                            bottom: proxy.safeAreaInsets.bottom)
                 setInitialChapterIfNeeded(textSize: textSize)
                 persistReadingState(pages: pages)
                 lastKnownTextSize = textSize
                 if autoScroll { startAutoScroll() }
+            }
+            .onChange(of: proxy.safeAreaInsets.top) { _, newValue in
+                ratchetStableSafeAreaInsets(top: newValue, bottom: nil)
+            }
+            .onChange(of: proxy.safeAreaInsets.bottom) { _, newValue in
+                ratchetStableSafeAreaInsets(top: nil, bottom: newValue)
             }
             .onDisappear {
                 stopAutoScroll()
@@ -223,11 +273,13 @@ struct ReaderView: View {
                 // Defer to the next runloop tick so SwiftUI has finished propagating the new
                 // safeAreaInsets through GeometryReader before we rebuild the pager. Without
                 // the dispatch the rebuild reads the same stale insets we're trying to escape.
+                resetStableSafeAreaInsetsForOrientationChange()
                 DispatchQueue.main.async {
                     rotationLayoutVersion &+= 1
                 }
             }
             .onChange(of: horizontalSizeClass) { _, _ in
+                resetStableSafeAreaInsetsForOrientationChange()
                 DispatchQueue.main.async {
                     rotationLayoutVersion &+= 1
                 }
@@ -270,6 +322,11 @@ struct ReaderView: View {
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
         .background(TabBarVisibility(isHidden: true).frame(width: 0, height: 0))
+        // Mirror Apple Books / Kindle: the system status bar fades back in with the
+        // reveal of the top/bottom controls, and our custom `readerHeader` covers
+        // immersive mode when controls are hidden. The page layout is stabilized
+        // against the maximum safe-area inset (see `stableSafeAreaTop/Bottom`), so
+        // toggling the status bar never reflows the body.
         .statusBarHidden(!showControls)
         .navigationDestination(item: $browserDestination) { url in
             InAppBrowserView(url: url, title: activeNovel.title)
@@ -307,6 +364,23 @@ struct ReaderView: View {
 
     private func headerTopPadding(safeTop: CGFloat) -> CGFloat {
         max(safeTop - 24, 26)
+    }
+
+    /// Reset stabilized insets to the current key window's values so a portrait → landscape
+    /// flip doesn't carry the portrait notch height into landscape (or vice versa). The
+    /// existing ratchet handlers will then bump the values back up if the new orientation's
+    /// status bar is currently visible and contributes more.
+    private func resetStableSafeAreaInsetsForOrientationChange() {
+        let insets = Self.currentKeyWindowSafeAreaInsets()
+        stableSafeAreaTop = insets.top
+        stableSafeAreaBottom = insets.bottom
+    }
+
+    /// Update the cached stable insets if a fresh observation exceeds them. Pass `nil`
+    /// for an axis you don't want to update on this call.
+    private func ratchetStableSafeAreaInsets(top: CGFloat?, bottom: CGFloat?) {
+        if let top, top > stableSafeAreaTop { stableSafeAreaTop = top }
+        if let bottom, bottom > stableSafeAreaBottom { stableSafeAreaBottom = bottom }
     }
 
     private func contentTopPadding(safeAreaInsets: EdgeInsets) -> CGFloat {

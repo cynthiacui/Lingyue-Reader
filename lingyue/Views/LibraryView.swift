@@ -935,7 +935,7 @@ private struct BookPressableNavigationRow<Label: View>: View {
                             onClearDownloadData()
                         } label: {
                             mailStyleAction(
-                                icon: "trash.slash.fill",
+                                icon: "arrow.down.circle.dotted",
                                 label: "清理缓存",
                                 background: theme.accent
                             )
@@ -1217,7 +1217,7 @@ private struct IconSwipeRow<Label: View>: View {
                     }
                     if let onClearDownloadData {
                         actionButton(
-                            icon: "trash.slash.fill",
+                            icon: "arrow.down.circle.dotted",
                             label: "清理缓存",
                             background: theme.accent.opacity(0.65)
                         ) {

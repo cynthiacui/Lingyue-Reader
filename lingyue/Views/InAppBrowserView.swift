@@ -3,6 +3,7 @@ import WebKit
 
 struct InAppBrowserView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.appTheme) private var theme
     @EnvironmentObject private var libraryStore: LibraryStore
 
     let url: URL
@@ -27,6 +28,8 @@ struct InAppBrowserView: View {
 
     var body: some View {
         ZStack {
+            ThemeBackgroundView()
+
             VStack(spacing: 0) {
                 browserControls
 
@@ -41,7 +44,7 @@ struct InAppBrowserView: View {
                     if browserState.isLoading {
                         ProgressView(value: browserState.estimatedProgress)
                             .progressViewStyle(.linear)
-                            .tint(Color.readerAccent)
+                            .tint(theme.accent)
                             .frame(height: 2)
                     }
                 }
@@ -85,10 +88,13 @@ struct InAppBrowserView: View {
         .animation(ModalStyle.presentationAnimation, value: categoryPrompt?.id)
         .animation(ModalStyle.presentationAnimation, value: importStatus)
         .animation(ModalStyle.presentationAnimation, value: importResult?.id)
-        .background(Color.readerBackground.ignoresSafeArea())
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(true)
+        // Don't pin the nav bar background — let the system's translucent material
+        // pick up `ThemeBackgroundView` underneath (matches Library / Discovery).
+        // Forcing `theme.background` here painted a flat color that didn't match
+        // the gradient / image pattern themes use for the rest of the chrome.
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
@@ -99,7 +105,7 @@ struct InAppBrowserView: View {
                         .font(.system(size: 16, weight: .semibold))
                         .frame(width: 32, height: 32)
                 }
-                .foregroundStyle(Color.readerInk)
+                .foregroundStyle(theme.primaryText)
                 .accessibilityLabel("在 Safari 中打开")
             }
 
@@ -111,7 +117,7 @@ struct InAppBrowserView: View {
                         .font(.system(size: 16, weight: .semibold))
                         .frame(width: 32, height: 32)
                 }
-                .foregroundStyle(Color.readerInk)
+                .foregroundStyle(theme.primaryText)
                 .accessibilityLabel("关闭")
             }
         }
@@ -459,7 +465,7 @@ struct InAppBrowserView: View {
 
             Text(browserState.hostText)
                 .font(.caption)
-                .foregroundStyle(Color.readerMuted)
+                .foregroundStyle(theme.secondaryText)
                 .lineLimit(1)
                 .frame(maxWidth: .infinity)
 
@@ -471,15 +477,15 @@ struct InAppBrowserView: View {
                     .frame(width: 32, height: 32)
             }
         }
-        .foregroundStyle(Color.readerAccent)
+        .foregroundStyle(theme.accent)
         .padding(.horizontal, 20)
         .padding(.vertical, 7)
         .background(
-            Color.readerBackground.ignoresSafeArea()
+            theme.background.ignoresSafeArea()
         )
         .overlay(alignment: .bottom) {
             Divider()
-                .overlay(Color.readerMuted.opacity(0.18))
+                .overlay(theme.secondaryText.opacity(0.18))
         }
     }
 }
@@ -501,6 +507,14 @@ private struct InAppWebView: UIViewRepresentable {
         webView.allowsBackForwardNavigationGestures = true
         webView.navigationDelegate = context.coordinator
         webView.uiDelegate = context.coordinator
+        // Make the web view transparent so the active app theme shows through before
+        // the page paints, in the bounce-overscroll area, and anywhere the page itself
+        // doesn't draw an opaque background. Most novel mirrors set their own opaque
+        // body background in CSS, so visible-while-rendered surface remains the page's
+        // own choice — this only affects edges and the loading state.
+        webView.isOpaque = false
+        webView.backgroundColor = .clear
+        webView.scrollView.backgroundColor = .clear
         // Many Chinese novel mirrors (笔趣阁 family, daweixs.com, …) sit behind
         // nginx WAF rules that 502 anything missing the Version/* and Safari/*
         // tokens — WKWebView's default UA omits both. Force a full mobile-Safari
