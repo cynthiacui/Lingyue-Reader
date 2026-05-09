@@ -205,11 +205,6 @@ struct DiscoveryView: View {
                     .foregroundStyle(theme.secondaryText)
             }
 
-            Text("支持的书源")
-                .font(.footnote)
-                .foregroundStyle(theme.secondaryText)
-                .padding(.bottom, 4)
-
             LazyVGrid(columns: columns, spacing: 10) {
                 ForEach(sources) { source in
                     sourceCard(source)
