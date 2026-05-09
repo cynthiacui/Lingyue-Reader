@@ -39,9 +39,15 @@ iOS 17+ · SwiftUI · Single-window app · Bundle id `com.lingyue.reader`
 - Download progress and storage size visible in Settings.
 
 ### 设置 — Settings
-- Five app themes: 纸张 (paper green), 樱粉 (pink), 叶绿 (leaf green), 水墨 (ink — image pattern), 星夜 (starry night dark).
-- Reader defaults (font, size, theme, page transition) editable from the same surface as in-reader.
-- Storage management: per-book download size, bulk clear, cache totals.
+
+| Reader preferences | App theme & storage |
+| --- | --- |
+| ![Settings — reader preferences](docs/screenshots/settings-reader.png) | ![Settings — app theme and storage](docs/screenshots/settings-theme-storage.png) |
+
+- **Live typography preview** at the top of Settings shows a sample passage rendered with the current 字号 / 行距 / 字体 / 翻页效果 / 背景颜色, plus a one-line summary (`当前：纸张 · 苹方 · 简体 · 字号 18 · 行距 5`) so each change is visible before leaving the screen.
+- **阅读偏好**: 字号 slider, 行距 slider, 字体 picker (5 fonts), 翻页效果 picker (无动画 / 滑动 / 仿真翻页), 背景颜色 swatches (纸张 / 米黄 / 护眼 / 雅蓝 / 夜读), 跟随系统深色模式 toggle, 繁体中文显示 toggle, 自动滚读 toggle.
+- **外观主题**: app-wide theme selector — 纸张 / 樱粉 / 叶绿 / 水墨 / 星夜 — with its own 跟随系统深色模式 toggle.
+- **离线与缓存**: 自动预载后续章节 toggle (auto-preload upcoming chapters in the background while reading), running 下载数据 size, and 清理全部下载数据 to wipe every book's cached chapters.
 
 ## Tech
 
