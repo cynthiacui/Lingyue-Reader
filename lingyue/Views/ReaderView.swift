@@ -679,11 +679,6 @@ struct ReaderView: View {
                 .frame(alignment: .leading)
 
                 Spacer()
-
-                Text(displayed(activeNovel.title))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
-                    .frame(alignment: .trailing)
             }
             .font(.system(size: 12, weight: .semibold))
             .foregroundStyle(secondaryForeground)
@@ -703,14 +698,13 @@ struct ReaderView: View {
         safeTrailing: CGFloat,
         currentPage: ReaderPageItem
     ) -> some View {
-        let sourceLabel = BookSourceRegistry.displayName(for: activeNovel.sourceURLString)
         let chapterURL = chapterBrowserURL(for: currentChapter)
 
-        // Layer a screen-centered title over the button row so the chapter / source
-        // labels sit at the actual midpoint of the screen instead of the midpoint
-        // of the gap between the (wider) left group and the (narrower) right group.
-        // Horizontal padding on the title clamps it so it can never get closer than
-        // `minGap` to either button group — the "minimum gap is the baseline" rule.
+        // Layer the chapter title over the button row so it sits at the actual
+        // midpoint of the screen instead of the midpoint of the gap between the
+        // (wider) left group and the (narrower) right group. titleSidePadding
+        // clamps the label so it can never get closer than `minGap` to either
+        // button group, and middle-truncates when it would otherwise overlap.
         let backWidth: CGFloat = 52
         let globeWidth: CGFloat = chapterURL != nil ? 40 : 0
         let switcherWidth: CGFloat = 40
@@ -722,92 +716,96 @@ struct ReaderView: View {
         let titleSidePadding = max(leftGroupWidth, rightGroupWidth) + minGap
 
         return VStack {
-            ZStack {
-                HStack(spacing: 0) {
-                    Button {
-                        dismiss()
-                    } label: {
-                        Image(systemName: "chevron.left")
-                            .font(.system(size: 19, weight: .semibold))
-                            .frame(width: backWidth, height: 52)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
+            VStack(spacing: 6) {
+                // Row 1 — Book title. Full bar width, centered, semibold so it reads
+                // as the primary identifier; truncates middle for long titles.
+                Text(displayed(activeNovel.title))
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(pageForeground)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .frame(maxWidth: .infinity)
 
-                    if let chapterURL {
+                // Row 2 — Button row with chapter title overlaid in the center.
+                ZStack {
+                    HStack(spacing: 0) {
                         Button {
-                            browserDestination = chapterURL
+                            dismiss()
                         } label: {
-                            Image(systemName: "globe")
-                                .font(.system(size: 18, weight: .semibold))
-                                .frame(width: globeWidth, height: 52)
+                            Image(systemName: "chevron.left")
+                                .font(.system(size: 19, weight: .semibold))
+                                .frame(width: backWidth, height: 44)
                                 .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
-                        .accessibilityLabel("在浏览器中查看")
-                    }
 
-                    Button {
-                        showSourceSwitcher = true
-                    } label: {
-                        Image(systemName: "arrow.left.arrow.right")
-                            .font(.system(size: 17, weight: .semibold))
-                            .frame(width: switcherWidth, height: 52)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("切换书源")
-
-                    Spacer()
-
-                    Button {
-                        withAnimation(.easeInOut(duration: 0.18)) {
-                            showPreferences = true
-                            showChapterPicker = false
+                        if let chapterURL {
+                            Button {
+                                browserDestination = chapterURL
+                            } label: {
+                                Image(systemName: "globe")
+                                    .font(.system(size: 18, weight: .semibold))
+                                    .frame(width: globeWidth, height: 44)
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("在浏览器中查看")
                         }
-                    } label: {
-                        Image(systemName: "textformat.size")
-                            .font(.system(size: 19, weight: .semibold))
-                            .frame(width: fontWidth, height: 52)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
 
-                    Button {
-                        withAnimation(ModalStyle.presentationAnimation) {
-                            showChapterPicker = true
-                            showPreferences = false
+                        Button {
+                            showSourceSwitcher = true
+                        } label: {
+                            Image(systemName: "arrow.left.arrow.right")
+                                .font(.system(size: 17, weight: .semibold))
+                                .frame(width: switcherWidth, height: 44)
+                                .contentShape(Rectangle())
                         }
-                    } label: {
-                        Image(systemName: "list.bullet")
-                            .font(.system(size: 19, weight: .semibold))
-                            .frame(width: listWidth, height: 52)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("切换书源")
 
-                VStack(spacing: 2) {
+                        Spacer()
+
+                        Button {
+                            withAnimation(.easeInOut(duration: 0.18)) {
+                                showPreferences = true
+                                showChapterPicker = false
+                            }
+                        } label: {
+                            Image(systemName: "textformat.size")
+                                .font(.system(size: 19, weight: .semibold))
+                                .frame(width: fontWidth, height: 44)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+
+                        Button {
+                            withAnimation(ModalStyle.presentationAnimation) {
+                                showChapterPicker = true
+                                showPreferences = false
+                            }
+                        } label: {
+                            Image(systemName: "list.bullet")
+                                .font(.system(size: 19, weight: .semibold))
+                                .frame(width: listWidth, height: 44)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+
                     Text(currentPage.chapterTitle)
-                        .font(.system(size: 14, weight: .medium))
+                        .font(.system(size: 13, weight: .medium))
                         .foregroundStyle(secondaryForeground)
                         .lineLimit(1)
-
-                    if let sourceLabel {
-                        Text(sourceLabel)
-                            .font(.system(size: 11, weight: .regular))
-                            .foregroundStyle(secondaryForeground.opacity(0.65))
-                            .lineLimit(1)
-                    }
+                        .truncationMode(.middle)
+                        .padding(.horizontal, titleSidePadding)
+                        .allowsHitTesting(false)
                 }
-                .padding(.horizontal, titleSidePadding)
-                .allowsHitTesting(false)
             }
             .foregroundStyle(pageForeground)
             .padding(.leading, max(8, safeLeading))
             .padding(.trailing, max(8, safeTrailing))
             .padding(.top, controlsTopPadding(safeTop: safeTop))
-            .padding(.bottom, 14)
+            .padding(.bottom, 12)
             .background(
                 Rectangle()
                     .fill(currentTheme.chromeBackground)
