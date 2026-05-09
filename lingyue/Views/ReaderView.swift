@@ -223,11 +223,18 @@ struct ReaderView: View {
                 }
 
                 if showControls {
-                    controlsTopBar(safeTop: stableTop, currentPage: currentPage)
-                        .transition(.move(edge: .top).combined(with: .opacity))
+                    controlsTopBar(
+                        safeTop: stableTop,
+                        safeLeading: stableInsets.leading,
+                        safeTrailing: stableInsets.trailing,
+                        currentPage: currentPage
+                    )
+                    .transition(.move(edge: .top).combined(with: .opacity))
 
                     controlsBottomBar(
                         safeBottom: stableBottom,
+                        safeLeading: stableInsets.leading,
+                        safeTrailing: stableInsets.trailing,
                         pages: pages,
                         currentPage: currentPage
                     )
@@ -235,8 +242,12 @@ struct ReaderView: View {
                 }
 
                 if !showControls {
-                    readerHeader(safeTop: stableTop)
-                        .transition(.opacity)
+                    readerHeader(
+                        safeTop: stableTop,
+                        safeLeading: stableInsets.leading,
+                        safeTrailing: stableInsets.trailing
+                    )
+                    .transition(.opacity)
                 }
 
                 if showChapterPicker {
@@ -245,8 +256,12 @@ struct ReaderView: View {
                 }
 
                 if showPreferences {
-                    preferencesOverlay(safeBottom: stableBottom)
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                    preferencesOverlay(
+                        safeBottom: stableBottom,
+                        safeLeading: stableInsets.leading,
+                        safeTrailing: stableInsets.trailing
+                    )
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
             }
             .onAppear {
@@ -425,7 +440,11 @@ struct ReaderView: View {
             .foregroundStyle(secondaryForeground)
             .frame(maxWidth: .infinity)
         }
-        .padding(.horizontal, horizontalMargin)
+        // Landscape: the Dynamic Island / notch lives on one horizontal edge, so
+        // safeAreaInsets.leading or .trailing reports ~50pt. Pad the body away from
+        // that edge by at least the inset so glyphs never slide under the cutout.
+        .padding(.leading, max(horizontalMargin, safeAreaInsets.leading))
+        .padding(.trailing, max(horizontalMargin, safeAreaInsets.trailing))
         .padding(.top, contentTopPadding(safeAreaInsets: safeAreaInsets))
         .padding(.bottom, contentBottomPadding(safeAreaInsets: safeAreaInsets))
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -634,7 +653,7 @@ struct ReaderView: View {
         .simultaneousGesture(boundarySwipeGesture(pages: pages))
     }
 
-    private func readerHeader(safeTop: CGFloat) -> some View {
+    private func readerHeader(safeTop: CGFloat, safeLeading: CGFloat, safeTrailing: CGFloat) -> some View {
         VStack {
             HStack(alignment: .center, spacing: 14) {
                 TimelineView(.periodic(from: .now, by: 30)) { timeline in
@@ -653,7 +672,8 @@ struct ReaderView: View {
             .font(.system(size: 12, weight: .semibold))
             .foregroundStyle(secondaryForeground)
             .frame(maxWidth: .infinity)
-            .padding(.horizontal, horizontalMargin)
+            .padding(.leading, max(horizontalMargin, safeLeading))
+            .padding(.trailing, max(horizontalMargin, safeTrailing))
             .padding(.top, headerTopPadding(safeTop: safeTop))
 
             Spacer()
@@ -661,7 +681,12 @@ struct ReaderView: View {
         .allowsHitTesting(false)
     }
 
-    private func controlsTopBar(safeTop: CGFloat, currentPage: ReaderPageItem) -> some View {
+    private func controlsTopBar(
+        safeTop: CGFloat,
+        safeLeading: CGFloat,
+        safeTrailing: CGFloat,
+        currentPage: ReaderPageItem
+    ) -> some View {
         let sourceLabel = BookSourceRegistry.displayName(for: activeNovel.sourceURLString)
         let chapterURL = chapterBrowserURL(for: currentChapter)
 
@@ -763,7 +788,8 @@ struct ReaderView: View {
                 .allowsHitTesting(false)
             }
             .foregroundStyle(pageForeground)
-            .padding(.horizontal, 8)
+            .padding(.leading, max(8, safeLeading))
+            .padding(.trailing, max(8, safeTrailing))
             .padding(.top, controlsTopPadding(safeTop: safeTop))
             .padding(.bottom, 14)
             .background(
@@ -779,6 +805,8 @@ struct ReaderView: View {
 
     private func controlsBottomBar(
         safeBottom: CGFloat,
+        safeLeading: CGFloat,
+        safeTrailing: CGFloat,
         pages: [ReaderPageItem],
         currentPage: ReaderPageItem
     ) -> some View {
@@ -825,7 +853,8 @@ struct ReaderView: View {
                 }
             }
             .foregroundStyle(pageForeground)
-            .padding(.horizontal, 8)
+            .padding(.leading, max(8, safeLeading))
+            .padding(.trailing, max(8, safeTrailing))
             .padding(.top, 12)
             .padding(.bottom, max(safeBottom + 8, 18))
             .background(
@@ -965,7 +994,11 @@ struct ReaderView: View {
         }
     }
 
-    private func preferencesOverlay(safeBottom: CGFloat) -> some View {
+    private func preferencesOverlay(
+        safeBottom: CGFloat,
+        safeLeading: CGFloat,
+        safeTrailing: CGFloat
+    ) -> some View {
         ZStack {
             Color.black.opacity(currentTheme == .night ? 0.35 : 0.18)
                 .ignoresSafeArea()
@@ -1028,7 +1061,8 @@ struct ReaderView: View {
                         )
                     }
                 }
-                .padding(.horizontal, 18)
+                .padding(.leading, max(18, safeLeading))
+                .padding(.trailing, max(18, safeTrailing))
                 .padding(.top, 18)
                 .padding(.bottom, max(safeBottom + 16, 22))
                 .background(
@@ -1892,7 +1926,12 @@ struct ReaderView: View {
     private func readerTextSize(containerSize: CGSize, safeAreaInsets: EdgeInsets) -> CGSize {
         let footerHeight = footerTextHeight
         let footerSpacing: CGFloat = 8
-        let width = max(containerSize.width - horizontalMargin * 2, 120)
+        // Mirror the asymmetric horizontal padding applied in `pageView` so paginated
+        // line widths match the actual rendered text width — otherwise landscape with
+        // a Dynamic Island would over-fill lines and glyphs would slide under the cutout.
+        let leading = max(horizontalMargin, safeAreaInsets.leading)
+        let trailing = max(horizontalMargin, safeAreaInsets.trailing)
+        let width = max(containerSize.width - leading - trailing, 120)
         let height = max(
             containerSize.height
             - contentTopPadding(safeAreaInsets: safeAreaInsets)
