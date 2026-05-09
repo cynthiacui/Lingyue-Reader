@@ -396,7 +396,10 @@ struct ReaderView: View {
     }
 
     private func headerTopPadding(safeTop: CGFloat) -> CGFloat {
-        max(safeTop - 24, 26)
+        // Vertically center the time row with the Dynamic Island / status bar pill.
+        // iPhone 15 Pro safeTop≈59 → 27pt (≈ island vertical center); iPhone SE
+        // safeTop≈20 → 12pt floor; iPad safeTop≈24 → 12pt floor.
+        max(safeTop - 32, 12)
     }
 
     /// Reset stabilized insets to the current key window's values so a portrait → landscape
@@ -417,14 +420,22 @@ struct ReaderView: View {
     }
 
     private func contentTopPadding(safeAreaInsets: EdgeInsets) -> CGFloat {
-        let gapBelowHeader: CGFloat = dynamicTypeSize.isAccessibilitySize ? 40 : 20
-        let minimum: CGFloat = dynamicTypeSize.isAccessibilitySize ? 82 : 68
+        // Body starts just past the safe-area inset so the Dynamic Island / status bar
+        // doesn't overlap glyphs. The time row above already sits closer to the screen
+        // edge — this is the gap between body text and that row.
+        let gapBelowHeader: CGFloat = dynamicTypeSize.isAccessibilitySize ? 18 : 0
+        let minimum: CGFloat = dynamicTypeSize.isAccessibilitySize ? 56 : 36
         return max(safeAreaInsets.top + gapBelowHeader, minimum)
     }
 
     private func contentBottomPadding(safeAreaInsets: EdgeInsets) -> CGFloat {
-        let minimum: CGFloat = dynamicTypeSize.isAccessibilitySize ? 72 : 56
-        return max(safeAreaInsets.bottom + 24, minimum)
+        // Footer (chapter title + page index) tucks alongside the home-indicator inset
+        // — sits ~safeBottom-6pt up so the row clears the indicator gesture line by
+        // ~20pt without floating high above it. iPhone 15 Pro safeBottom≈34 → 28pt;
+        // iPhone SE safeBottom=0 → 18pt floor; iPad safeBottom≈20 → 20pt.
+        let minimum: CGFloat = dynamicTypeSize.isAccessibilitySize ? 30 : 18
+        let extra: CGFloat = dynamicTypeSize.isAccessibilitySize ? 6 : -6
+        return max(safeAreaInsets.bottom + extra, minimum)
     }
 
     private func controlsTopPadding(safeTop: CGFloat) -> CGFloat {
