@@ -58,6 +58,10 @@ struct ReaderView: View {
     @State private var autoScrollTask: Task<Void, Never>?
     @State private var browserDestination: URL?
     @State private var showSourceSwitcher = false
+    /// Live downward drag distance on the preferences popup. The popup follows the finger
+    /// (resisted slightly upward) and either snaps back or dismisses depending on the
+    /// drag's projected end position — same feel as a sheet's dismiss-on-drag.
+    @State private var preferencesDragOffset: CGFloat = 0
     /// Bumps after a rotation so the pager rebuilds with the post-rotation safeArea
     /// settled. SwiftUI's GeometryReader sometimes reports stale `safeAreaInsets` on the first
     /// render after rotation when its parent uses `.ignoresSafeArea()`, so the previously-visible
@@ -1016,15 +1020,20 @@ struct ReaderView: View {
                 .ignoresSafeArea()
                 .contentShape(Rectangle())
                 .onTapGesture {
-                    withAnimation(.easeInOut(duration: 0.18)) {
-                        showPreferences = false
-                    }
+                    dismissPreferencesAndControls()
                 }
 
             VStack {
                 Spacer()
 
                 VStack(alignment: .leading, spacing: 16) {
+                    Capsule()
+                        .fill(secondaryForeground.opacity(0.35))
+                        .frame(width: 38, height: 4)
+                        .frame(maxWidth: .infinity)
+                        .padding(.bottom, -6)
+                        .accessibilityHidden(true)
+
                     preferenceSliderRow(
                         title: "字号",
                         systemImage: "textformat.size",
@@ -1075,16 +1084,58 @@ struct ReaderView: View {
                 }
                 .padding(.leading, max(18, safeLeading))
                 .padding(.trailing, max(18, safeTrailing))
-                .padding(.top, 18)
+                .padding(.top, 14)
                 .padding(.bottom, max(safeBottom + 16, 22))
                 .background(
                     Rectangle()
                         .fill(currentTheme.chromeBackground)
                         .shadow(color: .black.opacity(0.16), radius: 8, x: 0, y: -3)
                 )
+                .offset(y: preferencesDragOffset)
+                .gesture(preferencesDismissGesture)
             }
         }
         .ignoresSafeArea(edges: .bottom)
+    }
+
+    /// Drag-down to dismiss for the preferences popup. The card follows the finger 1:1
+    /// downward with light upward resistance, then either snaps back or animates off
+    /// screen based on the drag's projected end — same feel as a system sheet.
+    private var preferencesDismissGesture: some Gesture {
+        DragGesture(minimumDistance: 8)
+            .onChanged { value in
+                let h = value.translation.height
+                preferencesDragOffset = h > 0 ? h : h * 0.18
+            }
+            .onEnded { value in
+                let dismissThreshold: CGFloat = 110
+                let projected = value.predictedEndTranslation.height
+                let shouldDismiss = projected > dismissThreshold
+                    || value.translation.height > dismissThreshold
+
+                if shouldDismiss {
+                    dismissPreferencesAndControls()
+                } else {
+                    withAnimation(.spring(response: 0.32, dampingFraction: 0.85)) {
+                        preferencesDragOffset = 0
+                    }
+                }
+            }
+    }
+
+    /// Close the preferences popup and the top/bottom control bars together. Tapping the
+    /// backdrop or sliding the popup down should put the reader back into immersive mode,
+    /// not leave the chrome stranded behind a now-invisible popup.
+    private func dismissPreferencesAndControls() {
+        withAnimation(.easeInOut(duration: 0.22)) {
+            showPreferences = false
+            showControls = false
+        }
+        // Reset after the dismiss transition completes so the next presentation animates
+        // in from offscreen, not from a stale offset.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.26) {
+            preferencesDragOffset = 0
+        }
     }
 
     private func preferenceSliderRow(
