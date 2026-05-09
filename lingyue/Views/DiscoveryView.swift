@@ -205,7 +205,7 @@ struct DiscoveryView: View {
                     .foregroundStyle(theme.secondaryText)
             }
 
-            Text("以下来源会参与上方的聚合搜索")
+            Text("支持的书源")
                 .font(.footnote)
                 .foregroundStyle(theme.secondaryText)
                 .padding(.bottom, 4)
