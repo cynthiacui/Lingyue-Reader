@@ -93,21 +93,18 @@ extension ReadingTheme {
     /// otherwise the user's manual pick is used (downgraded to `.paper` if it itself was
     /// `.night`, so the reader doesn't appear "stuck on night" after enabling follow-system).
     ///
-    /// `appForcesColorScheme` carries the colorScheme the app is forcing on its own window
-    /// via `.preferredColorScheme(...)` (non-nil only when the user picked the dark app
-    /// theme without follow-system). When non-nil, `systemColorScheme` is just the app's
-    /// override echoed back through the environment — not the device's actual trait — so
-    /// we cannot use it to drive the auto-flip and fall back to the manual pick instead.
+    /// `deviceIsInDarkMode` must reflect the *device's* actual mode — not SwiftUI's
+    /// `\.colorScheme` env, which the app's `.preferredColorScheme(...)` override masks.
+    /// `SystemAppearance` reads it from the active scene's screen trait collection, where
+    /// the override has no effect.
     static func effective(
         rawValue: String,
         followSystemDark: Bool,
-        systemColorScheme: ColorScheme,
-        appForcesColorScheme: ColorScheme? = nil
+        deviceIsInDarkMode: Bool
     ) -> ReadingTheme {
         let manual = ReadingTheme(rawValue: rawValue) ?? .paper
         guard followSystemDark else { return manual }
-        if appForcesColorScheme != nil { return manual == .night ? .paper : manual }
-        if systemColorScheme == .dark { return .night }
+        if deviceIsInDarkMode { return .night }
         return manual == .night ? .paper : manual
     }
 

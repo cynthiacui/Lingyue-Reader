@@ -44,7 +44,6 @@ struct ContentView: View {
         .environmentObject(themeManager)
         .environmentObject(downloadManager)
         .environment(\.appTheme, effectiveTheme)
-        .environment(\.appForcesColorScheme, chromeOverride)
         .preferredColorScheme(chromeOverride)
         .onChange(of: scenePhase) { _, newPhase in
             if newPhase == .background {

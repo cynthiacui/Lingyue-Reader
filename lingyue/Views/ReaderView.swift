@@ -6,9 +6,12 @@ struct ReaderView: View {
     let novel: Novel
 
     @Environment(\.dismiss) private var dismiss
-    @Environment(\.colorScheme) private var systemColorScheme
-    @Environment(\.appForcesColorScheme) private var appForcesColorScheme
     @EnvironmentObject private var libraryStore: LibraryStore
+    /// Device's actual user-interface style, observed independently of any
+    /// `.preferredColorScheme(...)` override the app theme applies. Drives the
+    /// reader's follow-system-dark logic so 夜读 auto-activates from the OS
+    /// setting regardless of which app theme is selected.
+    @StateObject private var systemAppearance = SystemAppearance()
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.verticalSizeClass) private var verticalSizeClass
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -124,8 +127,7 @@ struct ReaderView: View {
         ReadingTheme.effective(
             rawValue: themeRawValue,
             followSystemDark: followSystemDark,
-            systemColorScheme: systemColorScheme,
-            appForcesColorScheme: appForcesColorScheme
+            deviceIsInDarkMode: systemAppearance.isDark
         )
     }
 

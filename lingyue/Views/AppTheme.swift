@@ -280,12 +280,55 @@ final class AppThemeManager: ObservableObject {
     }
 }
 
-private struct AppThemeEnvironmentKey: EnvironmentKey {
-    static let defaultValue: AppTheme = .paperGreen
+/// Publishes the device's actual user-interface style as a SwiftUI-friendly
+/// `ColorScheme`, *bypassing* any `.preferredColorScheme(...)` override the app
+/// applies at the window level. SwiftUI's `\.colorScheme` env reflects the
+/// override, so reader follow-system-dark would otherwise be locked to whatever
+/// app theme the user picked. Read straight from the active scene's screen
+/// (window overrides don't mask the screen's trait collection) and refresh on
+/// scene-activation notifications so changes made via the system Settings app
+/// update on return-to-foreground.
+@MainActor
+final class SystemAppearance: ObservableObject {
+    @Published private(set) var isDark: Bool
+
+    private var observers: [NSObjectProtocol] = []
+
+    init() {
+        isDark = Self.readScreenIsDark()
+        let names: [Notification.Name] = [
+            UIApplication.didBecomeActiveNotification,
+            UIApplication.willEnterForegroundNotification,
+            UIScene.didActivateNotification
+        ]
+        for name in names {
+            let obs = NotificationCenter.default.addObserver(
+                forName: name, object: nil, queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated { self?.refresh() }
+            }
+            observers.append(obs)
+        }
+    }
+
+    deinit {
+        for obs in observers { NotificationCenter.default.removeObserver(obs) }
+    }
+
+    func refresh() {
+        let next = Self.readScreenIsDark()
+        if next != isDark { isDark = next }
+    }
+
+    private static func readScreenIsDark() -> Bool {
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        let style = scenes.first?.screen.traitCollection.userInterfaceStyle ?? .unspecified
+        return style == .dark
+    }
 }
 
-private struct AppForcesColorSchemeKey: EnvironmentKey {
-    static let defaultValue: ColorScheme? = nil
+private struct AppThemeEnvironmentKey: EnvironmentKey {
+    static let defaultValue: AppTheme = .paperGreen
 }
 
 extension EnvironmentValues {
@@ -294,16 +337,6 @@ extension EnvironmentValues {
     var appTheme: AppTheme {
         get { self[AppThemeEnvironmentKey.self] }
         set { self[AppThemeEnvironmentKey.self] = newValue }
-    }
-
-    /// The color scheme the app is forcing onto its window via `.preferredColorScheme(...)`,
-    /// or `nil` if the app is letting the system colorScheme stand. When non-nil, child
-    /// views should treat `\.colorScheme` as the app's *override*, not the device's actual
-    /// trait — otherwise reader/follow-system logic would incorrectly read the override as
-    /// "system is in dark mode" and auto-flip the reader to 夜读.
-    var appForcesColorScheme: ColorScheme? {
-        get { self[AppForcesColorSchemeKey.self] }
-        set { self[AppForcesColorSchemeKey.self] = newValue }
     }
 }
 

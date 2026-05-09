@@ -79,6 +79,13 @@ struct PageCurlPager: UIViewControllerRepresentable {
             if let cached = hosts[index] { return cached }
             let host = UIHostingController(rootView: parent.renderPage(index))
             host.view.backgroundColor = parent.backgroundColor
+            // The outer ReaderView already pins layout to a stable safe-area inset and
+            // passes it explicitly into `pageView`. UIHostingController otherwise spawns a
+            // fresh SwiftUI root that re-reads the window's actual safeAreaInsets — so on
+            // non-notched iPhones, toggling `.statusBarHidden` with the controls would
+            // auto-pad the hosted page top by ~20pt and visibly shift the body down. Zero
+            // out the host's safe-area regions so the hosted tree sees zero insets.
+            host.safeAreaRegions = []
             hosts[index] = host
             return host
         }

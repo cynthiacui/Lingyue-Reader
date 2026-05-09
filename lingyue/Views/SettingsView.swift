@@ -5,7 +5,7 @@ struct SettingsView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.appTheme) private var theme
     @Environment(\.colorScheme) private var systemColorScheme
-    @Environment(\.appForcesColorScheme) private var appForcesColorScheme
+    @StateObject private var systemAppearance = SystemAppearance()
     @EnvironmentObject private var themeManager: AppThemeManager
     @EnvironmentObject private var downloadManager: BookDownloadManager
 
@@ -38,8 +38,7 @@ struct SettingsView: View {
         ReadingTheme.effective(
             rawValue: themeRawValue,
             followSystemDark: readerFollowSystemDark,
-            systemColorScheme: systemColorScheme,
-            appForcesColorScheme: appForcesColorScheme
+            deviceIsInDarkMode: systemAppearance.isDark
         )
     }
 
