@@ -327,6 +327,61 @@ final class SystemAppearance: ObservableObject {
     }
 }
 
+/// Publishes the active key window's `safeAreaInsets`. The reader's outer container uses
+/// `.ignoresSafeArea()` so that the page background can extend edge-to-edge on every
+/// device — but that modifier zeroes the insets that propagate down into the
+/// GeometryReader, which means `proxy.safeAreaInsets.leading/.trailing` reads as 0 and
+/// the body text would slide under a landscape Dynamic Island, notch, or iPad rounded
+/// corner. Reading directly from the window bypasses the SwiftUI consumption and adapts
+/// to every iPhone/iPad model automatically (notch, island, regular bezel, all the same).
+///
+/// Updates on scene-activation, orientation, and frame-change notifications so the values
+/// stay correct across portrait/landscape flips and Stage Manager / Split View resizes.
+@MainActor
+final class WindowSafeAreaInsets: ObservableObject {
+    @Published private(set) var insets: UIEdgeInsets
+
+    private var observers: [NSObjectProtocol] = []
+
+    init() {
+        insets = Self.readKeyWindowInsets()
+        let names: [Notification.Name] = [
+            UIApplication.didBecomeActiveNotification,
+            UIApplication.willEnterForegroundNotification,
+            UIScene.didActivateNotification,
+            UIDevice.orientationDidChangeNotification,
+            UIWindow.didBecomeKeyNotification,
+            // Catches Stage Manager / Split View resizes on iPad and the post-rotation
+            // settling pass that lands the trailing/leading inset on its final value.
+            UIApplication.didChangeStatusBarOrientationNotification
+        ]
+        for name in names {
+            let obs = NotificationCenter.default.addObserver(
+                forName: name, object: nil, queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated { self?.refresh() }
+            }
+            observers.append(obs)
+        }
+    }
+
+    deinit {
+        for obs in observers { NotificationCenter.default.removeObserver(obs) }
+    }
+
+    func refresh() {
+        let next = Self.readKeyWindowInsets()
+        if next != insets { insets = next }
+    }
+
+    private static func readKeyWindowInsets() -> UIEdgeInsets {
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        let window = scenes.flatMap(\.windows).first(where: { $0.isKeyWindow })
+            ?? scenes.first?.windows.first
+        return window?.safeAreaInsets ?? .zero
+    }
+}
+
 private struct AppThemeEnvironmentKey: EnvironmentKey {
     static let defaultValue: AppTheme = .paperGreen
 }

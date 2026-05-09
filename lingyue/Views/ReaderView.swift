@@ -12,6 +12,10 @@ struct ReaderView: View {
     /// reader's follow-system-dark logic so 夜读 auto-activates from the OS
     /// setting regardless of which app theme is selected.
     @StateObject private var systemAppearance = SystemAppearance()
+    /// Live window safe-area insets, read from the active key window. Used to clear the
+    /// landscape Dynamic Island / notch / iPad rounded-corner safe area, which the
+    /// outer `.ignoresSafeArea()` zeroes out of `proxy.safeAreaInsets`.
+    @StateObject private var windowInsets = WindowSafeAreaInsets()
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.verticalSizeClass) private var verticalSizeClass
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -179,11 +183,15 @@ struct ReaderView: View {
             // value, so they sit where the status bar would be even when it's hidden.
             let stableTop = max(stableSafeAreaTop, proxy.safeAreaInsets.top)
             let stableBottom = max(stableSafeAreaBottom, proxy.safeAreaInsets.bottom)
+            // Pull horizontal insets from the live key window (see WindowSafeAreaInsets).
+            // proxy.safeAreaInsets reads as 0 here because the outer .ignoresSafeArea()
+            // already consumed the safe area, so it cannot be used to clear the landscape
+            // Dynamic Island / notch.
             let stableInsets = EdgeInsets(
                 top: stableTop,
-                leading: proxy.safeAreaInsets.leading,
+                leading: windowInsets.insets.left,
                 bottom: stableBottom,
-                trailing: proxy.safeAreaInsets.trailing
+                trailing: windowInsets.insets.right
             )
             let textSize = readerTextSize(containerSize: proxy.size, safeAreaInsets: stableInsets)
             let pages = activeVisiblePages()
@@ -291,13 +299,17 @@ struct ReaderView: View {
                 // safeAreaInsets through GeometryReader before we rebuild the pager. Without
                 // the dispatch the rebuild reads the same stale insets we're trying to escape.
                 resetStableSafeAreaInsetsForOrientationChange()
+                windowInsets.refresh()
                 DispatchQueue.main.async {
+                    windowInsets.refresh()
                     rotationLayoutVersion &+= 1
                 }
             }
             .onChange(of: horizontalSizeClass) { _, _ in
                 resetStableSafeAreaInsetsForOrientationChange()
+                windowInsets.refresh()
                 DispatchQueue.main.async {
+                    windowInsets.refresh()
                     rotationLayoutVersion &+= 1
                 }
             }
