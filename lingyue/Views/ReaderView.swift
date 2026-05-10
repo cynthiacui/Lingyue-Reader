@@ -1694,9 +1694,10 @@ struct ReaderView: View {
         let content = displayed(readerContent(for: chapter, chapterIndex: chapterIndex))
         let fontSize = self.fontSize
         let lineSpacing = self.lineSpacing
+        let fontFamily = readerFontFamily
 
         let work = Task.detached(priority: .userInitiated) {
-            Self.paginate(content: content, textSize: textSize, fontSize: fontSize, lineSpacing: lineSpacing, fontFamily: readerFontFamily)
+            Self.paginate(content: content, textSize: textSize, fontSize: fontSize, lineSpacing: lineSpacing, fontFamily: fontFamily)
         }
         let pageContents = await withTaskCancellationHandler {
             await work.value
@@ -1881,8 +1882,9 @@ struct ReaderView: View {
 
         let fontSize = self.fontSize
         let lineSpacing = self.lineSpacing
+        let fontFamily = readerFontFamily
         let pages = await Task.detached(priority: .utility) {
-            Self.paginate(content: displayedContent, textSize: textSize, fontSize: fontSize, lineSpacing: lineSpacing, fontFamily: readerFontFamily)
+            Self.paginate(content: displayedContent, textSize: textSize, fontSize: fontSize, lineSpacing: lineSpacing, fontFamily: fontFamily)
         }.value
 
         guard !pages.isEmpty else { return }
