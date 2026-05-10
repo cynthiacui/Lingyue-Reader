@@ -1621,8 +1621,8 @@ private struct CompactReadingCard: View {
                 .tint(theme.accent)
                 .controlSize(.small)
         }
-        .padding(12)
-        .frame(maxWidth: .infinity, minHeight: 92, alignment: .topLeading)
+        .padding(10)
+        .frame(maxWidth: .infinity, minHeight: 84, alignment: .topLeading)
         .background(theme.cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .shadow(color: theme.cardShadow, radius: 8, x: 0, y: 4)
