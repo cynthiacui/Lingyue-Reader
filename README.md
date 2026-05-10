@@ -14,7 +14,7 @@ iOS 17+ · SwiftUI · 单窗口应用 · 包名 `com.lingyue.reader`
 
 ### Library / 书架
 
-![Library](docs/screenshots/library.png) ![Download manager](docs/screenshots/download-manager.png)
+| ![Library](docs/screenshots/library.png) | ![Download manager](docs/screenshots/download-manager.png) |
 
 The Library tab uses a wallet-stacked categorized layout: each shelf collapses to a stack of cover spines, tap to fan out, tap again to collapse. A 最近阅读 strip is pinned at the top with the most-recently-opened books and their progress, and a navigation-drawer search box matches across every imported book by title or author. Mail-style swipes expose 下载 and 清理缓存 on the left, 删除 on the right; long-press a book to assign it to a category. The toolbar's download button opens a 下载管理 sheet that lists every active or paused chapter download.
 
