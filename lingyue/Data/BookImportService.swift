@@ -59,6 +59,7 @@ enum WebBookImportError: LocalizedError {
     case badStatus(Int)
     case unsupportedEncoding
     case unreadableFile
+    case suspiciousChapterCatalog(count: Int, limit: Int)
 
     var errorDescription: String? {
         switch self {
@@ -76,6 +77,8 @@ enum WebBookImportError: LocalizedError {
             return "无法识别文件编码，仅支持 UTF-8 或 GB18030 的 .txt 文件。"
         case .unreadableFile:
             return "无法读取所选文件，请重新选择。"
+        case .suspiciousChapterCatalog(let count, let limit):
+            return "识别到 \(count) 个章节链接，超过安全上限 \(limit)。这可能是网页解析异常，请尝试从书籍目录页重新导入。"
         }
     }
 }
@@ -95,7 +98,10 @@ final class BookImportService: Sendable {
         content.hasPrefix(sourceBlockedContentSentinel)
     }
 
-    private let maxChapterCount = 2_000
+    /// Safety fuse for parser runaways, not a normal product cap. Legitimately long web novels
+    /// should import all chapters below this high ceiling; hitting it means the extractor likely
+    /// matched navigation/archive links as chapters.
+    private let runawayChapterLimit = 20_000
     private let biqugeAPIHosts = ["apiqu.cc", "apige.cc"]
     private let catalogRepairCache = OSAllocatedUnfairLock<[UUID: Bool]>(initialState: [:])
     private let httpSession: URLSession
@@ -148,9 +154,8 @@ final class BookImportService: Sendable {
         let summary = metadata.summary.isEmpty ? candidate.summary : metadata.summary
         let coverURLString = metadata.coverImageURL?.absoluteString ?? candidate.coverImageURLString
 
-        let chapterLinks = try await bestChapterLinks(from: bookHTML, sourceURL: candidate.sourceURL)
-            .prefix(maxChapterCount)
-            .map { $0 }
+        let discoveredChapterLinks = try await bestChapterLinks(from: bookHTML, sourceURL: candidate.sourceURL)
+        let chapterLinks = try checkedChapterLinks(discoveredChapterLinks)
         guard !chapterLinks.isEmpty else { throw WebBookImportError.noChaptersFound }
 
         let chapters = chapterLinks.map {
@@ -175,6 +180,16 @@ final class BookImportService: Sendable {
             sourceURLString: candidate.sourceURL.absoluteString,
             chapters: chapters
         )
+    }
+
+    private func checkedChapterLinks(_ links: [ChapterLink]) throws -> [ChapterLink] {
+        guard links.count <= runawayChapterLimit else {
+            throw WebBookImportError.suspiciousChapterCatalog(
+                count: links.count,
+                limit: runawayChapterLimit
+            )
+        }
+        return links
     }
 
     func importBook(from sourceURL: URL, fallbackTitle: String?) async throws -> Novel {
@@ -307,7 +322,18 @@ final class BookImportService: Sendable {
         guard !chapterBookIDs.isEmpty else { return false }
 
         let matchingCount = chapterBookIDs.filter { $0 == sourceBookID }.count
-        return matchingCount < max(1, chapterBookIDs.count / 2)
+        if matchingCount < max(1, chapterBookIDs.count / 2) {
+            return true
+        }
+
+        if isHJWZWHost(sourceURL),
+           novel.chapters.count >= 10,
+           let firstChapterNumber = novel.chapters.first.flatMap({ chapterNumber(from: $0.title) }),
+           firstChapterNumber > 50 {
+            return true
+        }
+
+        return false
     }
 
     func loadChapter(_ chapter: NovelChapter) async throws -> NovelChapter {
@@ -526,6 +552,14 @@ final class BookImportService: Sendable {
             || host.contains("hjwzw")
         guard isCatalogSource || BookSourceRegistry.isKnownHost(url) else { return nil }
 
+        if host.contains("hjwzw") {
+            let breadcrumbBookLink = #"<a[^>]+href=["'][^"']*/Book/\d+/?["'][^>]*>([^<]{2,100})</a>\s*(?:&nbsp;|\s|　)*>>"#
+            if let title = firstMatch(breadcrumbBookLink, in: html).map(cleanBookTitle),
+               isSpecificBookTitle(title) {
+                return title
+            }
+        }
+
         let patterns = [
             // 半夏小说 wraps the book name in <h1> inside <div class="book-describe">. Other
             // sites use similar info containers; this pattern grabs the first h1/h2 that lives
@@ -599,7 +633,7 @@ final class BookImportService: Sendable {
         if path == "/" || path.isEmpty || blockedPathFragments.contains(where: { path.contains($0) }) {
             return false
         }
-        if isHJWZWHost(url), !isHJWZWBookDetailPath(path) {
+        if isHJWZWHost(url), !isHJWZWImportableBookPath(path) {
             return false
         }
 
@@ -633,8 +667,10 @@ final class BookImportService: Sendable {
         return host == "hjwzw.com" || host.hasSuffix(".hjwzw.com")
     }
 
-    private func isHJWZWBookDetailPath(_ path: String) -> Bool {
+    private func isHJWZWImportableBookPath(_ path: String) -> Bool {
         path.range(of: #"^/book/\d+/?$"#, options: [.regularExpression, .caseInsensitive]) != nil
+            || path.range(of: #"^/book/chapter/\d+/?$"#, options: [.regularExpression, .caseInsensitive]) != nil
+            || path.range(of: #"^/book/read/\d+,\d+/?$"#, options: [.regularExpression, .caseInsensitive]) != nil
     }
 
     private func bestChapterLinks(from html: String, sourceURL: URL) async throws -> [ChapterLink] {
@@ -680,6 +716,14 @@ final class BookImportService: Sendable {
 #endif
         }
 
+        let hjwzwLinks = await hjwzwCatalogLinks(for: sourceURL, sourceBookID: sourceBookID)
+        if !hjwzwLinks.isEmpty {
+            candidateLists.append(hjwzwLinks)
+#if DEBUG
+            print("[ChapterImport] HJWZW catalog -> \(hjwzwLinks.count) chapters")
+#endif
+        }
+
         // Probe catalog URLs unless the source page already gave us a contiguous chapter list
         // starting at 第1章. For 努努书坊 / 破万卷小说 / 黄金屋中文 the book detail page lists every
         // chapter inline, so probing wastes HTTP requests. For 宙斯小说 the book detail page lists
@@ -688,6 +732,7 @@ final class BookImportService: Sendable {
         let alreadyComplete = looksContiguousFromOne(primaryLinks)
             || looksContiguousFromOne(freshLinks)
             || looksContiguousFromOne(apiLinks)
+            || looksContiguousFromOne(hjwzwLinks)
 
 #if DEBUG
         print("[ChapterImport] source=\(sourceURL.absoluteString) primary=\(primaryLinks.count) fresh=\(freshLinks.count) api=\(apiLinks.count) alreadyComplete=\(alreadyComplete)")
@@ -821,7 +866,7 @@ final class BookImportService: Sendable {
             return []
         }
 
-        return response.list.prefix(maxChapterCount).enumerated().compactMap { offset, rawTitle in
+        return response.list.enumerated().compactMap { offset, rawTitle in
             let title = cleanText(rawTitle)
             guard !title.isEmpty else { return nil }
             let chapterID = offset + 1
@@ -847,8 +892,8 @@ final class BookImportService: Sendable {
         }
 
         let endpoints = [
-            "https://m.5dxs.net/ajaxService?action=chapterlist&articleno=\(bookID)&index=0&size=2000&sort=1",
-            "https://m.adxs.net/ajaxService?action=chapterlist&articleno=\(bookID)&index=0&size=2000&sort=1"
+            "https://m.5dxs.net/ajaxService?action=chapterlist&articleno=\(bookID)&index=0&size=\(runawayChapterLimit)&sort=1",
+            "https://m.adxs.net/ajaxService?action=chapterlist&articleno=\(bookID)&index=0&size=\(runawayChapterLimit)&sort=1"
         ]
 
         for endpoint in endpoints {
@@ -860,7 +905,7 @@ final class BookImportService: Sendable {
                       let items = response.items, !items.isEmpty else {
                     continue
                 }
-                return items.prefix(maxChapterCount).compactMap { item in
+                return items.compactMap { item in
                     guard let chapterURL = absoluteURL(from: item.url, baseURL: sourceURL) else {
                         return nil
                     }
@@ -873,6 +918,29 @@ final class BookImportService: Sendable {
             }
         }
         return []
+    }
+
+    /// 黄金屋 reader pages only expose the nearby previous/next-ish chapter region in-page.
+    /// Its full catalog is a stable `/Book/Chapter/<book id>` page, so fetch that directly
+    /// whenever we can identify the book id from either the detail, catalog, or reader URL.
+    private func hjwzwCatalogLinks(for sourceURL: URL, sourceBookID: String?) async -> [ChapterLink] {
+        guard isHJWZWHost(sourceURL),
+              let bookID = sourceBookID ?? bookID(from: sourceURL),
+              let catalogURL = absoluteURL(from: "/Book/Chapter/\(bookID)", baseURL: sourceURL),
+              catalogURL != sourceURL else {
+            return []
+        }
+
+        do {
+            let html = try await fetchHTML(from: catalogURL)
+            return await chapterLinksAcrossPagination(
+                startingHTML: html,
+                startingURL: catalogURL,
+                sourceBookID: bookID
+            )
+        } catch {
+            return []
+        }
     }
 
     private func chapterListScore(_ links: [ChapterLink]) -> Int {
@@ -937,6 +1005,10 @@ final class BookImportService: Sendable {
         }
         if let ajaxURL = absoluteURL(from: "/ajax_novels/chapterlist/\(articleID).html", baseURL: baseURL) {
             urls.append(ajaxURL)
+        }
+        if isHJWZWHost(baseURL),
+           let hjwzwCatalogURL = absoluteURL(from: "/Book/Chapter/\(articleID)", baseURL: baseURL) {
+            urls.append(hjwzwCatalogURL)
         }
 
         return urls
@@ -1593,8 +1665,8 @@ final class BookImportService: Sendable {
     }
 
     private func bookID(from url: URL) -> String? {
-        let rawPath = url.path
-        let rawFragment = url.fragment(percentEncoded: false) ?? ""
+        let rawPath = url.path.lowercased()
+        let rawFragment = url.fragment(percentEncoded: false)?.lowercased() ?? ""
         let path: String
         if (rawPath.isEmpty || rawPath == "/"), !rawFragment.isEmpty {
             path = rawFragment.hasPrefix("/") ? rawFragment : "/" + rawFragment
@@ -1613,6 +1685,8 @@ final class BookImportService: Sendable {
             #"^/[a-z]+\d*/(\d+)/index/\d+\.html?$"#,
             #"^/[a-z]+\d*/(\d+)/?$"#,
             #"/book/(\d+)(?:/index)?\.html$"#,
+            #"/book/chapter/(\d+)/?$"#,
+            #"/book/read/(\d+),\d+/?$"#,
             #"/book/(\d+)/\d+(?:\.html?)?$"#,
             #"/book/(\d+)/?$"#,
             #"/books/(\d+)\.html$"#,
@@ -1741,6 +1815,7 @@ final class BookImportService: Sendable {
         let path = url.path.lowercased()
         return path.range(of: #"/txt/\d+/\d+\.html$"#, options: .regularExpression) != nil
             || path.range(of: #"/read/\d+[_/]\d+\.html?$"#, options: .regularExpression) != nil
+            || path.range(of: #"/book/read/\d+,\d+/?$"#, options: .regularExpression) != nil
             || path.range(of: #"/book/\d+/\d+(?:\.html?)?$"#, options: .regularExpression) != nil
             || path.range(of: #"/books/\d+/\d+\.html?$"#, options: .regularExpression) != nil
             || path.range(of: #"/(?:htm|html|index|kan|look)/\d+/\d+(?:\.html?)?$"#, options: .regularExpression) != nil
