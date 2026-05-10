@@ -599,6 +599,9 @@ final class BookImportService: Sendable {
         if path == "/" || path.isEmpty || blockedPathFragments.contains(where: { path.contains($0) }) {
             return false
         }
+        if isHJWZWHost(url), !isHJWZWBookDetailPath(path) {
+            return false
+        }
 
         let hasNovelMeta = loweredHTML.contains("og:novel")
             || loweredHTML.contains("book_name")
@@ -623,6 +626,15 @@ final class BookImportService: Sendable {
             || (hasAuthor && hasReaderActions)
             || (hasBookLikePath && hasAuthor)
             || (isKnownSourceHost && chapterCount >= 1)
+    }
+
+    private func isHJWZWHost(_ url: URL) -> Bool {
+        guard let host = url.host(percentEncoded: false)?.lowercased() else { return false }
+        return host == "hjwzw.com" || host.hasSuffix(".hjwzw.com")
+    }
+
+    private func isHJWZWBookDetailPath(_ path: String) -> Bool {
+        path.range(of: #"^/book/\d+/?$"#, options: [.regularExpression, .caseInsensitive]) != nil
     }
 
     private func bestChapterLinks(from html: String, sourceURL: URL) async throws -> [ChapterLink] {
