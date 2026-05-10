@@ -358,11 +358,6 @@ struct DiscoveryView: View {
         for await partialResults in stream {
             guard !Task.isCancelled, searchResultsQuery == query else { return }
             searchGroupedResults = partialResults
-            // Drop the spinner the moment any source returns hits; subsequent sources just
-            // stream in additional rows.
-            if !partialResults.isEmpty {
-                searchIsLoading = false
-            }
         }
 
         guard !Task.isCancelled, searchResultsQuery == query else { return }
@@ -410,14 +405,14 @@ private struct DiscoverySearchResultsView: View {
         ZStack {
             ThemeBackgroundView()
 
-            if isLoading {
+            if !groupedResults.isEmpty {
+                resultsList
+            } else if isLoading {
                 loadingView
             } else if let failedMessage {
                 errorView(message: failedMessage)
             } else if groupedResults.isEmpty {
                 emptyView
-            } else {
-                resultsList
             }
         }
         .navigationTitle("搜索结果")
@@ -501,10 +496,18 @@ private struct DiscoverySearchResultsView: View {
     private var resultsList: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
-                Text("“\(query)” 相关结果")
-                    .font(.subheadline)
-                    .foregroundStyle(theme.secondaryText)
-                    .padding(.horizontal, 4)
+                HStack(spacing: 8) {
+                    Text("“\(query)” 相关结果")
+                        .font(.subheadline)
+                        .foregroundStyle(theme.secondaryText)
+
+                    if isLoading {
+                        ProgressView()
+                            .controlSize(.mini)
+                            .tint(theme.accent)
+                    }
+                }
+                .padding(.horizontal, 4)
 
                 ForEach(groupedResults) { result in
                     VStack(alignment: .leading, spacing: 10) {
@@ -959,6 +962,8 @@ actor DiscoverySearchService {
                 }
 
                 var allHits: [DiscoveryRawSearchHit] = []
+                var seenHits = Set<DiscoveryRawSearchHit>()
+                var latestGrouped: [DiscoveryGroupedResult] = []
                 await withTaskGroup(of: [DiscoveryRawSearchHit].self) { group in
                     for source in searchableSources {
                         group.addTask { [self] in
@@ -968,9 +973,64 @@ actor DiscoverySearchService {
 
                     for await sourceHits in group {
                         if Task.isCancelled { break }
-                        allHits.append(contentsOf: sourceHits)
-                        let grouped = await self.groupAndSort(allHits, query: trimmed)
-                        continuation.yield(grouped)
+                        let newHits = sourceHits.filter { seenHits.insert($0).inserted }
+                        allHits.append(contentsOf: newHits)
+                        latestGrouped = await self.groupAndSort(allHits, query: trimmed)
+                        continuation.yield(latestGrouped)
+                    }
+                }
+
+                let fallbackQueries = smartFallbackQueries(for: trimmed, currentResults: latestGrouped)
+                guard !Task.isCancelled, !fallbackQueries.isEmpty else {
+                    continuation.finish()
+                    return
+                }
+
+                await withTaskGroup(of: [DiscoveryRawSearchHit].self) { group in
+                    for query in fallbackQueries {
+                        for source in searchableSources {
+                            group.addTask { [self] in
+                                await self.searchSingleSource(source, query: query)
+                            }
+                        }
+                    }
+
+                    for await sourceHits in group {
+                        if Task.isCancelled { break }
+                        let newHits = sourceHits.filter { seenHits.insert($0).inserted }
+                        guard !newHits.isEmpty else { continue }
+                        allHits.append(contentsOf: newHits)
+                        latestGrouped = await self.groupAndSort(allHits, query: trimmed)
+                        continuation.yield(DiscoveryRelevance.refineSmartFallbackResults(latestGrouped, query: trimmed))
+                    }
+                }
+
+                let adaptiveQueries = adaptiveSmartFallbackQueries(
+                    for: trimmed,
+                    currentResults: latestGrouped,
+                    searchedQueries: Set([trimmed] + fallbackQueries)
+                )
+                guard !Task.isCancelled, !adaptiveQueries.isEmpty else {
+                    continuation.finish()
+                    return
+                }
+
+                await withTaskGroup(of: [DiscoveryRawSearchHit].self) { group in
+                    for query in adaptiveQueries {
+                        for source in searchableSources {
+                            group.addTask { [self] in
+                                await self.searchSingleSource(source, query: query)
+                            }
+                        }
+                    }
+
+                    for await sourceHits in group {
+                        if Task.isCancelled { break }
+                        let newHits = sourceHits.filter { seenHits.insert($0).inserted }
+                        guard !newHits.isEmpty else { continue }
+                        allHits.append(contentsOf: newHits)
+                        latestGrouped = await self.groupAndSort(allHits, query: trimmed)
+                        continuation.yield(DiscoveryRelevance.refineSmartFallbackResults(latestGrouped, query: trimmed))
                     }
                 }
                 continuation.finish()
@@ -1077,6 +1137,166 @@ actor DiscoverySearchService {
 #endif
             return []
         }
+    }
+
+    private nonisolated func smartFallbackQueries(
+        for query: String,
+        currentResults: [DiscoveryGroupedResult]
+    ) -> [String] {
+        guard DiscoveryRelevance.shouldRunSmartFallback(for: query, currentResults: currentResults) else {
+            return []
+        }
+
+        let normalized = DiscoveryTextCleaner.normalizedComparableText(query)
+        let characters = Array(normalized)
+        guard characters.count >= 3 else { return [] }
+
+        var scoredFragments: [String: Double] = [:]
+        func add(_ fragment: String, baseScore: Double) {
+            let normalizedFragment = DiscoveryTextCleaner.normalizedComparableText(fragment)
+            guard normalizedFragment.count >= 1, normalizedFragment != normalized else { return }
+            let score = baseScore + smartFallbackDistinctivenessScore(normalizedFragment)
+            scoredFragments[normalizedFragment] = max(scoredFragments[normalizedFragment] ?? -.infinity, score)
+        }
+
+        let maxWindowLength = min(4, max(2, characters.count - 1))
+        if maxWindowLength >= 2 {
+            for length in stride(from: maxWindowLength, through: 2, by: -1) {
+                guard characters.count >= length else { continue }
+                for start in 0...(characters.count - length) {
+                    let fragment = String(characters[start..<(start + length)])
+                    add(fragment, baseScore: Double(length * 12))
+                }
+            }
+        }
+
+        // Three-Hanzi typo queries like "诡之主" need a distinctive anchor; searching only
+        // "之主" is too broad and searching "诡之" may still be too literal for some sources.
+        if characters.count == 3, let first = characters.first {
+            add(String(first), baseScore: 26)
+        }
+
+        let maxFallbackQueries = 2
+        return scoredFragments
+            .sorted { lhs, rhs in
+                if lhs.value == rhs.value {
+                    return lhs.key.count > rhs.key.count
+                }
+                return lhs.value > rhs.value
+            }
+            .prefix(maxFallbackQueries)
+            .map(\.key)
+    }
+
+    private nonisolated func smartFallbackDistinctivenessScore(_ text: String) -> Double {
+        let commonCharacters = Set("之一是在不了有和人这中大为上个国我以要他时来用们生到作地于出就分对成会可主下")
+        let genericFragments: Set<String> = ["之主", "之王", "之神", "之子", "之路", "之门", "天下", "世界"]
+
+        var score = 0.0
+        for character in text {
+            score += commonCharacters.contains(character) ? -2 : 7
+        }
+        if Set(text).count == text.count {
+            score += 2
+        }
+        if genericFragments.contains(text) {
+            score -= 24
+        }
+        return score
+    }
+
+    private nonisolated func adaptiveSmartFallbackQueries(
+        for query: String,
+        currentResults: [DiscoveryGroupedResult],
+        searchedQueries: Set<String>
+    ) -> [String] {
+        guard DiscoveryRelevance.shouldRunAdaptiveSmartFallback(for: query, currentResults: currentResults) else {
+            return []
+        }
+
+        let normalizedQuery = DiscoveryTextCleaner.normalizedComparableText(query)
+        let queryCharacters = Array(normalizedQuery)
+        guard queryCharacters.count >= 3 else { return [] }
+
+        var scoredFragments: [String: Double] = [:]
+
+        for result in currentResults.prefix(8) {
+            let normalizedTitle = DiscoveryTextCleaner.normalizedComparableText(result.title)
+            let titleCharacters = Array(normalizedTitle)
+            guard let positions = orderedMatchPositions(queryCharacters, in: titleCharacters) else {
+                continue
+            }
+
+            for index in 0..<(positions.count - 1) {
+                let left = positions[index]
+                let right = positions[index + 1]
+                guard right > left + 1 else { continue }
+
+                let insertedStart = left + 1
+                let bridgeLength = min(3, right - left)
+                let bridgeEnd = min(titleCharacters.count, left + bridgeLength)
+                guard insertedStart < titleCharacters.count, bridgeEnd > left else { continue }
+
+                let fragment = String(titleCharacters[left..<bridgeEnd])
+                addAdaptiveFragment(
+                    fragment,
+                    resultScore: result.relevance,
+                    into: &scoredFragments,
+                    searchedQueries: searchedQueries
+                )
+            }
+
+            if titleCharacters.first == queryCharacters.first, titleCharacters.count >= 2 {
+                let leadingPair = String(titleCharacters[0..<2])
+                addAdaptiveFragment(
+                    leadingPair,
+                    resultScore: result.relevance + 8,
+                    into: &scoredFragments,
+                    searchedQueries: searchedQueries
+                )
+            }
+        }
+
+        return scoredFragments
+            .sorted { lhs, rhs in
+                if lhs.value == rhs.value {
+                    return lhs.key.count < rhs.key.count
+                }
+                return lhs.value > rhs.value
+            }
+            .prefix(1)
+            .map(\.key)
+    }
+
+    private nonisolated func addAdaptiveFragment(
+        _ fragment: String,
+        resultScore: Double,
+        into scoredFragments: inout [String: Double],
+        searchedQueries: Set<String>
+    ) {
+        let normalized = DiscoveryTextCleaner.normalizedComparableText(fragment)
+        guard normalized.count >= 2, !searchedQueries.contains(normalized) else { return }
+        let score = resultScore + smartFallbackDistinctivenessScore(normalized)
+        scoredFragments[normalized] = max(scoredFragments[normalized] ?? -.infinity, score)
+    }
+
+    private nonisolated func orderedMatchPositions(
+        _ queryCharacters: [Character],
+        in titleCharacters: [Character]
+    ) -> [Int]? {
+        guard !queryCharacters.isEmpty, !titleCharacters.isEmpty else { return nil }
+
+        var positions: [Int] = []
+        var searchStart = 0
+        for queryCharacter in queryCharacters {
+            guard searchStart < titleCharacters.count else { return nil }
+            guard let matchIndex = titleCharacters[searchStart...].firstIndex(of: queryCharacter) else {
+                return nil
+            }
+            positions.append(matchIndex)
+            searchStart = matchIndex + 1
+        }
+        return positions
     }
 
     /// Drops hits whose `probeChapterURL` returns a copyright-takedown body. Sources that
@@ -2221,7 +2441,7 @@ private enum DiscoveryTextCleaner {
         return cleaned
     }
 
-    private static func normalizedComparableText(_ text: String) -> String {
+    static func normalizedComparableText(_ text: String) -> String {
         text
             .replacingOccurrences(of: #"[^\p{L}\p{N}]"#, with: "", options: .regularExpression)
             .lowercased()
@@ -2404,6 +2624,37 @@ private enum DiscoveryTextCleaner {
 }
 
 private enum DiscoveryRelevance {
+    static func shouldRunSmartFallback(for query: String, currentResults: [DiscoveryGroupedResult]) -> Bool {
+        let normalizedQuery = normalizedComparableText(query)
+        guard normalizedQuery.count >= 3, containsCJK(normalizedQuery) else { return false }
+
+        guard let bestScore = currentResults.map(\.relevance).max() else {
+            return true
+        }
+
+        // Exact/healthy searches should stay exactly as fast as before. Fallback only starts
+        // when the best current candidate looks like a partial-fragment hit, e.g. "之主"
+        // matches for a typo query like "诡之主".
+        return bestScore < 86
+    }
+
+    static func shouldRunAdaptiveSmartFallback(
+        for query: String,
+        currentResults: [DiscoveryGroupedResult]
+    ) -> Bool {
+        let normalizedQuery = normalizedComparableText(query)
+        guard normalizedQuery.count >= 3, containsCJK(normalizedQuery) else { return false }
+        guard !currentResults.isEmpty else { return false }
+        return (currentResults.map(\.relevance).max() ?? 0) < 92
+    }
+
+    static func refineSmartFallbackResults(
+        _ results: [DiscoveryGroupedResult],
+        query: String
+    ) -> [DiscoveryGroupedResult] {
+        results
+    }
+
     static func score(title: String, summary: String, query: String, sourceName: String, rank: Int) -> Double {
         let normalizedTitle = normalizedComparableText(title)
         let normalizedSummary = normalizedComparableText(summary)
@@ -2424,11 +2675,24 @@ private enum DiscoveryRelevance {
     private static func matchPercentage(candidate: String, query: String) -> Double {
         guard !candidate.isEmpty, !query.isEmpty else { return 0 }
         if candidate.contains(query) {
-            return 1
+            let extraCharacters = max(0, candidate.count - query.count)
+            if extraCharacters <= 2 {
+                return 1
+            }
+            return max(0.75, Double(query.count + 2) / Double(candidate.count))
         }
 
         let matchedCount = longestCommonSubsequenceLength(Array(candidate), Array(query))
-        return Double(matchedCount) / Double(query.count)
+        let coverage = Double(matchedCount) / Double(query.count)
+        guard coverage == 1 else { return coverage }
+
+        // Treat a single inserted/missed Hanzi as a strong typo match, but don't let very
+        // long titles win merely because the query characters appear somewhere in order.
+        let extraCharacters = max(0, candidate.count - query.count)
+        if extraCharacters <= 1 {
+            return 1
+        }
+        return max(0.70, Double(query.count + 1) / Double(candidate.count))
     }
 
     private static func longestCommonSubsequenceLength(_ lhs: [Character], _ rhs: [Character]) -> Int {
@@ -2457,6 +2721,12 @@ private enum DiscoveryRelevance {
             .replacingOccurrences(of: #"[^\p{L}\p{N}]"#, with: "", options: .regularExpression)
             .lowercased()
             .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func containsCJK(_ text: String) -> Bool {
+        text.unicodeScalars.contains { scalar in
+            (0x4E00...0x9FFF).contains(Int(scalar.value))
+        }
     }
 }
 
