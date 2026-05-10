@@ -1750,10 +1750,7 @@ struct ReaderView: View {
         }
 
         if !chapter.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return stripLeadingTitleRepeats(
-                in: chapter.content,
-                chapterTitle: chapter.title
-            )
+            return readerBodyWithChapterTitle(for: chapter, content: chapter.content)
         }
 
         guard chapter.sourceURLString != nil else {
@@ -1772,10 +1769,7 @@ struct ReaderView: View {
         // disk directly is fast enough to do inline on the render pass.
         if let cached = ChapterContentCache.diskCachedChapter(for: chapter),
            !cached.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return stripLeadingTitleRepeats(
-                in: cached.content,
-                chapterTitle: chapter.title
-            )
+            return readerBodyWithChapterTitle(for: chapter, content: cached.content)
         }
 
         if loadingChapterKeys.contains(key) {
@@ -1783,6 +1777,19 @@ struct ReaderView: View {
         }
 
         return "\(chapter.title)\n\n正在加载章节内容..."
+    }
+
+    private func readerBodyWithChapterTitle(for chapter: NovelChapter, content: String) -> String {
+        let chapterTitle = chapter.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let body = stripLeadingTitleRepeats(
+            in: content,
+            chapterTitle: chapter.title
+        )
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard !chapterTitle.isEmpty else { return body }
+        guard !body.isEmpty else { return chapterTitle }
+        return "\(chapterTitle)\n\n\(body)"
     }
 
     @MainActor
@@ -1860,11 +1867,8 @@ struct ReaderView: View {
         let textSize = lastKnownTextSize
         guard textSize.width > 0, textSize.height > 0 else { return }
 
-        let strippedContent = stripLeadingTitleRepeats(
-            in: chapter.content,
-            chapterTitle: chapter.title
-        )
-        let displayedContent = displayed(strippedContent)
+        let content = readerBodyWithChapterTitle(for: chapter, content: chapter.content)
+        let displayedContent = displayed(content)
         guard !displayedContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
 
         let signature = paginationSignature(
@@ -2440,4 +2444,3 @@ private struct BookSourceSwitcherSheet: View {
         await task.value
     }
 }
-
