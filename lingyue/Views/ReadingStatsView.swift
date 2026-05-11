@@ -1153,7 +1153,11 @@ private struct StatsTrendChart: View {
                 }
 
                 ForEach(Array(points.enumerated()), id: \.element.id) { index, point in
-                    if hasReadingData && point.durationSeconds > 0 {
+                    // Bars render only for buckets that show as ≥1 minute. Otherwise a few-second
+                    // bucket would display as "0 分钟" in the tooltip yet still draw a visible
+                    // bar (and, because the 8pt floor doesn't apply to slightly-larger sub-minute
+                    // values, two "0 分钟" buckets could even render at different heights).
+                    if hasReadingData && Int(point.durationSeconds / 60) >= 1 {
                         let x = xPosition(for: index, width: width)
                         let height = barHeight(for: point.durationSeconds, maxValue: maxValue)
                         let isSelected = selectedPointID == point.id
@@ -1187,7 +1191,7 @@ private struct StatsTrendChart: View {
 
                 if let selected = selectedPoint(in: points),
                    let index = points.firstIndex(where: { $0.id == selected.id }),
-                   selected.durationSeconds > 0 {
+                   Int(selected.durationSeconds / 60) >= 1 {
                     let x = xPosition(for: index, width: width)
                     let height = barHeight(for: selected.durationSeconds, maxValue: maxValue)
                     Text(compactDuration(selected.durationSeconds))

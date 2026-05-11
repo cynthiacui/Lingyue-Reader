@@ -24,6 +24,7 @@ struct ReaderView: View {
     @AppStorage("reader.lineSpacing") private var lineSpacing = 8.0
     @AppStorage("reader.fontFamily") private var fontFamilyRaw = ReaderFontFamily.system.rawValue
     @AppStorage("reader.pageTransition") private var pageTransitionRaw = PageTransitionStyle.instant.rawValue
+    @AppStorage("reader.twoColumn") private var twoColumnLayout = false
     @AppStorage("reader.theme") private var themeRawValue = ReadingTheme.paper.rawValue
     @AppStorage("reader.followSystemDark") private var followSystemDark = false
     @AppStorage("reader.usesTraditionalChinese") private var usesTraditionalChinese = false
@@ -56,6 +57,10 @@ struct ReaderView: View {
     /// pagination step entirely so the reader doesn't flash a placeholder.
     @State private var paginationCache: [String: [String]] = [:]
     @State private var lastKnownTextSize: CGSize = .zero
+    /// Most recent container size observed by the body. Used by `useTwoColumn` and by tap-zone /
+    /// auto-scroll code that runs outside a render pass and otherwise has no access to the
+    /// container width. Zero until the first GeometryReader pass settles.
+    @State private var lastContainerSize: CGSize = .zero
     @State private var autoScrollTask: Task<Void, Never>?
     @State private var browserDestination: URL?
     @State private var showSourceSwitcher = false
@@ -171,6 +176,20 @@ struct ReaderView: View {
         PageTransitionStyle(rawValue: pageTransitionRaw) ?? .instant
     }
 
+    /// Two-column landscape spread is only meaningful when the container is actually wider
+    /// than it is tall — on phones in portrait, two narrow columns are worse than one. Gate
+    /// strictly on the observed container size so the user can leave the setting on and have
+    /// it automatically engage in landscape on any device.
+    private var useTwoColumn: Bool {
+        twoColumnLayout
+            && lastContainerSize.width > lastContainerSize.height
+            && lastContainerSize.width > 0
+    }
+
+    /// Horizontal space between the two columns in a spread. Matches `horizontalMargin` so the
+    /// gap between columns reads the same weight as the outer page margins.
+    private var twoColumnGutter: CGFloat { 32 }
+
     private var pageTransitionBinding: Binding<String> {
         Binding(
             get: { pageTransitionStyle.rawValue },
@@ -280,6 +299,7 @@ struct ReaderView: View {
             .onAppear {
                 ratchetStableSafeAreaInsets(top: proxy.safeAreaInsets.top,
                                             bottom: proxy.safeAreaInsets.bottom)
+                lastContainerSize = proxy.size
                 setInitialChapterIfNeeded(textSize: textSize)
                 startReadingStatsSession(pages: pages)
                 persistReadingState(pages: pages)
@@ -314,6 +334,7 @@ struct ReaderView: View {
                 // the dispatch the rebuild reads the same stale insets we're trying to escape.
                 resetStableSafeAreaInsetsForOrientationChange()
                 windowInsets.refresh()
+                lastContainerSize = proxy.size
                 DispatchQueue.main.async {
                     windowInsets.refresh()
                     rotationLayoutVersion &+= 1
@@ -322,6 +343,7 @@ struct ReaderView: View {
             .onChange(of: horizontalSizeClass) { _, _ in
                 resetStableSafeAreaInsetsForOrientationChange()
                 windowInsets.refresh()
+                lastContainerSize = proxy.size
                 DispatchQueue.main.async {
                     windowInsets.refresh()
                     rotationLayoutVersion &+= 1
@@ -452,8 +474,32 @@ struct ReaderView: View {
         max(safeTop + 8, 52)
     }
 
-    private func pageView(for page: ReaderPageItem, safeAreaInsets: EdgeInsets, textSize: CGSize) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+    /// In a two-column spread, the column on the left of the gutter, the column on the right,
+    /// or — when not in two-column mode — a single full-width column that uses both outer
+    /// margins. The padding rules per side are computed in `pageView`.
+    private enum PageColumnSide { case full, left, right }
+
+    private func pageView(
+        for page: ReaderPageItem,
+        safeAreaInsets: EdgeInsets,
+        textSize: CGSize,
+        columnSide: PageColumnSide = .full
+    ) -> some View {
+        let halfGutter = twoColumnGutter / 2
+        let leadingPadding: CGFloat = {
+            switch columnSide {
+            case .full, .left: return max(horizontalMargin, safeAreaInsets.leading)
+            case .right:       return halfGutter
+            }
+        }()
+        let trailingPadding: CGFloat = {
+            switch columnSide {
+            case .full, .right: return max(horizontalMargin, safeAreaInsets.trailing)
+            case .left:         return halfGutter
+            }
+        }()
+
+        return VStack(alignment: .leading, spacing: 8) {
             JustifiedReaderText(
                 text: page.content,
                 fontSize: fontSize,
@@ -480,11 +526,44 @@ struct ReaderView: View {
         // Landscape: the Dynamic Island / notch lives on one horizontal edge, so
         // safeAreaInsets.leading or .trailing reports ~50pt. Pad the body away from
         // that edge by at least the inset so glyphs never slide under the cutout.
-        .padding(.leading, max(horizontalMargin, safeAreaInsets.leading))
-        .padding(.trailing, max(horizontalMargin, safeAreaInsets.trailing))
+        // In two-column mode, the inner edge of each column uses half the gutter
+        // instead of a full outer margin so the two columns sit close to the center.
+        .padding(.leading, leadingPadding)
+        .padding(.trailing, trailingPadding)
         .padding(.top, contentTopPadding(safeAreaInsets: safeAreaInsets))
         .padding(.bottom, contentBottomPadding(safeAreaInsets: safeAreaInsets))
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    /// Renders one two-column spread: the page at `currentChapterPageIndex` on the left and
+    /// the next page on the right. When the chapter has an odd page count the trailing right
+    /// column is left empty so the last spread's geometry stays consistent with the others.
+    private func spreadView(
+        leftPage: ReaderPageItem,
+        rightPage: ReaderPageItem?,
+        safeAreaInsets: EdgeInsets,
+        textSize: CGSize
+    ) -> some View {
+        HStack(spacing: 0) {
+            pageView(for: leftPage,
+                     safeAreaInsets: safeAreaInsets,
+                     textSize: textSize,
+                     columnSide: .left)
+                .frame(maxWidth: .infinity)
+
+            if let rightPage {
+                pageView(for: rightPage,
+                         safeAreaInsets: safeAreaInsets,
+                         textSize: textSize,
+                         columnSide: .right)
+                    .frame(maxWidth: .infinity)
+            } else {
+                Color.clear
+                    .frame(maxWidth: .infinity)
+                    .padding(.leading, twoColumnGutter / 2)
+                    .padding(.trailing, max(horizontalMargin, safeAreaInsets.trailing))
+            }
+        }
     }
 
     /// Discrete swipe-to-turn handler. Uses `predictedEndTranslation` so a quick flick is
@@ -547,8 +626,20 @@ struct ReaderView: View {
         let effective = abs(predictedEnd.width) >= threshold ? predictedEnd.width : translation.width
         guard abs(effective) >= threshold else { return }
 
-        let atFirstPage = startPageIndex == 0
-        let atLastPage = startPageIndex >= pageCount - 1
+        // In two-column mode the pager has spread-count items, not page-count items. A swipe
+        // at the last spread starts on a page that's >= 2 less than the total (or == pageCount-1
+        // when the chapter has an odd page count and the last spread's right column is blank).
+        let atFirstPage: Bool
+        let atLastPage: Bool
+        if useTwoColumn {
+            atFirstPage = startPageIndex < 2
+            let spreadCount = (pageCount + 1) / 2
+            let lastSpreadStart = max((spreadCount - 1) * 2, 0)
+            atLastPage = startPageIndex >= lastSpreadStart
+        } else {
+            atFirstPage = startPageIndex == 0
+            atLastPage = startPageIndex >= pageCount - 1
+        }
         let overlayVisible = showControls || showChapterPicker || showPreferences
 
         if effective < 0, atLastPage, currentChapterIndex < baseChapters.count - 1 {
@@ -596,7 +687,25 @@ struct ReaderView: View {
         safeAreaInsets: EdgeInsets,
         containerSize: CGSize
     ) -> some View {
-        pageView(for: currentPage, safeAreaInsets: safeAreaInsets, textSize: textSize)
+        let pageBody: AnyView = {
+            if useTwoColumn(containerSize: containerSize) {
+                let leftIndex = currentChapterPageIndex - (currentChapterPageIndex % 2)
+                let leftPage = pages.indices.contains(leftIndex) ? pages[leftIndex] : currentPage
+                let rightIndex = leftIndex + 1
+                let rightPage = pages.indices.contains(rightIndex) ? pages[rightIndex] : nil
+                return AnyView(
+                    spreadView(leftPage: leftPage,
+                               rightPage: rightPage,
+                               safeAreaInsets: safeAreaInsets,
+                               textSize: textSize)
+                )
+            }
+            return AnyView(
+                pageView(for: currentPage, safeAreaInsets: safeAreaInsets, textSize: textSize)
+            )
+        }()
+
+        return pageBody
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .contentShape(Rectangle())
             .id("\(currentChapterIndex)-\(currentChapterPageIndex)-\(rotationLayoutVersion)")
@@ -615,6 +724,15 @@ struct ReaderView: View {
                         handleReaderTap(at: event.location, in: containerSize, pages: pages)
                     }
             )
+    }
+
+    /// Same shape as the computed `useTwoColumn`, but reads container size from a direct
+    /// argument. Render passes always know the current container; the stored
+    /// `lastContainerSize` exists for navigation helpers that run outside a render frame.
+    private func useTwoColumn(containerSize: CGSize) -> Bool {
+        twoColumnLayout
+            && containerSize.width > containerSize.height
+            && containerSize.width > 0
     }
 
     /// Follow-finger horizontal slide via UIPageViewController(.scroll). Used to be a
@@ -663,12 +781,37 @@ struct ReaderView: View {
         safeAreaInsets: EdgeInsets,
         containerSize: CGSize
     ) -> some View {
-        PageCurlPager(
+        let usingTwoColumn = useTwoColumn(containerSize: containerSize)
+        let pagerCount = usingTwoColumn ? (pages.count + 1) / 2 : pages.count
+        let pagerBinding: Binding<Int> = usingTwoColumn
+            ? Binding(
+                get: { currentChapterPageIndex / 2 },
+                set: { newSpread in currentChapterPageIndex = newSpread * 2 }
+            )
+            : $currentChapterPageIndex
+
+        return PageCurlPager(
             transitionStyle: transitionStyle,
-            pageCount: pages.count,
-            currentIndex: $currentChapterPageIndex,
+            pageCount: pagerCount,
+            currentIndex: pagerBinding,
             backgroundColor: UIColor(pageBackground),
             renderPage: { [pages] index in
+                if usingTwoColumn {
+                    let leftIdx = index * 2
+                    let rightIdx = leftIdx + 1
+                    guard let leftPage = pages.indices.contains(leftIdx) ? pages[leftIdx] : pages.last else {
+                        return AnyView(self.pageBackground.ignoresSafeArea())
+                    }
+                    let rightPage = pages.indices.contains(rightIdx) ? pages[rightIdx] : nil
+                    return AnyView(
+                        spreadView(leftPage: leftPage,
+                                   rightPage: rightPage,
+                                   safeAreaInsets: safeAreaInsets,
+                                   textSize: textSize)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .background(self.pageBackground)
+                    )
+                }
                 guard let page = pages.indices.contains(index) ? pages[index] : pages.last else {
                     return AnyView(self.pageBackground.ignoresSafeArea())
                 }
@@ -680,7 +823,7 @@ struct ReaderView: View {
             }
         )
         .ignoresSafeArea()
-        .id("\(currentChapterIndex)-\(rotationLayoutVersion)")
+        .id("\(currentChapterIndex)-\(rotationLayoutVersion)-\(usingTwoColumn ? "2" : "1")")
         .simultaneousGesture(
             SpatialTapGesture(coordinateSpace: .local)
                 .onEnded { event in
@@ -909,7 +1052,10 @@ struct ReaderView: View {
             let sliderValue = Binding<Double>(
                 get: { Double(clampedIndex) },
                 set: { newValue in
-                    let next = min(max(Int(newValue.rounded()), 0), pageCount - 1)
+                    var next = min(max(Int(newValue.rounded()), 0), pageCount - 1)
+                    // Two-column mode navigates by spread; snap any in-between drop to the
+                    // spread's left page so we never strand the user on a right-column page.
+                    if useTwoColumn { next -= next % 2 }
                     if next != currentChapterPageIndex {
                         currentChapterPageIndex = next
                     }
@@ -924,7 +1070,8 @@ struct ReaderView: View {
                                 guard proxy.size.width > 0 else { return }
                                 let fraction = max(0, min(1, event.location.x / proxy.size.width))
                                 let target = Int((fraction * upperBound).rounded())
-                                let clamped = min(max(target, 0), pageCount - 1)
+                                var clamped = min(max(target, 0), pageCount - 1)
+                                if useTwoColumn { clamped -= clamped % 2 }
                                 if clamped != currentChapterPageIndex {
                                     currentChapterPageIndex = clamped
                                 }
@@ -1087,6 +1234,11 @@ struct ReaderView: View {
                             label: "滚读",
                             systemImage: "arrow.down.to.line.compact",
                             isOn: $autoScroll
+                        )
+                        preferenceTogglePill(
+                            label: "双栏",
+                            systemImage: "rectangle.split.2x1",
+                            isOn: $twoColumnLayout
                         )
                     }
 
@@ -1402,6 +1554,14 @@ struct ReaderView: View {
             return
         }
 
+        // In two-column mode, the visible "page" is actually a spread that always starts on an
+        // even page index. Snap into that grid so the user can never land mid-spread (e.g.
+        // after a font-size change re-paginates and the old index now points at a right-column).
+        let lastIndex = max(pages.count - 1, 0)
+        let lastNavigableIndex = useTwoColumn
+            ? max(((pages.count + 1) / 2 - 1) * 2, 0)
+            : lastIndex
+
         if shouldJumpToLastPageAfterPagination {
             shouldJumpToLastPageAfterPagination = false
             // After a backward chapter jump (prev-page from page 0), the just-paginated chapter
@@ -1410,10 +1570,12 @@ struct ReaderView: View {
             var transaction = Transaction()
             transaction.disablesAnimations = true
             withTransaction(transaction) {
-                currentChapterPageIndex = max(pages.count - 1, 0)
+                currentChapterPageIndex = lastNavigableIndex
             }
         } else {
-            currentChapterPageIndex = min(currentChapterPageIndex, pages.count - 1)
+            var clamped = min(currentChapterPageIndex, lastNavigableIndex)
+            if useTwoColumn { clamped -= clamped % 2 }
+            currentChapterPageIndex = max(clamped, 0)
         }
     }
 
@@ -1437,8 +1599,9 @@ struct ReaderView: View {
 
     private func goToPreviousPage(pages: [ReaderPageItem]) {
         guard !showChapterPicker else { return }
-        if currentChapterPageIndex > 0 {
-            setChapterPageIndexAnimatingIfNeeded(currentChapterPageIndex - 1)
+        let step = useTwoColumn ? 2 : 1
+        if currentChapterPageIndex >= step {
+            setChapterPageIndexAnimatingIfNeeded(currentChapterPageIndex - step)
         } else if currentChapterIndex > 0 {
             goToChapter(currentChapterIndex - 1, pageIndex: 0, landOnLastPage: true)
         }
@@ -1446,8 +1609,15 @@ struct ReaderView: View {
 
     private func goToNextPage(pages: [ReaderPageItem]) {
         guard !showChapterPicker else { return }
-        if currentChapterPageIndex < pages.count - 1 {
-            setChapterPageIndexAnimatingIfNeeded(currentChapterPageIndex + 1)
+        let step = useTwoColumn ? 2 : 1
+        // In two-column mode, the next spread starts at currentChapterPageIndex + 2. If only
+        // one page remains in the chapter (the right column of the last spread is blank),
+        // a step forward should still flip to the next chapter, not advance into a phantom page.
+        let lastNavigablePageIndex = useTwoColumn
+            ? max(((pages.count + 1) / 2 - 1) * 2, 0)
+            : pages.count - 1
+        if currentChapterPageIndex < lastNavigablePageIndex {
+            setChapterPageIndexAnimatingIfNeeded(min(currentChapterPageIndex + step, lastNavigablePageIndex))
         } else if currentChapterIndex < baseChapters.count - 1 {
             goToChapter(currentChapterIndex + 1, pageIndex: 0)
         }
@@ -1486,9 +1656,13 @@ struct ReaderView: View {
     @MainActor
     private func advanceAutoScrollPage() {
         let pages = activeVisiblePages()
-        if currentChapterPageIndex < pages.count - 1 {
+        let step = useTwoColumn ? 2 : 1
+        let lastNavigablePageIndex = useTwoColumn
+            ? max(((pages.count + 1) / 2 - 1) * 2, 0)
+            : pages.count - 1
+        if currentChapterPageIndex < lastNavigablePageIndex {
             withAnimation(.easeInOut(duration: 0.45)) {
-                currentChapterPageIndex += 1
+                currentChapterPageIndex = min(currentChapterPageIndex + step, lastNavigablePageIndex)
             }
         } else if currentChapterIndex < baseChapters.count - 1 {
             goToChapter(currentChapterIndex + 1, pageIndex: 0)
@@ -2107,7 +2281,16 @@ struct ReaderView: View {
         // a Dynamic Island would over-fill lines and glyphs would slide under the cutout.
         let leading = max(horizontalMargin, safeAreaInsets.leading)
         let trailing = max(horizontalMargin, safeAreaInsets.trailing)
-        let width = max(containerSize.width - leading - trailing, 120)
+        let totalWidth = max(containerSize.width - leading - trailing, 120)
+        // Two-column landscape spread halves the per-column width (minus the gutter between
+        // columns) so the paginator produces pages that fit one column. The renderer then
+        // shows two consecutive pages side by side as a single spread.
+        let usingTwoColumn = twoColumnLayout
+            && containerSize.width > containerSize.height
+            && containerSize.width > 0
+        let columnWidth = usingTwoColumn
+            ? max((totalWidth - twoColumnGutter) / 2, 120)
+            : totalWidth
         let height = max(
             containerSize.height
             - contentTopPadding(safeAreaInsets: safeAreaInsets)
@@ -2117,7 +2300,7 @@ struct ReaderView: View {
             160
         )
 
-        return CGSize(width: width, height: height)
+        return CGSize(width: columnWidth, height: height)
     }
 
     private var footerTextHeight: CGFloat {

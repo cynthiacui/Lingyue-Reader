@@ -13,6 +13,7 @@ struct SettingsView: View {
     @AppStorage("reader.lineSpacing") private var lineSpacing = 8.0
     @AppStorage("reader.fontFamily") private var fontFamilyRaw = ReaderFontFamily.system.rawValue
     @AppStorage("reader.pageTransition") private var pageTransitionRaw = PageTransitionStyle.instant.rawValue
+    @AppStorage("reader.twoColumn") private var twoColumnLayout = false
     @AppStorage("reader.theme") private var themeRawValue = ReadingTheme.paper.rawValue
     @AppStorage("reader.followSystemDark") private var readerFollowSystemDark = false
     @AppStorage("reader.usesTraditionalChinese") private var usesTraditionalChinese = false
@@ -265,6 +266,12 @@ struct SettingsView: View {
                 fontFamilyPicker
 
                 pageTransitionPicker
+
+                Toggle(isOn: $twoColumnLayout) {
+                    Label("横屏双栏", systemImage: "rectangle.split.2x1")
+                        .font(.headline)
+                }
+                .frame(minHeight: 36)
 
                 // The trailing padding pushes the next toggle far enough below themePicker that
                 // the nested 跟随系统深色模式 row reads as part of the 背景颜色 group, not as the
