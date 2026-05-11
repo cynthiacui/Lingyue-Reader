@@ -980,59 +980,60 @@ actor DiscoverySearchService {
                     }
                 }
 
+                // Stages below each have their own gate (best-score threshold), so a stage that
+                // yields zero queries means *that* stage didn't apply — not that the pipeline
+                // should give up. Run each independently so a low-yield middle stage can't
+                // starve a later stage like delete-one of its chance to fire.
+                func runFallbackBatch(_ queries: [String]) async {
+                    guard !queries.isEmpty else { return }
+                    await withTaskGroup(of: [DiscoveryRawSearchHit].self) { group in
+                        for query in queries {
+                            for source in searchableSources {
+                                group.addTask { [self] in
+                                    await self.searchSingleSource(source, query: query)
+                                }
+                            }
+                        }
+                        for await sourceHits in group {
+                            if Task.isCancelled { break }
+                            let newHits = sourceHits.filter { seenHits.insert($0).inserted }
+                            guard !newHits.isEmpty else { continue }
+                            allHits.append(contentsOf: newHits)
+                            latestGrouped = await self.groupAndSort(allHits, query: trimmed)
+                            continuation.yield(DiscoveryRelevance.refineSmartFallbackResults(latestGrouped, query: trimmed))
+                        }
+                    }
+                }
+
                 let fallbackQueries = smartFallbackQueries(for: trimmed, currentResults: latestGrouped)
-                guard !Task.isCancelled, !fallbackQueries.isEmpty else {
+                guard !Task.isCancelled else {
                     continuation.finish()
                     return
                 }
-
-                await withTaskGroup(of: [DiscoveryRawSearchHit].self) { group in
-                    for query in fallbackQueries {
-                        for source in searchableSources {
-                            group.addTask { [self] in
-                                await self.searchSingleSource(source, query: query)
-                            }
-                        }
-                    }
-
-                    for await sourceHits in group {
-                        if Task.isCancelled { break }
-                        let newHits = sourceHits.filter { seenHits.insert($0).inserted }
-                        guard !newHits.isEmpty else { continue }
-                        allHits.append(contentsOf: newHits)
-                        latestGrouped = await self.groupAndSort(allHits, query: trimmed)
-                        continuation.yield(DiscoveryRelevance.refineSmartFallbackResults(latestGrouped, query: trimmed))
-                    }
-                }
+                await runFallbackBatch(fallbackQueries)
 
                 let adaptiveQueries = adaptiveSmartFallbackQueries(
                     for: trimmed,
                     currentResults: latestGrouped,
                     searchedQueries: Set([trimmed] + fallbackQueries)
                 )
-                guard !Task.isCancelled, !adaptiveQueries.isEmpty else {
+                guard !Task.isCancelled else {
                     continuation.finish()
                     return
                 }
+                await runFallbackBatch(adaptiveQueries)
 
-                await withTaskGroup(of: [DiscoveryRawSearchHit].self) { group in
-                    for query in adaptiveQueries {
-                        for source in searchableSources {
-                            group.addTask { [self] in
-                                await self.searchSingleSource(source, query: query)
-                            }
-                        }
-                    }
-
-                    for await sourceHits in group {
-                        if Task.isCancelled { break }
-                        let newHits = sourceHits.filter { seenHits.insert($0).inserted }
-                        guard !newHits.isEmpty else { continue }
-                        allHits.append(contentsOf: newHits)
-                        latestGrouped = await self.groupAndSort(allHits, query: trimmed)
-                        continuation.yield(DiscoveryRelevance.refineSmartFallbackResults(latestGrouped, query: trimmed))
-                    }
+                let deleteOneQueries = deleteOneFallbackQueries(
+                    for: trimmed,
+                    currentResults: latestGrouped,
+                    searchedQueries: Set([trimmed] + fallbackQueries + adaptiveQueries)
+                )
+                guard !Task.isCancelled else {
+                    continuation.finish()
+                    return
                 }
+                await runFallbackBatch(deleteOneQueries)
+
                 continuation.finish()
             }
             continuation.onTermination = { _ in task.cancel() }
@@ -1266,6 +1267,42 @@ actor DiscoverySearchService {
             }
             .prefix(1)
             .map(\.key)
+    }
+
+    /// Typo recovery: drop one character at a time and search the remainder. Catches single-
+    /// char substitutions/insertions like "风云如画卷" → "风云画卷" (real title 风云入画卷),
+    /// where every contiguous-substring of the literal query also contains the typo. Gated by
+    /// `shouldRunDeleteOneFallback` so this only runs when both earlier passes have failed,
+    /// and capped at 3 variants ranked by remaining-character distinctiveness.
+    private nonisolated func deleteOneFallbackQueries(
+        for query: String,
+        currentResults: [DiscoveryGroupedResult],
+        searchedQueries: Set<String>
+    ) -> [String] {
+        guard DiscoveryRelevance.shouldRunDeleteOneFallback(for: query, currentResults: currentResults) else {
+            return []
+        }
+        let normalized = DiscoveryTextCleaner.normalizedComparableText(query)
+        let characters = Array(normalized)
+        guard characters.count >= 4 else { return [] }
+
+        var scored: [(query: String, score: Double)] = []
+        for dropIndex in characters.indices {
+            var remaining = characters
+            remaining.remove(at: dropIndex)
+            let candidate = String(remaining)
+            let normalizedCandidate = DiscoveryTextCleaner.normalizedComparableText(candidate)
+            guard normalizedCandidate.count >= 2,
+                  normalizedCandidate != normalized,
+                  !searchedQueries.contains(normalizedCandidate) else { continue }
+            scored.append((normalizedCandidate, smartFallbackDistinctivenessScore(normalizedCandidate)))
+        }
+
+        let maxQueries = 3
+        return scored
+            .sorted { $0.score > $1.score }
+            .prefix(maxQueries)
+            .map(\.query)
     }
 
     private nonisolated func addAdaptiveFragment(
@@ -2646,6 +2683,19 @@ private enum DiscoveryRelevance {
         guard normalizedQuery.count >= 3, containsCJK(normalizedQuery) else { return false }
         guard !currentResults.isEmpty else { return false }
         return (currentResults.map(\.relevance).max() ?? 0) < 92
+    }
+
+    /// Last-resort gate for the delete-one-character fan-out — only fires when neither the
+    /// literal query nor the smart/adaptive fragment passes have surfaced a strong match.
+    /// Requires ≥4 CJK characters; below that, removing one char loses too much signal and
+    /// the upstream search returns mostly noise.
+    static func shouldRunDeleteOneFallback(
+        for query: String,
+        currentResults: [DiscoveryGroupedResult]
+    ) -> Bool {
+        let normalizedQuery = normalizedComparableText(query)
+        guard normalizedQuery.count >= 4, containsCJK(normalizedQuery) else { return false }
+        return (currentResults.map(\.relevance).max() ?? 0) < 86
     }
 
     static func refineSmartFallbackResults(
