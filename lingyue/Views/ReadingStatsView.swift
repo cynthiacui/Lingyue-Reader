@@ -629,7 +629,7 @@ struct ReadingStatsView: View {
             return "翻开下一页后，这里会开始记录你的阅读节奏。"
         }
         if streak > 0 {
-            return "已连续记录 \(streak) 天，累计 \(formatCharacterCount(totalCharacters))。"
+            return "已连续阅读 \(streak) 天，累计 \(formatCharacterCount(totalCharacters))。"
         }
         return "已累计 \(formatCharacterCount(totalCharacters))，今天再开个头吧。"
     }
