@@ -16,6 +16,7 @@ struct ReaderView: View {
     /// landscape Dynamic Island / notch / iPad rounded-corner safe area, which the
     /// outer `.ignoresSafeArea()` zeroes out of `proxy.safeAreaInsets`.
     @StateObject private var windowInsets = WindowSafeAreaInsets()
+    @Environment(\.scenePhase) private var scenePhase
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.verticalSizeClass) private var verticalSizeClass
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -280,6 +281,7 @@ struct ReaderView: View {
                 ratchetStableSafeAreaInsets(top: proxy.safeAreaInsets.top,
                                             bottom: proxy.safeAreaInsets.bottom)
                 setInitialChapterIfNeeded(textSize: textSize)
+                startReadingStatsSession(pages: pages)
                 persistReadingState(pages: pages)
                 lastKnownTextSize = textSize
                 if autoScroll { startAutoScroll() }
@@ -291,7 +293,15 @@ struct ReaderView: View {
                 ratchetStableSafeAreaInsets(top: nil, bottom: newValue)
             }
             .onDisappear {
+                persistReadingState(pages: pages, force: true)
                 stopAutoScroll()
+            }
+            .onChange(of: scenePhase) { _, newPhase in
+                guard newPhase != .active else { return }
+                persistReadingState(pages: pages, force: true)
+                if newPhase == .background {
+                    Task { await libraryStore.flush() }
+                }
             }
             .onChange(of: textSize) { _, newValue in
                 if newValue.width > 0, newValue.height > 0 {
@@ -1539,7 +1549,25 @@ struct ReaderView: View {
     }
 
     @MainActor
-    private func persistReadingState(pages: [ReaderPageItem]) {
+    private func startReadingStatsSession(pages: [ReaderPageItem]) {
+        guard didSetInitialPage, !catalogNeedsRepair, !pages.isEmpty else { return }
+        guard pendingRestoreChapterKey == nil else { return }
+
+        let currentPage = currentPage(in: pages)
+        guard baseChapters.indices.contains(currentPage.chapterIndex) else { return }
+
+        let currentChapter = baseChapters[currentPage.chapterIndex]
+        libraryStore.startReadingSession(
+            for: activeNovel.id,
+            progress: readingProgress(for: currentPage),
+            chapterIndex: currentPage.chapterIndex,
+            chapterPageIndex: currentPage.pageIndex,
+            chapterSourceURLString: currentChapter.sourceURLString
+        )
+    }
+
+    @MainActor
+    private func persistReadingState(pages: [ReaderPageItem], force: Bool = false) {
         guard didSetInitialPage, !catalogNeedsRepair, !pages.isEmpty else { return }
         guard pendingRestoreChapterKey == nil else { return }
 
@@ -1549,7 +1577,7 @@ struct ReaderView: View {
         let currentChapter = baseChapters[currentPage.chapterIndex]
         let progress = readingProgress(for: currentPage)
         let stateKey = "\(activeNovel.id.uuidString)-\(currentPage.chapterIndex)-\(currentPage.pageIndex)-\(pages.count)"
-        guard stateKey != lastPersistedReadingState else { return }
+        guard force || stateKey != lastPersistedReadingState else { return }
 
         lastPersistedReadingState = stateKey
         libraryStore.updateReadingState(
@@ -1558,8 +1586,13 @@ struct ReaderView: View {
             progress: progress,
             chapterIndex: currentPage.chapterIndex,
             chapterPageIndex: currentPage.pageIndex,
-            chapterSourceURLString: currentChapter.sourceURLString
+            chapterSourceURLString: currentChapter.sourceURLString,
+            pageTextCharacterCount: readableCharacterCount(in: currentPage.content)
         )
+    }
+
+    private func readableCharacterCount(in text: String) -> Int {
+        text.unicodeScalars.filter { !$0.properties.isWhitespace }.count
     }
 
     private func restoredChapterIndex() -> Int? {

@@ -637,11 +637,7 @@ struct LibraryView: View {
     }
 
     private func deleteFromCategories(_ novel: Novel) {
-        var updatedCategories = libraryStore.categories
-        for index in updatedCategories.indices {
-            updatedCategories[index].novels.removeAll { $0.id == novel.id }
-        }
-        libraryStore.categories = updatedCategories
+        libraryStore.deleteBook(novel)
     }
 
     private func categoryEditOverlay(for novel: Novel) -> some View {

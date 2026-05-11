@@ -4,6 +4,7 @@ struct ContentView: View {
     @StateObject private var libraryStore = LibraryStore()
     @StateObject private var themeManager = AppThemeManager()
     @StateObject private var downloadManager = BookDownloadManager()
+    @State private var selectedTab: AppTab = .library
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.colorScheme) private var systemColorScheme
 
@@ -17,13 +18,14 @@ struct ContentView: View {
         let chromeOverride: ColorScheme? = themeManager.followSystemDark
             ? nil
             : themeManager.current.preferredColorScheme
-        TabView {
+        TabView(selection: $selectedTab) {
             NavigationStack {
                 LibraryView()
             }
                 .tabItem {
                     Label("书架", systemImage: "books.vertical")
                 }
+                .tag(AppTab.library)
 
             NavigationStack {
                 DiscoveryView()
@@ -31,6 +33,15 @@ struct ContentView: View {
                 .tabItem {
                     Label("发现", systemImage: "sparkles")
                 }
+                .tag(AppTab.discovery)
+
+            NavigationStack {
+                ReadingStatsView()
+            }
+                .tabItem {
+                    Label("统计", systemImage: "chart.bar.xaxis")
+                }
+                .tag(AppTab.stats)
 
             NavigationStack {
                 SettingsView()
@@ -38,6 +49,7 @@ struct ContentView: View {
                 .tabItem {
                     Label("设置", systemImage: "gearshape")
                 }
+                .tag(AppTab.settings)
         }
         .tint(effectiveTheme.accent)
         .environmentObject(libraryStore)
@@ -51,6 +63,13 @@ struct ContentView: View {
             }
         }
     }
+}
+
+private enum AppTab: Hashable {
+    case stats
+    case library
+    case discovery
+    case settings
 }
 
 #Preview {
