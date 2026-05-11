@@ -1,6 +1,7 @@
 import SwiftUI
 import Foundation
 import UIKit
+import NaturalLanguage
 
 struct ReaderView: View {
     let novel: Novel
@@ -43,6 +44,10 @@ struct ReaderView: View {
     @State private var showControls = false
     @State private var showChapterPicker = false
     @State private var showPreferences = false
+    /// Brightness popup, presented from its own top-bar button next to AA. Mutually
+    /// exclusive with `showPreferences` and `showChapterPicker` — opening any one closes
+    /// the others.
+    @State private var showBrightness = false
     @State private var didSetInitialPage = false
     @State private var loadedChapterOverrides: [String: NovelChapter] = [:]
     @State private var loadingChapterKeys: Set<String> = []
@@ -72,6 +77,17 @@ struct ReaderView: View {
     /// (resisted slightly upward) and either snaps back or dismisses depending on the
     /// drag's projected end position — same feel as a sheet's dismiss-on-drag.
     @State private var preferencesDragOffset: CGFloat = 0
+    /// Live downward drag distance on the brightness popup. Parallel to
+    /// `preferencesDragOffset` — kept separate so each popup's dismiss animation has its
+    /// own state and there's no risk of one popup inheriting a stale offset from the other.
+    @State private var brightnessDragOffset: CGFloat = 0
+    /// Mirrors `UIScreen.main.brightness` for the preferences-overlay brightness slider.
+    /// Initialized to the current device brightness when the reader opens and refreshed
+    /// every time the preferences overlay is shown — Control Center / external changes
+    /// while the overlay is closed are picked up on the next open. We don't persist this
+    /// to AppStorage; the system reclaims brightness on background, matching how Apple
+    /// Books behaves.
+    @State private var brightnessLevel: Double = Double(UIScreen.main.brightness)
     /// Bumps after a rotation so the pager rebuilds with the post-rotation safeArea
     /// settled. SwiftUI's GeometryReader sometimes reports stale `safeAreaInsets` on the first
     /// render after rotation when its parent uses `.ignoresSafeArea()`, so the previously-visible
@@ -178,6 +194,18 @@ struct ReaderView: View {
 
     private var pageTransitionStyle: PageTransitionStyle {
         PageTransitionStyle(rawValue: pageTransitionRaw) ?? .instant
+    }
+
+    /// Slider-friendly Binding that writes through to `UIScreen.main.brightness` on every
+    /// drag tick. Keeps `brightnessLevel` in sync so the slider thumb tracks the finger.
+    private var brightnessBinding: Binding<Double> {
+        Binding(
+            get: { brightnessLevel },
+            set: { newValue in
+                brightnessLevel = newValue
+                UIScreen.main.brightness = CGFloat(newValue)
+            }
+        )
     }
 
     /// Two-column landscape spread is only meaningful when the container is actually wider
@@ -293,6 +321,15 @@ struct ReaderView: View {
 
                 if showPreferences {
                     preferencesOverlay(
+                        safeBottom: stableBottom,
+                        safeLeading: stableInsets.leading,
+                        safeTrailing: stableInsets.trailing
+                    )
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+
+                if showBrightness {
+                    brightnessOverlay(
                         safeBottom: stableBottom,
                         safeLeading: stableInsets.leading,
                         safeTrailing: stableInsets.trailing
@@ -510,7 +547,8 @@ struct ReaderView: View {
                 lineSpacing: lineSpacing,
                 paragraphSpacing: paragraphSpacingMultiplier,
                 fontFamily: readerFontFamily,
-                color: UIColor(pageForeground)
+                color: UIColor(pageForeground),
+                onLookup: { term in ReaderDictionary.present(term: term) }
             )
             .frame(width: textSize.width, height: textSize.height, alignment: .topLeading)
 
@@ -585,7 +623,7 @@ struct ReaderView: View {
 
         // A real swipe — if any overlay is up, dismiss it as part of turning the page so
         // the user gets the bar out of the way without a separate tap.
-        if showControls || showChapterPicker || showPreferences {
+        if showControls || showChapterPicker || showPreferences || showBrightness {
             hideControls()
         }
 
@@ -645,7 +683,7 @@ struct ReaderView: View {
             atFirstPage = startPageIndex == 0
             atLastPage = startPageIndex >= pageCount - 1
         }
-        let overlayVisible = showControls || showChapterPicker || showPreferences
+        let overlayVisible = showControls || showChapterPicker || showPreferences || showBrightness
 
         if effective < 0, atLastPage, currentChapterIndex < baseChapters.count - 1 {
             if overlayVisible { hideControls() }
@@ -666,7 +704,7 @@ struct ReaderView: View {
         // While any overlay (controls / chapter picker / preferences) is visible, treat any
         // tap as "dismiss overlay" so the user can't accidentally turn pages while interacting
         // with the chrome.
-        if showControls || showChapterPicker || showPreferences {
+        if showControls || showChapterPicker || showPreferences || showBrightness {
             hideControls()
             return
         }
@@ -936,7 +974,23 @@ struct ReaderView: View {
 
                         Button {
                             withAnimation(.easeInOut(duration: 0.18)) {
+                                showBrightness = true
+                                showPreferences = false
+                                showChapterPicker = false
+                            }
+                        } label: {
+                            Image(systemName: "sun.max")
+                                .font(.system(size: 19, weight: .semibold))
+                                .frame(width: fontWidth, height: 44)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("亮度")
+
+                        Button {
+                            withAnimation(.easeInOut(duration: 0.18)) {
                                 showPreferences = true
+                                showBrightness = false
                                 showChapterPicker = false
                             }
                         } label: {
@@ -951,6 +1005,7 @@ struct ReaderView: View {
                             withAnimation(ModalStyle.presentationAnimation) {
                                 showChapterPicker = true
                                 showPreferences = false
+                                showBrightness = false
                             }
                         } label: {
                             Image(systemName: "list.bullet")
@@ -1323,6 +1378,95 @@ struct ReaderView: View {
         }
     }
 
+    /// Minimal popup that mirrors `preferencesOverlay`'s shape (dim backdrop, bottom card,
+    /// drag-to-dismiss) but only houses the brightness slider — so the user can dim/brighten
+    /// without paging through the AA settings.
+    private func brightnessOverlay(
+        safeBottom: CGFloat,
+        safeLeading: CGFloat,
+        safeTrailing: CGFloat
+    ) -> some View {
+        ZStack {
+            Color.black.opacity(currentTheme == .night ? 0.35 : 0.18)
+                .ignoresSafeArea()
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    dismissBrightnessAndControls()
+                }
+
+            VStack {
+                Spacer()
+
+                VStack(alignment: .leading, spacing: 16) {
+                    Capsule()
+                        .fill(secondaryForeground.opacity(0.35))
+                        .frame(width: 38, height: 4)
+                        .frame(maxWidth: .infinity)
+                        .padding(.bottom, -6)
+                        .accessibilityHidden(true)
+
+                    preferenceSliderRow(
+                        title: "亮度",
+                        systemImage: "sun.max",
+                        value: brightnessBinding,
+                        range: 0...1,
+                        step: 0.01,
+                        format: { "\(Int(($0 * 100).rounded()))%" }
+                    )
+                }
+                .padding(.leading, max(18, safeLeading))
+                .padding(.trailing, max(18, safeTrailing))
+                .padding(.top, 14)
+                .padding(.bottom, max(safeBottom + 16, 22))
+                .background(
+                    Rectangle()
+                        .fill(currentTheme.chromeBackground)
+                        .shadow(color: .black.opacity(0.16), radius: 8, x: 0, y: -3)
+                )
+                .offset(y: brightnessDragOffset)
+                .gesture(brightnessDismissGesture)
+                .onAppear {
+                    // Resync from the screen each time the popup is shown — the user may
+                    // have changed brightness via Control Center while the popup was closed.
+                    brightnessLevel = Double(UIScreen.main.brightness)
+                }
+            }
+        }
+        .ignoresSafeArea(edges: .bottom)
+    }
+
+    private var brightnessDismissGesture: some Gesture {
+        DragGesture(minimumDistance: 8)
+            .onChanged { value in
+                let h = value.translation.height
+                brightnessDragOffset = h > 0 ? h : h * 0.18
+            }
+            .onEnded { value in
+                let dismissThreshold: CGFloat = 110
+                let projected = value.predictedEndTranslation.height
+                let shouldDismiss = projected > dismissThreshold
+                    || value.translation.height > dismissThreshold
+
+                if shouldDismiss {
+                    dismissBrightnessAndControls()
+                } else {
+                    withAnimation(.spring(response: 0.32, dampingFraction: 0.85)) {
+                        brightnessDragOffset = 0
+                    }
+                }
+            }
+    }
+
+    private func dismissBrightnessAndControls() {
+        withAnimation(.easeInOut(duration: 0.22)) {
+            showBrightness = false
+            showControls = false
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.26) {
+            brightnessDragOffset = 0
+        }
+    }
+
     private func preferenceSliderRow(
         title: String,
         systemImage: String,
@@ -1600,6 +1744,7 @@ struct ReaderView: View {
             if !showControls {
                 showChapterPicker = false
                 showPreferences = false
+                showBrightness = false
             }
         }
     }
@@ -1609,6 +1754,7 @@ struct ReaderView: View {
             showControls = false
             showChapterPicker = false
             showPreferences = false
+            showBrightness = false
         }
     }
 
@@ -1656,7 +1802,7 @@ struct ReaderView: View {
                 guard !Task.isCancelled, autoScroll else { return }
                 // Pause whenever any overlay is showing — gives the user breathing room
                 // to interact with controls without losing their place.
-                if showControls || showChapterPicker || showPreferences { continue }
+                if showControls || showChapterPicker || showPreferences || showBrightness { continue }
                 advanceAutoScrollPage()
             }
         }
@@ -2473,13 +2619,22 @@ private struct JustifiedReaderText: UIViewRepresentable {
     let paragraphSpacing: CGFloat
     let fontFamily: ReaderFontFamily
     let color: UIColor
+    var onLookup: ((String) -> Void)? = nil
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onLookup: onLookup)
+    }
 
     func makeUIView(context: Context) -> ReaderTextView {
         let textView = ReaderTextView()
         textView.isEditable = false
         textView.isSelectable = false
         textView.isScrollEnabled = false
-        textView.isUserInteractionEnabled = false
+        // Stay non-interactive when no lookup handler is wired so the existing tap-to-flip
+        // and drag gestures keep their fast path. With a handler, enable interaction and
+        // attach a single long-press recognizer that defers to (rather than steals from)
+        // the parent SwiftUI gestures via cancelsTouchesInView=false + simultaneous delegate.
+        textView.isUserInteractionEnabled = (onLookup != nil)
         textView.backgroundColor = .clear
         textView.clipsToBounds = true
         textView.contentInset = .zero
@@ -2491,10 +2646,24 @@ private struct JustifiedReaderText: UIViewRepresentable {
         textView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         textView.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
         textView.setContentHuggingPriority(.defaultLow, for: .vertical)
+
+        if onLookup != nil {
+            let lp = UILongPressGestureRecognizer(
+                target: context.coordinator,
+                action: #selector(Coordinator.handleLongPress(_:))
+            )
+            lp.minimumPressDuration = 0.45
+            lp.cancelsTouchesInView = false
+            lp.delegate = context.coordinator
+            textView.addGestureRecognizer(lp)
+        }
+
         return textView
     }
 
     func updateUIView(_ textView: ReaderTextView, context: Context) {
+        context.coordinator.onLookup = onLookup
+
         let paragraphStyle = NSMutableParagraphStyle()
         paragraphStyle.alignment = .justified
         paragraphStyle.baseWritingDirection = .leftToRight
@@ -2512,6 +2681,29 @@ private struct JustifiedReaderText: UIViewRepresentable {
         )
         textView.updateContainerSize()
     }
+
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+        var onLookup: ((String) -> Void)?
+
+        init(onLookup: ((String) -> Void)?) {
+            self.onLookup = onLookup
+        }
+
+        @objc func handleLongPress(_ gr: UILongPressGestureRecognizer) {
+            guard gr.state == .began,
+                  let tv = gr.view as? ReaderTextView,
+                  let onLookup else { return }
+            let location = gr.location(in: tv)
+            guard let term = tv.lookupTerm(at: location), !term.isEmpty else { return }
+            UISelectionFeedbackGenerator().selectionChanged()
+            onLookup(term)
+        }
+
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+                               shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
+            true
+        }
+    }
 }
 
 private final class ReaderTextView: UITextView {
@@ -2525,6 +2717,79 @@ private final class ReaderTextView: UITextView {
         guard textContainer.size != bounds.size else { return }
         textContainer.size = bounds.size
         layoutManager.invalidateLayout(forCharacterRange: NSRange(location: 0, length: attributedText.length), actualCharacterRange: nil)
+    }
+
+    /// Returns the natural-language "word" at `point`, segmented via NLTokenizer so multi-
+    /// character Chinese terms (双字词 / 成语) come back intact instead of single hanzi.
+    /// Returns nil if the touch missed every glyph or the tokenizer couldn't produce a
+    /// non-empty range — caller treats nil as "do nothing".
+    func lookupTerm(at point: CGPoint) -> String? {
+        guard attributedText.length > 0 else { return nil }
+
+        // Sanity-check that the touch is near an actual glyph. characterIndex(for:in:) will
+        // clamp far-out points to the nearest character, but we don't want a long-press in
+        // the empty bottom margin to look up the last word on the page.
+        let glyphIndex = layoutManager.glyphIndex(for: point, in: textContainer)
+        let glyphRect = layoutManager.boundingRect(
+            forGlyphRange: NSRange(location: glyphIndex, length: 1),
+            in: textContainer
+        )
+        guard glyphRect.insetBy(dx: -6, dy: -6).contains(point) else { return nil }
+
+        let charIndex = layoutManager.characterIndex(
+            for: point,
+            in: textContainer,
+            fractionOfDistanceBetweenInsertionPoints: nil
+        )
+        guard charIndex >= 0, charIndex < attributedText.length else { return nil }
+
+        // charIndex is in UTF-16 code units; map back through the UTF16View so non-BMP
+        // characters (rare in Chinese fiction but possible in emoji or extended hanzi)
+        // don't desync the index.
+        let plain = attributedText.string
+        let utf16 = plain.utf16
+        guard let utf16Position = utf16.index(utf16.startIndex,
+                                              offsetBy: charIndex,
+                                              limitedBy: utf16.endIndex),
+              let strIndex = utf16Position.samePosition(in: plain) else {
+            return nil
+        }
+
+        let tokenizer = NLTokenizer(unit: .word)
+        tokenizer.string = plain
+        // Hint Simplified Chinese so the segmenter picks the Chinese word model rather than
+        // falling back to whitespace-only segmentation (which would treat the whole page as
+        // a single token for unspaced CJK text).
+        tokenizer.setLanguage(.simplifiedChinese)
+        let range = tokenizer.tokenRange(at: strIndex)
+        let term = String(plain[range]).trimmingCharacters(in: .whitespacesAndNewlines)
+        return term.isEmpty ? nil : term
+    }
+}
+
+/// Wraps `UIReferenceLibraryViewController` for in-reader long-press lookups. Presents
+/// modally on the top-most view controller — bypassing SwiftUI's sheet machinery — because
+/// the reference VC owns its own nav chrome and dismisses itself via UIKit, which a
+/// SwiftUI sheet host doesn't always forward cleanly.
+enum ReaderDictionary {
+    static func present(term: String) {
+        let trimmed = term.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        guard let top = topmostViewController() else { return }
+        let vc = UIReferenceLibraryViewController(term: trimmed)
+        top.present(vc, animated: true)
+    }
+
+    private static func topmostViewController() -> UIViewController? {
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        let activeScene = scenes.first { $0.activationState == .foregroundActive } ?? scenes.first
+        guard let window = activeScene?.windows.first(where: { $0.isKeyWindow })
+            ?? activeScene?.windows.first else { return nil }
+        var top: UIViewController? = window.rootViewController
+        while let presented = top?.presentedViewController {
+            top = presented
+        }
+        return top
     }
 }
 
