@@ -8,6 +8,7 @@ import UIKit
 /// open-source LXGW WenKai Screen TTF bundled in `SupportingFiles/Fonts/`.
 enum ReaderFontFamily: String, CaseIterable, Identifiable {
     case system
+    case systemLight
     case songti
     case kaiti
     case heiti
@@ -17,23 +18,27 @@ enum ReaderFontFamily: String, CaseIterable, Identifiable {
 
     var displayName: String {
         switch self {
-        case .system: return "苹方"
-        case .songti: return "宋体"
-        case .kaiti:  return "楷体"
-        case .heiti:  return "黑体"
-        case .yuanti: return "圆体"
+        case .system:      return "苹方"
+        case .systemLight: return "苹方细"
+        case .songti:      return "宋体"
+        case .kaiti:       return "楷体"
+        case .heiti:       return "黑体"
+        case .yuanti:      return "圆体"
         }
     }
 
     /// Postscript names to try, in order. The first one that resolves wins. `kaiti` uses the
     /// bundled LXGW WenKai Screen (registered via `UIAppFonts`); the others are stock iOS.
+    /// `systemLight` explicitly requests PingFang SC Light so the user can pick a lighter
+    /// body weight without affecting the default `system` rendering.
     private var postScriptCandidates: [String] {
         switch self {
-        case .system: return []
-        case .songti: return ["HiraMinProN-W3"]
-        case .kaiti:  return ["LXGWWenKaiScreen"]
-        case .heiti:  return ["HiraginoSans-W6", "HiraginoSans-W3"]
-        case .yuanti: return ["HiraMaruProN-W4"]
+        case .system:      return []
+        case .systemLight: return ["PingFangSC-Light"]
+        case .songti:      return ["HiraMinProN-W3"]
+        case .kaiti:       return ["LXGWWenKaiScreen"]
+        case .heiti:       return ["HiraginoSans-W6", "HiraginoSans-W3"]
+        case .yuanti:      return ["HiraMaruProN-W4"]
         }
     }
 
@@ -76,9 +81,11 @@ enum PageTransitionStyle: String, CaseIterable, Identifiable {
 
 extension Color {
     static let readerBackground = Color(red: 0.9333, green: 0.9804, blue: 0.9333)
-    static let readerSurface = Color(red: 1.0, green: 0.99, blue: 0.96)
-    static let readerInk = Color(red: 0.11, green: 0.10, blue: 0.09)
-    static let readerMuted = Color(red: 0.43, green: 0.39, blue: 0.34)
+    static let readerSurface = Color(red: 0.984, green: 0.973, blue: 0.949)
+    // Softened from near-black toward a warm graphite so long-form reading feels less
+    // like high-contrast print and more like a MUJI / Apple Books paper page.
+    static let readerInk = Color(red: 0.18, green: 0.16, blue: 0.14)
+    static let readerMuted = Color(red: 0.45, green: 0.41, blue: 0.37)
     static let readerAccent = Color(red: 0.36, green: 0.43, blue: 0.32)
     static let readerIndigo = Color(red: 0.32, green: 0.36, blue: 0.56)
     static let readerTeal = Color(red: 0.21, green: 0.49, blue: 0.48)
@@ -110,10 +117,10 @@ extension ReadingTheme {
 
     var pageBackground: Color {
         switch self {
-        // Soft warm cream — closer to a real paperback page. The light-green that
-        // used to live here was actually the eye-strain-reducing tint, and now
-        // labels itself correctly under `.mint` ("护眼") below.
-        case .paper: return Color(red: 0.9686, green: 0.9529, blue: 0.9098)
+        // MUJI-style off-white cream — slightly desaturated from the previous warmer
+        // beige so the page reads as modern paper rather than aged paperback. The
+        // eye-strain green lives under `.mint` ("护眼") below.
+        case .paper: return Color(red: 0.9569, green: 0.9451, blue: 0.9216)
         case .warm:  return Color(red: 0.9725, green: 0.9373, blue: 0.8510)
         case .mint:  return Color(red: 0.9333, green: 0.9804, blue: 0.9333)
         case .sky:   return Color(red: 0.85, green: 0.91, blue: 0.96)

@@ -22,6 +22,10 @@ struct ReaderView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @AppStorage("reader.fontSize") private var fontSize = 18.0
     @AppStorage("reader.lineSpacing") private var lineSpacing = 8.0
+    /// Paragraph-spacing multiplier expressed as a fraction of the rendered font's size
+    /// (≈ line height). 0.4 is tight, 1.2 is loose; 0.5 is the modern default and replaces
+    /// the previous `lineSpacing * 1.25` rule, which produced visibly wide paragraph gaps.
+    @AppStorage("reader.paragraphSpacing") private var paragraphSpacingMultiplier: Double = 0.5
     @AppStorage("reader.fontFamily") private var fontFamilyRaw = ReaderFontFamily.system.rawValue
     @AppStorage("reader.pageTransition") private var pageTransitionRaw = PageTransitionStyle.instant.rawValue
     @AppStorage("reader.twoColumn") private var twoColumnLayout = false
@@ -504,6 +508,7 @@ struct ReaderView: View {
                 text: page.content,
                 fontSize: fontSize,
                 lineSpacing: lineSpacing,
+                paragraphSpacing: paragraphSpacingMultiplier,
                 fontFamily: readerFontFamily,
                 color: UIColor(pageForeground)
             )
@@ -1218,6 +1223,15 @@ struct ReaderView: View {
                         format: { "\(Int($0))" }
                     )
 
+                    preferenceSliderRow(
+                        title: "段距",
+                        systemImage: "text.alignleft",
+                        value: $paragraphSpacingMultiplier,
+                        range: 0.4...1.2,
+                        step: 0.1,
+                        format: { String(format: "%.1f", $0) }
+                    )
+
                     preferenceFontRow
 
                     preferencePageTransitionRow
@@ -1534,6 +1548,7 @@ struct ReaderView: View {
             textSize: textSize,
             fontSize: fontSize,
             lineSpacing: lineSpacing,
+            paragraphSpacing: paragraphSpacingMultiplier,
             fontFamily: readerFontFamily
         )
         guard !pageContents.isEmpty else { return }
@@ -1872,6 +1887,7 @@ struct ReaderView: View {
             "\(width)x\(height)",
             "\(fontSize)",
             "\(lineSpacing)",
+            "\(paragraphSpacingMultiplier)",
             fontFamilyRaw,
             "\(usesTraditionalChinese)"
         ].joined(separator: "|")
@@ -1901,10 +1917,18 @@ struct ReaderView: View {
         let content = displayed(readerContent(for: chapter, chapterIndex: chapterIndex))
         let fontSize = self.fontSize
         let lineSpacing = self.lineSpacing
+        let paragraphSpacing = self.paragraphSpacingMultiplier
         let fontFamily = readerFontFamily
 
         let work = Task.detached(priority: .userInitiated) {
-            Self.paginate(content: content, textSize: textSize, fontSize: fontSize, lineSpacing: lineSpacing, fontFamily: fontFamily)
+            Self.paginate(
+                content: content,
+                textSize: textSize,
+                fontSize: fontSize,
+                lineSpacing: lineSpacing,
+                paragraphSpacing: paragraphSpacing,
+                fontFamily: fontFamily
+            )
         }
         let pageContents = await withTaskCancellationHandler {
             await work.value
@@ -2089,9 +2113,17 @@ struct ReaderView: View {
 
         let fontSize = self.fontSize
         let lineSpacing = self.lineSpacing
+        let paragraphSpacing = self.paragraphSpacingMultiplier
         let fontFamily = readerFontFamily
         let pages = await Task.detached(priority: .utility) {
-            Self.paginate(content: displayedContent, textSize: textSize, fontSize: fontSize, lineSpacing: lineSpacing, fontFamily: fontFamily)
+            Self.paginate(
+                content: displayedContent,
+                textSize: textSize,
+                fontSize: fontSize,
+                lineSpacing: lineSpacing,
+                paragraphSpacing: paragraphSpacing,
+                fontFamily: fontFamily
+            )
         }.value
 
         guard !pages.isEmpty else { return }
@@ -2313,12 +2345,18 @@ struct ReaderView: View {
         textSize: CGSize,
         fontSize: CGFloat,
         lineSpacing: CGFloat,
+        paragraphSpacing: CGFloat,
         fontFamily: ReaderFontFamily
     ) -> [String] {
         var remaining = content.trimmingCharacters(in: .whitespacesAndNewlines)
         if remaining.isEmpty { return [""] }
 
-        let attributes = readerAttributes(fontSize: fontSize, lineSpacing: lineSpacing, fontFamily: fontFamily)
+        let attributes = readerAttributes(
+            fontSize: fontSize,
+            lineSpacing: lineSpacing,
+            paragraphSpacing: paragraphSpacing,
+            fontFamily: fontFamily
+        )
         var result: [String] = []
 
         while !remaining.isEmpty {
@@ -2385,13 +2423,17 @@ struct ReaderView: View {
     nonisolated private static func readerAttributes(
         fontSize: CGFloat,
         lineSpacing: CGFloat,
+        paragraphSpacing: CGFloat,
         fontFamily: ReaderFontFamily
     ) -> [NSAttributedString.Key: Any] {
         let paragraphStyle = NSMutableParagraphStyle()
         paragraphStyle.alignment = .justified
         paragraphStyle.baseWritingDirection = .leftToRight
         paragraphStyle.lineSpacing = lineSpacing
-        paragraphStyle.paragraphSpacing = lineSpacing * 1.25
+        // Multiplier is taken against font size (≈ line height) so paragraph gaps stay
+        // visually consistent across font sizes and don't collapse to zero when the user
+        // dials lineSpacing down to 0.
+        paragraphStyle.paragraphSpacing = fontSize * paragraphSpacing
         paragraphStyle.lineBreakMode = .byWordWrapping
 
         return [
@@ -2428,6 +2470,7 @@ private struct JustifiedReaderText: UIViewRepresentable {
     let text: String
     let fontSize: CGFloat
     let lineSpacing: CGFloat
+    let paragraphSpacing: CGFloat
     let fontFamily: ReaderFontFamily
     let color: UIColor
 
@@ -2456,7 +2499,7 @@ private struct JustifiedReaderText: UIViewRepresentable {
         paragraphStyle.alignment = .justified
         paragraphStyle.baseWritingDirection = .leftToRight
         paragraphStyle.lineSpacing = lineSpacing
-        paragraphStyle.paragraphSpacing = lineSpacing * 1.25
+        paragraphStyle.paragraphSpacing = fontSize * paragraphSpacing
         paragraphStyle.lineBreakMode = .byWordWrapping
 
         textView.attributedText = NSAttributedString(

@@ -11,6 +11,7 @@ struct SettingsView: View {
 
     @AppStorage("reader.fontSize") private var fontSize = 18.0
     @AppStorage("reader.lineSpacing") private var lineSpacing = 8.0
+    @AppStorage("reader.paragraphSpacing") private var paragraphSpacingMultiplier: Double = 0.5
     @AppStorage("reader.fontFamily") private var fontFamilyRaw = ReaderFontFamily.system.rawValue
     @AppStorage("reader.pageTransition") private var pageTransitionRaw = PageTransitionStyle.instant.rawValue
     @AppStorage("reader.twoColumn") private var twoColumnLayout = false
@@ -260,6 +261,19 @@ struct SettingsView: View {
                     .font(.headline)
 
                     Slider(value: $lineSpacing, in: 0...24, step: 1)
+                        .tint(theme.accent)
+                }
+
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Label("段距", systemImage: "text.alignleft")
+                        Spacer()
+                        Text(String(format: "%.1f", paragraphSpacingMultiplier))
+                            .foregroundStyle(theme.secondaryText)
+                    }
+                    .font(.headline)
+
+                    Slider(value: $paragraphSpacingMultiplier, in: 0.4...1.2, step: 0.1)
                         .tint(theme.accent)
                 }
 
