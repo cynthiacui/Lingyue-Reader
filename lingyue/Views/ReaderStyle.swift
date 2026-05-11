@@ -122,7 +122,7 @@ extension ReadingTheme {
         // eye-strain green lives under `.mint` ("护眼") below.
         case .paper: return Color(red: 0.9569, green: 0.9451, blue: 0.9216)
         case .warm:  return Color(red: 0.9725, green: 0.9373, blue: 0.8510)
-        case .mint:  return Color(red: 0.9333, green: 0.9804, blue: 0.9333)
+        case .mint:  return Color(red: 0.8902, green: 0.9255, blue: 0.8824)
         case .sky:   return Color(red: 0.85, green: 0.91, blue: 0.96)
         case .night: return Color(red: 0.08, green: 0.08, blue: 0.075)
         }

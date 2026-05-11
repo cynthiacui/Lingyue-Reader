@@ -1372,11 +1372,12 @@ private struct CalendarDayCell: View {
 
     var body: some View {
         let hasRead = summary.durationSeconds > 0
+        let isToday = calendar.isDateInToday(summary.day)
 
         VStack(spacing: 3) {
             Text("\(calendar.component(.day, from: summary.day))")
                 .font(.system(size: 11, weight: hasRead ? .bold : .semibold, design: .rounded))
-                .foregroundStyle(textColor(hasRead: hasRead))
+                .foregroundStyle(textColor(hasRead: hasRead, isToday: isToday))
 
             Capsule()
                 .fill(hasRead && isCurrentMonth ? theme.accent.opacity(0.78) : .clear)
@@ -1386,26 +1387,32 @@ private struct CalendarDayCell: View {
         .frame(maxWidth: .infinity)
         .background(
             RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .fill(backgroundColor(hasRead: hasRead))
+                .fill(backgroundColor(hasRead: hasRead, isToday: isToday))
         )
         .overlay(
+            // Inset the stroke so it sits inside the rounded background rather than getting
+            // half-clipped by the cell's outer edge.
             RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .stroke(borderColor, lineWidth: borderWidth)
+                .inset(by: 1)
+                .stroke(borderColor(isToday: isToday), lineWidth: borderWidth(isToday: isToday))
         )
         .opacity(isCurrentMonth ? 1 : 0.34)
     }
 
-    private func backgroundColor(hasRead: Bool) -> Color {
+    private func backgroundColor(hasRead: Bool, isToday: Bool) -> Color {
         guard isCurrentMonth else {
             return theme.subtleCardBackground.opacity(0.26)
         }
+        // Today gets the same fill as other read days — the outline ring (below) is what
+        // distinguishes it, so the streak reads as one consistent swatch rather than
+        // having today pop out as a darker block.
         if hasRead {
-            return theme.accent.opacity(0.70)
+            return theme.accent.opacity(0.55)
         }
         return theme.subtleCardBackground.opacity(0.50)
     }
 
-    private func textColor(hasRead: Bool) -> Color {
+    private func textColor(hasRead: Bool, isToday: Bool) -> Color {
         guard isCurrentMonth else {
             return theme.secondaryText.opacity(0.58)
         }
@@ -1415,15 +1422,12 @@ private struct CalendarDayCell: View {
         return theme.secondaryText.opacity(0.72)
     }
 
-    private var borderColor: Color {
-        if calendar.isDateInToday(summary.day) {
-            return theme.accent
-        }
-        return .clear
+    private func borderColor(isToday: Bool) -> Color {
+        isToday ? theme.primaryText.opacity(0.7) : .clear
     }
 
-    private var borderWidth: CGFloat {
-        calendar.isDateInToday(summary.day) ? 1.5 : 0
+    private func borderWidth(isToday: Bool) -> CGFloat {
+        isToday ? 1.4 : 0
     }
 }
 
