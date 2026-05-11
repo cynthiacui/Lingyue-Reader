@@ -155,7 +155,7 @@ struct ReaderView: View {
 
     private var horizontalMargin: CGFloat {
         if dynamicTypeSize.isAccessibilitySize { return 16 }
-        return horizontalSizeClass == .compact ? 18 : 36
+        return horizontalSizeClass == .compact ? 20 : 36
     }
 
     private var currentTheme: ReadingTheme {

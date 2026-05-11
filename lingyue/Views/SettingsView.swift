@@ -54,6 +54,16 @@ struct SettingsView: View {
         ChineseTextConverter.display(previewBaseText, usesTraditionalChinese: usesTraditionalChinese)
     }
 
+    /// Split paragraphs the same way the reader does (collapse blank-line runs to single
+    /// newlines, then break on each). Lets the VStack spacing below visually represent the
+    /// `paragraphSpacing` multiplier the reader applies via NSParagraphStyle.
+    private var previewParagraphs: [String] {
+        displayedPreviewText
+            .replacingOccurrences(of: #"\n\s*\n+"#, with: "\n", options: .regularExpression)
+            .split(separator: "\n", omittingEmptySubsequences: true)
+            .map(String.init)
+    }
+
     private var selectedFontFamily: ReaderFontFamily {
         ReaderFontFamily(rawValue: fontFamilyRaw) ?? .system
     }
@@ -112,13 +122,17 @@ struct SettingsView: View {
 
     private var previewCard: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(displayedPreviewText)
-                .font(selectedFontFamily.swiftUIFont(size: fontSize))
-                .foregroundStyle(selectedTheme.pageForeground)
-                .lineSpacing(lineSpacing)
-                .frame(maxWidth: .infinity, alignment: .topLeading)
+            VStack(alignment: .leading, spacing: fontSize * paragraphSpacingMultiplier) {
+                ForEach(Array(previewParagraphs.enumerated()), id: \.offset) { _, paragraph in
+                    Text(paragraph)
+                        .font(selectedFontFamily.swiftUIFont(size: fontSize))
+                        .foregroundStyle(selectedTheme.pageForeground)
+                        .lineSpacing(lineSpacing)
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                }
+            }
 
-            Text("当前：\(selectedTheme.rawValue) · \(selectedFontFamily.displayName) · \(usesTraditionalChinese ? "繁体" : "简体") · 字号 \(Int(fontSize)) · 行距 \(Int(lineSpacing))")
+            Text("当前：\(selectedTheme.rawValue) · \(selectedFontFamily.displayName) · \(usesTraditionalChinese ? "繁体" : "简体") · 字号 \(Int(fontSize)) · 行距 \(Int(lineSpacing)) · 段距 \(String(format: "%.1f", paragraphSpacingMultiplier))")
                 .font(.caption.weight(.medium))
                 .foregroundStyle(selectedTheme.secondaryForeground)
         }
@@ -273,7 +287,7 @@ struct SettingsView: View {
                     }
                     .font(.headline)
 
-                    Slider(value: $paragraphSpacingMultiplier, in: 0.4...1.2, step: 0.1)
+                    Slider(value: $paragraphSpacingMultiplier, in: 0...1.5, step: 0.1)
                         .tint(theme.accent)
                 }
 
