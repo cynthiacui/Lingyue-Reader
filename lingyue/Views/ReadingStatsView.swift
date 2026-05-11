@@ -191,7 +191,7 @@ struct ReadingStatsView: View {
         return VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("阅读能量")
+                    Text("阅读投入")
                         .font(.system(size: 15, weight: .semibold, design: .rounded))
                         .foregroundStyle(theme.secondaryText)
                     Text(formatDuration(totalDuration))
@@ -312,33 +312,48 @@ struct ReadingStatsView: View {
         let characters = periodEvents.reduce(0) { $0 + $1.characterCount }
         let speed: Double = duration >= 60 ? Double(pages) / (duration / 60) : 0
         let hasPeriodData = duration > 0 || pages > 0 || characters > 0
-        let insight = selectedRange == .month ? monthlyInsight() : ""
 
+        // Always render the pill row — even with no data, fall back to "—" so the
+        // 日/月/年 cards keep the same three-row layout (header / pills / commentary)
+        // and end up at identical heights regardless of which range is selected.
+        // The icon is in a fixed-size frame because SF Symbols like `sun.max.fill`,
+        // `calendar`, and `chart.bar.xaxis` have slightly different intrinsic heights —
+        // letting `Label` size itself causes a few-pixel header-height drift between ranges.
         return VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Label(selectedRange.reportTitle, systemImage: selectedRange.systemImage)
+            HStack(spacing: 8) {
+                Image(systemName: selectedRange.systemImage)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(theme.primaryText)
+                    .frame(width: 20, height: 20)
+                Text(selectedRange.reportTitle)
                     .font(.system(size: 17, weight: .bold, design: .rounded))
                     .foregroundStyle(theme.primaryText)
-                Spacer()
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.9)
+                Spacer(minLength: 0)
                 Text(formatDuration(duration))
                     .font(.system(size: 15, weight: .bold, design: .rounded))
                     .foregroundStyle(theme.accent)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+            }
+            .frame(height: 24)
+
+            HStack(spacing: 10) {
+                SmallStatPill(title: "阅读步调", value: hasPeriodData && speed > 0 ? String(format: "%.1f 页/分", speed) : "—")
+                SmallStatPill(title: "字数", value: hasPeriodData ? formatCharacterCount(characters) : "—")
+                SmallStatPill(title: "翻页", value: hasPeriodData ? formatCount(pages) : "—")
             }
 
-            if hasPeriodData {
-                HStack(spacing: 10) {
-                    SmallStatPill(title: "效率", value: speed > 0 ? String(format: "%.1f 页/分", speed) : "—")
-                    SmallStatPill(title: "字数", value: formatCharacterCount(characters))
-                    SmallStatPill(title: "翻页", value: formatCount(pages))
-                }
-            }
-
-            Text(selectedRange == .month ? insight : periodHint(duration: duration, pages: pages))
+            Text(hasPeriodData ? rangeCommentary(for: selectedRange) : emptyPeriodHint(for: selectedRange))
                 .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(theme.secondaryText)
-                .lineLimit(3)
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
+                .frame(height: 18)
         }
         .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(theme.cardBackground.opacity(0.86))
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
@@ -348,7 +363,7 @@ struct ReadingStatsView: View {
 
         return VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text("趋势")
+                Text("时段轨迹")
                     .font(.system(size: 17, weight: .bold, design: .rounded))
                     .foregroundStyle(theme.primaryText)
                 Text(selectedRange.trendExplanation)
@@ -392,7 +407,7 @@ struct ReadingStatsView: View {
                 Text("阅读日历")
                     .font(.system(size: 17, weight: .bold, design: .rounded))
                     .foregroundStyle(theme.primaryText)
-                Text("按月查看哪天读过")
+                Text("记录每一次沉浸")
                     .font(.system(size: 12, weight: .regular))
                     .foregroundStyle(theme.secondaryText)
                     .lineLimit(1)
@@ -476,7 +491,7 @@ struct ReadingStatsView: View {
                 Text("阅读热力")
                     .font(.system(size: 17, weight: .bold, design: .rounded))
                     .foregroundStyle(theme.primaryText)
-                Text("近 12 周每天读多久，颜色越深越久")
+                Text("记录近 12 周阅读状态")
                     .font(.system(size: 12, weight: .regular))
                     .foregroundStyle(theme.secondaryText)
                     .lineLimit(1)
@@ -529,7 +544,7 @@ struct ReadingStatsView: View {
                 }
 
                 HStack(spacing: 6) {
-                    Text("少")
+                    Text("投入较少")
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(theme.secondaryText)
                     ForEach(0..<5, id: \.self) { index in
@@ -537,7 +552,7 @@ struct ReadingStatsView: View {
                             .fill(heatColor(index == 0 ? 0 : maxDuration * Double(index) / 4, maxDuration: maxDuration))
                             .frame(width: 16, height: 8)
                     }
-                    Text("多")
+                    Text("投入充足")
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(theme.secondaryText)
                     Spacer()
@@ -573,16 +588,16 @@ struct ReadingStatsView: View {
 
         return VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .firstTextBaseline) {
-                Text("TOP 书")
+                Text("阅读榜单")
                     .font(.system(size: 17, weight: .bold, design: .rounded))
                     .foregroundStyle(theme.primaryText)
-                Text("按阅读时长排行")
+                Text("按时长排序")
                     .font(.system(size: 12, weight: .regular))
                     .foregroundStyle(theme.secondaryText)
                 Spacer()
             }
 
-            Picker("TOP 书范围", selection: $selectedTopBooksRange) {
+            Picker("阅读榜单范围", selection: $selectedTopBooksRange) {
                 ForEach(TopBooksRange.allCases) { range in
                     Text(range.title).tag(range)
                 }
@@ -640,16 +655,42 @@ struct ReadingStatsView: View {
         return "已累计 \(formatCharacterCount(totalCharacters))，今天再开个头吧。"
     }
 
-    private func periodHint(duration: TimeInterval, pages: Int) -> String {
-        if duration <= 0 {
-            switch selectedRange {
-            case .day: return "今天还没开读。翻几页后，这里会热闹起来。"
-            case .month: return "本月还没读，先选一本翻几页吧。"
-            case .year: return "今年还没读，先选一本开个头吧。"
-            }
+    private func emptyPeriodHint(for range: StatsRange) -> String {
+        switch range {
+        case .day: return "今天还没开读。翻几页后，这里会热闹起来。"
+        case .month: return "本月还没读，先选一本翻几页吧。"
+        case .year: return "今年还没读，先选一本开个头吧。"
         }
-        let minutes = max(duration / 60, 1)
-        return "这段时间平均每分钟翻 \(String(format: "%.1f", Double(pages) / minutes)) 页，节奏还挺有数。"
+    }
+
+    /// Pick a copy line from the bank by mixing the period seed through a hash so
+    /// consecutive periods don't fall on consecutive bank indices. The pick is still
+    /// deterministic per day / month / year, so the line stays stable across view
+    /// re-renders within the same period — it just no longer marches through the list
+    /// in order.
+    private func rangeCommentary(for range: StatsRange) -> String {
+        let bank: [String]
+        let seed: Int
+        let now = Date()
+        switch range {
+        case .day:
+            bank = StatsCommentary.daily
+            seed = calendar.ordinality(of: .day, in: .era, for: now) ?? 0
+        case .month:
+            bank = StatsCommentary.monthly
+            seed = calendar.component(.year, from: now) * 100
+                + calendar.component(.month, from: now)
+        case .year:
+            bank = StatsCommentary.yearly
+            seed = calendar.component(.year, from: now)
+        }
+        guard !bank.isEmpty else { return "" }
+        // SplitMix64 finalizer — well-distributed mix that scatters adjacent seeds.
+        var x = UInt64(bitPattern: Int64(seed)) &+ 0x9E3779B97F4A7C15
+        x = (x ^ (x >> 30)) &* 0xBF58476D1CE4E5B9
+        x = (x ^ (x >> 27)) &* 0x94D049BB133111EB
+        x = x ^ (x >> 31)
+        return bank[Int(x % UInt64(bank.count))]
     }
 
     private func weeksInMonth(containing date: Date) -> Int {
@@ -658,24 +699,6 @@ struct ReadingStatsView: View {
         let monthEnd = calendar.date(byAdding: .month, value: 1, to: monthStart) ?? monthStart
         let daysToMonthEnd = calendar.dateComponents([.day], from: gridStart, to: monthEnd).day ?? 30
         return max(1, Int(ceil(Double(daysToMonthEnd) / 7.0)))
-    }
-
-    private func monthlyInsight() -> String {
-        let interval = StatsRange.month.interval(containing: Date(), calendar: calendar)
-        let monthEvents = libraryStore.readingStats.events.filter { interval.contains($0.timestamp) }
-        guard !monthEvents.isEmpty else {
-            return "本月还没留下阅读波纹，打开一本书就有了。"
-        }
-        let midDay = calendar.date(byAdding: .day, value: 15, to: interval.start) ?? interval.start
-        let firstHalf = monthEvents.filter { $0.timestamp < midDay }.reduce(0) { $0 + $1.durationSeconds }
-        let secondHalf = monthEvents.filter { $0.timestamp >= midDay }.reduce(0) { $0 + $1.durationSeconds }
-        if secondHalf > firstHalf * 1.15 {
-            return "本月后半段明显读得更勤了，手感回来了。"
-        }
-        if firstHalf > secondHalf * 1.15 {
-            return "本月前半段更稳，后半段可以随手续一点。"
-        }
-        return "本月读得挺均匀，照这个节奏就很好。"
     }
 
     private func trendPoints(for range: StatsRange) -> [TrendPoint] {
@@ -951,17 +974,17 @@ private enum StatsRange: String, CaseIterable, Identifiable {
 
     var reportTitle: String {
         switch self {
-        case .day: return "今日报告"
-        case .month: return "本月报告"
-        case .year: return "年度报告"
+        case .day: return "今日阅读小结"
+        case .month: return "本月阅读回顾"
+        case .year: return "年度阅读复盘"
         }
     }
 
     var trendExplanation: String {
         switch self {
-        case .day: return "今天每个时段读了多久"
-        case .month: return "本月每天读了多久"
-        case .year: return "今年每个月读了多久"
+        case .day: return "当日阅读分布"
+        case .month: return "本月每日分布"
+        case .year: return "全年每月分布"
         }
     }
 
@@ -1493,4 +1516,48 @@ private struct StatsBookCover: View {
     private func displayed(_ text: String) -> String {
         ChineseTextConverter.display(text, usesTraditionalChinese: usesTraditionalChinese)
     }
+}
+
+/// Copy banks for the 阅读小结 / 回顾 / 复盘 subtitle line under each report card.
+/// `rangeCommentary(for:)` picks one entry per period using a date-derived seed, so the
+/// chosen line is stable within a day / month / year and drifts naturally across periods.
+private enum StatsCommentary {
+    static let daily: [String] = [
+        "阅读步调稳定，在文字里从容沉浸。",
+        "专注阅读的时刻，都在悄悄沉淀自我。",
+        "保持舒适节奏，享受属于自己的阅读时光。",
+        "今日阅读状态在线，稳步积累，自在随心。",
+        "沉浸文字之中，收获片刻安静与充实。",
+        "阅读节奏松弛有度，享受沉浸式阅读体验。",
+        "阅读节奏在线，沉浸式体验拉满。",
+        "今日阅读状态稳定，专注感拉满。",
+        "高效完成阅读输入，氛围感十足。",
+        "把碎片时间，变成专属阅读时刻。",
+        "阅读效率稳定，精神补给到位。",
+        "今日阅读打卡成功，状态持续在线。",
+        "沉浸感刚刚好，阅读体验很舒服。",
+        "稳步阅读，给自己充好精神电量。"
+    ]
+
+    static let monthly: [String] = [
+        "持续保持阅读节奏，在积累中收获充实。",
+        "一月的点滴坚持，汇聚成独有的阅读印记。",
+        "稳步深耕阅读，让文字陪伴日常点滴。",
+        "本月阅读节奏稳定，长期积累看得见。",
+        "坚持阅读一整月，氛围感持续在线。",
+        "本月阅读习惯养成，状态保持得很好。",
+        "日复一日的阅读，悄悄拉开差距。",
+        "月度阅读续航稳定，收获满满。"
+    ]
+
+    static let yearly: [String] = [
+        "长久的阅读坚持，沉淀出独属于你的精神世界。",
+        "以书为伴，以读为常，时光自有答案。",
+        "经年累月的阅读，终将成为内在的底气。",
+        "一整年的阅读沉淀，气质自然流露。",
+        "长期阅读坚持，内在储备持续升级。",
+        "用一整年的阅读，完成自我充电。",
+        "阅读这件事，你坚持得很有质感。",
+        "常年保持阅读，本身就是一种实力。"
+    ]
 }
