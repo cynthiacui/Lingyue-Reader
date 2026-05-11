@@ -24,8 +24,9 @@ struct ReaderView: View {
     @AppStorage("reader.fontSize") private var fontSize = 18.0
     @AppStorage("reader.lineSpacing") private var lineSpacing = 8.0
     /// Paragraph-spacing multiplier expressed as a fraction of the rendered font's size
-    /// (≈ line height). 0.4 is tight, 1.2 is loose; 0.5 is the modern default and replaces
-    /// the previous `lineSpacing * 1.25` rule, which produced visibly wide paragraph gaps.
+    /// (≈ line height). 0 collapses paragraphs to back-to-back, 1.5 is loose; 0.5 is the
+    /// modern default and replaces the previous `lineSpacing * 1.25` rule, which produced
+    /// visibly wide paragraph gaps.
     @AppStorage("reader.paragraphSpacing") private var paragraphSpacingMultiplier: Double = 0.5
     @AppStorage("reader.fontFamily") private var fontFamilyRaw = ReaderFontFamily.system.rawValue
     @AppStorage("reader.pageTransition") private var pageTransitionRaw = PageTransitionStyle.instant.rawValue
@@ -1282,7 +1283,7 @@ struct ReaderView: View {
                         title: "段距",
                         systemImage: "text.alignleft",
                         value: $paragraphSpacingMultiplier,
-                        range: 0.4...1.2,
+                        range: 0...1.5,
                         step: 0.1,
                         format: { String(format: "%.1f", $0) }
                     )
@@ -2165,9 +2166,20 @@ struct ReaderView: View {
         )
         .trimmingCharacters(in: .whitespacesAndNewlines)
 
-        guard !chapterTitle.isEmpty else { return body }
-        guard !body.isEmpty else { return chapterTitle }
-        return "\(chapterTitle)\n\n\(body)"
+        // Imports normalize paragraph breaks as `\n\n` (blank line between paragraphs), but
+        // rendering that literally adds a full empty line that 段距=0 can't shrink. Collapse
+        // any run of two-plus newlines to a single one here so the gap is fully controlled
+        // by `paragraphStyle.paragraphSpacing` — the slider now spans "tight" to "loose"
+        // instead of "loose" to "looser".
+        let compactedBody = body.replacingOccurrences(
+            of: #"\n\s*\n+"#,
+            with: "\n",
+            options: .regularExpression
+        )
+
+        guard !chapterTitle.isEmpty else { return compactedBody }
+        guard !compactedBody.isEmpty else { return chapterTitle }
+        return "\(chapterTitle)\n\(compactedBody)"
     }
 
     @MainActor
