@@ -136,6 +136,17 @@ struct ReadingStatsView: View {
         }
         .navigationTitle("阅读统计")
         .navigationBarTitleDisplayMode(.large)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                NavigationLink {
+                    ReadingHistoryView()
+                } label: {
+                    Image(systemName: "clock.arrow.circlepath")
+                        .font(.system(size: 16, weight: .semibold))
+                }
+                .accessibilityLabel("浏览记录")
+            }
+        }
         .sensoryFeedback(.selection, trigger: selectedTrendPointID)
         .sensoryFeedback(.selection, trigger: selectedHeatmapDay)
         .onChange(of: selectedRange) { _, _ in
@@ -601,12 +612,7 @@ struct ReadingStatsView: View {
                                     .foregroundStyle(theme.primaryText)
                                     .lineLimit(1)
                                 if booksByID[item.id]?.isDeleted == true {
-                                    Text("已移出书架")
-                                        .font(.system(size: 10, weight: .bold))
-                                        .foregroundStyle(theme.secondaryText)
-                                        .padding(.horizontal, 5)
-                                        .padding(.vertical, 2)
-                                        .background(Capsule().fill(theme.subtleCardBackground))
+                                    RemovedFromLibraryBadge()
                                 }
                             }
                             Text("\(formatDuration(item.durationSeconds)) · \(formatCount(item.pageTurns)) 页 · \(formatCharacterCount(item.characterCount))")

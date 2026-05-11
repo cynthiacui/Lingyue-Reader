@@ -320,3 +320,18 @@ struct SectionHeader: View {
         }
     }
 }
+
+/// Pill displayed next to a book title when its `ReadingStatsBook` is `isDeleted`. Used by
+/// the stats top-books card and the browsing-history list so the same visual marks both.
+struct RemovedFromLibraryBadge: View {
+    @Environment(\.appTheme) private var theme
+
+    var body: some View {
+        Text("已移出书架")
+            .font(.system(size: 10, weight: .bold))
+            .foregroundStyle(theme.secondaryText)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 2)
+            .background(Capsule().fill(theme.subtleCardBackground))
+    }
+}

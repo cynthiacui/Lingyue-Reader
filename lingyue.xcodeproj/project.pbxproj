@@ -31,6 +31,7 @@
 		010000000000000000000117 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000019 /* PrivacyInfo.xcprivacy */; };
 		010000000000000000000118 /* TabBarVisibility.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01000000000000000000001A /* TabBarVisibility.swift */; };
 		010000000000000000000119 /* ReadingStatsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01000000000000000000001B /* ReadingStatsView.swift */; };
+		01000000000000000000011A /* ReadingHistoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01000000000000000000001C /* ReadingHistoryView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -60,6 +61,7 @@
 		010000000000000000000019 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		01000000000000000000001A /* TabBarVisibility.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabBarVisibility.swift; sourceTree = "<group>"; };
 		01000000000000000000001B /* ReadingStatsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReadingStatsView.swift; sourceTree = "<group>"; };
+		01000000000000000000001C /* ReadingHistoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReadingHistoryView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -128,6 +130,7 @@
 				010000000000000000000005 /* ReaderStyle.swift */,
 				010000000000000000000006 /* LibraryView.swift */,
 				01000000000000000000001B /* ReadingStatsView.swift */,
+				01000000000000000000001C /* ReadingHistoryView.swift */,
 				010000000000000000000007 /* DiscoveryView.swift */,
 				010000000000000000000008 /* SettingsView.swift */,
 				01000000000000000000000C /* ReaderView.swift */,
@@ -239,6 +242,7 @@
 				010000000000000000000105 /* ReaderStyle.swift in Sources */,
 				010000000000000000000106 /* LibraryView.swift in Sources */,
 				010000000000000000000119 /* ReadingStatsView.swift in Sources */,
+				01000000000000000000011A /* ReadingHistoryView.swift in Sources */,
 				010000000000000000000107 /* DiscoveryView.swift in Sources */,
 				010000000000000000000108 /* SettingsView.swift in Sources */,
 				01000000000000000000010A /* ReaderView.swift in Sources */,
