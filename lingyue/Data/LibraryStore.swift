@@ -104,6 +104,14 @@ struct ReadingStatsLedger: Hashable, Codable, Sendable {
         }
     }
 
+    /// Records a reading observation. An event is emitted **only** when the user actually
+    /// advances the reading position by one page (or one chapter). Re-pagination, font/size
+    /// changes, app foreground/background transitions, and onAppear / onDisappear flushes do
+    /// NOT count, even if measurable elapsed time has passed since the last call — opening
+    /// a book and closing it without turning a page no longer marks the day as "read".
+    ///
+    /// Trade-off: time spent lingering on the final page before closing is not credited,
+    /// because no page turn triggers the flush. Most reading trackers behave the same way.
     mutating func recordReading(
         novel: Novel,
         timestamp: Date,
@@ -123,37 +131,15 @@ struct ReadingStatsLedger: Hashable, Codable, Sendable {
             String(chapterPageIndex ?? -1)
         ].joined(separator: "|")
 
-        let cursorIndex = cursors.firstIndex { $0.bookID == novel.id }
-        var duration: TimeInterval = 0
-        var pageTurns = 0
-        var characters = 0
-
-        if let cursorIndex {
-            let previous = cursors[cursorIndex]
-            let elapsed = timestamp.timeIntervalSince(previous.lastObservedAt)
-            if elapsed > 0.5, elapsed <= 15 * 60 {
-                duration = min(elapsed, 5 * 60)
+        func updateBookProgress() {
+            if let bookIndex = books.firstIndex(where: { $0.id == novel.id }) {
+                books[bookIndex].currentProgress = clampedProgress
+                books[bookIndex].lastReadAt = max(books[bookIndex].lastReadAt, timestamp)
             }
-            if shouldCountPageReading(
-                previous: previous,
-                currentPageKey: pageKey,
-                chapterIndex: chapterIndex,
-                chapterPageIndex: chapterPageIndex
-            ) {
-                pageTurns = 1
-                characters = max(pageTextCharacterCount, 0)
-            }
+        }
 
-            cursors[cursorIndex] = ReadingStatsCursor(
-                bookID: novel.id,
-                lastObservedAt: timestamp,
-                lastPageKey: pageKey,
-                lastProgress: clampedProgress,
-                chapterIndex: chapterIndex,
-                chapterPageIndex: chapterPageIndex,
-                chapterSourceURLString: chapterSourceURLString
-            )
-        } else {
+        guard let cursorIndex = cursors.firstIndex(where: { $0.bookID == novel.id }) else {
+            // First observation for this book — establish a cursor without emitting an event.
             cursors.append(
                 ReadingStatsCursor(
                     bookID: novel.id,
@@ -165,15 +151,51 @@ struct ReadingStatsLedger: Hashable, Codable, Sendable {
                     chapterSourceURLString: chapterSourceURLString
                 )
             )
-        }
-
-        if duration <= 0, pageTurns == 0, characters == 0 {
-            if let bookIndex = books.firstIndex(where: { $0.id == novel.id }) {
-                books[bookIndex].currentProgress = clampedProgress
-                books[bookIndex].lastReadAt = max(books[bookIndex].lastReadAt, timestamp)
-            }
+            updateBookProgress()
             return
         }
+
+        let previous = cursors[cursorIndex]
+        let isPageTurn = shouldCountPageReading(
+            previous: previous,
+            currentPageKey: pageKey,
+            chapterIndex: chapterIndex,
+            chapterPageIndex: chapterPageIndex
+        )
+
+        guard isPageTurn else {
+            // Not a counted page turn. Keep the cursor's `lastObservedAt` anchored at the
+            // last real turn so elapsed time on the current page keeps accumulating until
+            // the user actually turns it. Refresh the location fields if the position
+            // shifted (e.g., a chapter jump) and reset the clock in that case so we don't
+            // later credit time spent navigating menus as reading.
+            let pageKeyChanged = previous.lastPageKey != pageKey
+            cursors[cursorIndex] = ReadingStatsCursor(
+                bookID: novel.id,
+                lastObservedAt: pageKeyChanged ? timestamp : previous.lastObservedAt,
+                lastPageKey: pageKey,
+                lastProgress: clampedProgress,
+                chapterIndex: chapterIndex,
+                chapterPageIndex: chapterPageIndex,
+                chapterSourceURLString: chapterSourceURLString
+            )
+            updateBookProgress()
+            return
+        }
+
+        let elapsed = timestamp.timeIntervalSince(previous.lastObservedAt)
+        let duration: TimeInterval = (elapsed > 0.5 && elapsed <= 15 * 60) ? min(elapsed, 5 * 60) : 0
+        let characters = max(pageTextCharacterCount, 0)
+
+        cursors[cursorIndex] = ReadingStatsCursor(
+            bookID: novel.id,
+            lastObservedAt: timestamp,
+            lastPageKey: pageKey,
+            lastProgress: clampedProgress,
+            chapterIndex: chapterIndex,
+            chapterPageIndex: chapterPageIndex,
+            chapterSourceURLString: chapterSourceURLString
+        )
 
         events.append(
             ReadingStatsEvent(
@@ -182,7 +204,7 @@ struct ReadingStatsLedger: Hashable, Codable, Sendable {
                 bookTitle: novel.title,
                 timestamp: timestamp,
                 durationSeconds: duration,
-                pageTurns: pageTurns,
+                pageTurns: 1,
                 characterCount: characters,
                 chapterTitle: chapterTitle,
                 progress: clampedProgress
@@ -193,7 +215,7 @@ struct ReadingStatsLedger: Hashable, Codable, Sendable {
             books[bookIndex].lastReadAt = max(books[bookIndex].lastReadAt, timestamp)
             books[bookIndex].currentProgress = clampedProgress
             books[bookIndex].totalDurationSeconds += duration
-            books[bookIndex].pageTurns += pageTurns
+            books[bookIndex].pageTurns += 1
             books[bookIndex].characterCount += characters
         }
     }
@@ -293,7 +315,13 @@ final class LibraryStore: ObservableObject {
         self.statsStorageURL = LibraryStore.makeStatsStorageURL()
 
         self.categories = LibraryStore.loadCategories(from: storageURL) ?? []
-        self.readingStats = LibraryStore.loadReadingStats(from: statsStorageURL) ?? ReadingStatsLedger()
+        var loadedStats = LibraryStore.loadReadingStats(from: statsStorageURL) ?? ReadingStatsLedger()
+        // Older builds recorded "ghost" events whenever pagination or scene-phase changes
+        // triggered a persist, even if the user never turned a page. Strip those legacy
+        // events on load so the calendar/streak reflect actual reading rather than incidental
+        // book-opens. Page-turn events have `pageTurns >= 1` by construction.
+        loadedStats.events.removeAll { $0.pageTurns == 0 }
+        self.readingStats = loadedStats
         seedReadingStatsFromLibraryIfNeeded()
     }
 
