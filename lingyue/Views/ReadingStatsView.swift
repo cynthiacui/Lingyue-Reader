@@ -13,6 +13,9 @@ struct ReadingStatsView: View {
         calendar.firstWeekday = 2
         return calendar.dateInterval(of: .month, for: Date())?.start ?? Date()
     }()
+    @AppStorage("stats.dailyGoalMinutes") private var dailyGoalMinutes: Int = 0
+    @State private var dayTick: Date = Date()
+    @Environment(\.scenePhase) private var scenePhase
 
     private let calendar: Calendar = {
         var calendar = Calendar.current
@@ -138,6 +141,29 @@ struct ReadingStatsView: View {
         .onChange(of: selectedRange) { _, _ in
             selectedTrendPointID = nil
         }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { dayTick = Date() }
+        }
+        .task(id: dayTick) {
+            await waitForNextDay()
+        }
+    }
+
+    private func waitForNextDay() async {
+        var components = DateComponents()
+        components.hour = 0
+        components.minute = 0
+        components.second = 1
+        let now = Date()
+        let next = calendar.nextDate(after: now, matching: components, matchingPolicy: .nextTime)
+            ?? now.addingTimeInterval(86_400)
+        let interval = max(next.timeIntervalSince(now), 1)
+        do {
+            try await Task.sleep(nanoseconds: UInt64(interval * 1_000_000_000))
+            dayTick = Date()
+        } catch {
+            // task cancelled
+        }
     }
 
     private var heroCard: some View {
@@ -147,9 +173,9 @@ struct ReadingStatsView: View {
             .filter { calendar.isDateInToday($0.timestamp) }
             .reduce(0) { $0 + $1.durationSeconds }
         let todayMinutes = max(Int(todaySeconds / 60), 0)
-        let dailyGoalMinutes = 30
-        let dailyProgress = min(Double(todayMinutes) / Double(dailyGoalMinutes), 1)
-        let goalReached = todayMinutes >= dailyGoalMinutes
+        let hasGoal = dailyGoalMinutes > 0
+        let dailyProgress = hasGoal ? min(Double(todayMinutes) / Double(dailyGoalMinutes), 1) : 0
+        let goalReached = hasGoal && todayMinutes >= dailyGoalMinutes
 
         return VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .top) {
@@ -178,30 +204,76 @@ struct ReadingStatsView: View {
                 .frame(width: 58, height: 58)
             }
 
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 6) {
-                    Text("今日 \(todayMinutes) / \(dailyGoalMinutes) 分钟")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(theme.secondaryText)
-                    Spacer()
-                    if goalReached {
-                        HStack(spacing: 3) {
-                            Image(systemName: "checkmark.seal.fill")
-                                .font(.system(size: 11, weight: .bold))
-                            Text("已达成")
-                                .font(.system(size: 11, weight: .bold, design: .rounded))
+            if hasGoal {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 6) {
+                        Menu {
+                            dailyGoalMenuItems
+                        } label: {
+                            HStack(spacing: 4) {
+                                Text("今日 \(todayMinutes) / \(dailyGoalMinutes) 分钟")
+                                    .font(.system(size: 11, weight: .semibold))
+                                Image(systemName: "chevron.down")
+                                    .font(.system(size: 8, weight: .bold))
+                            }
+                            .foregroundStyle(theme.secondaryText)
                         }
-                        .foregroundStyle(theme.accent)
+                        Spacer()
+                        if goalReached {
+                            HStack(spacing: 3) {
+                                Image(systemName: "checkmark.seal.fill")
+                                    .font(.system(size: 11, weight: .bold))
+                                Text("已达成")
+                                    .font(.system(size: 11, weight: .bold, design: .rounded))
+                            }
+                            .foregroundStyle(theme.accent)
+                        }
                     }
+                    ProgressView(value: dailyProgress)
+                        .tint(theme.accent)
                 }
-                ProgressView(value: dailyProgress)
-                    .tint(theme.accent)
+            } else {
+                Menu {
+                    dailyGoalMenuItems
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "target")
+                            .font(.system(size: 11, weight: .bold))
+                        Text("设定今日目标")
+                            .font(.system(size: 12, weight: .semibold, design: .rounded))
+                    }
+                    .foregroundStyle(theme.accent)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 7)
+                    .background(Capsule().fill(theme.accent.opacity(0.14)))
+                }
             }
         }
         .padding(18)
         .background(theme.cardBackground.opacity(0.92))
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .shadow(color: theme.cardShadow, radius: 14, x: 0, y: 8)
+    }
+
+    @ViewBuilder
+    private var dailyGoalMenuItems: some View {
+        ForEach([15, 30, 45, 60, 90, 120], id: \.self) { value in
+            Button {
+                dailyGoalMinutes = value
+            } label: {
+                if value == dailyGoalMinutes {
+                    Label("\(value) 分钟", systemImage: "checkmark")
+                } else {
+                    Text("\(value) 分钟")
+                }
+            }
+        }
+        if dailyGoalMinutes > 0 {
+            Divider()
+            Button("清除目标", role: .destructive) {
+                dailyGoalMinutes = 0
+            }
+        }
     }
 
     private var globalMetrics: some View {
