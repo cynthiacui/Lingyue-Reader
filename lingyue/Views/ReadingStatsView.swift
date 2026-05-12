@@ -54,6 +54,16 @@ private struct StatsPalette {
     // Always the same hue family as `readingTime`; never gaming-RGB neon.
     let glow: Color
 
+    // Lower-section card surface — a translucent vertical gradient that lets the
+    // page background bleed through subtly so the heatmap + ranking don't feel
+    // like flat white components stuck onto the page.
+    let lowerCardGradient: [Color]
+
+    // Segmented control (used by the ranking range picker). Custom-rendered so
+    // it matches the literary tone instead of the stock iOS pill style.
+    let segmentedTrack: Color
+    let segmentedActive: Color
+
     /// Rotating accent for the top-books leaderboard rank circles. Gold for #1,
     /// then dusty blue / sage / clay / rose so each rank reads as its own role
     /// without rainbow chaos.
@@ -97,7 +107,10 @@ private struct StatsPalette {
             heroGradient:     lightHeroGradient(for: theme),
             badgeBackground:  Color(red: 0.937, green: 0.871, blue: 0.804), // warm beige
             badgeForeground:  Color(red: 0.478, green: 0.349, blue: 0.275), // warm clay text
-            glow:             lightGlow(for: theme)
+            glow:             lightGlow(for: theme),
+            lowerCardGradient: lightLowerCardGradient(for: theme),
+            segmentedTrack:    lightSegmentedTrack(for: theme),
+            segmentedActive:   Color.white.opacity(0.92)
         )
     }
 
@@ -135,7 +148,16 @@ private struct StatsPalette {
             ],
             badgeBackground:  Color(red: 0.42, green: 0.34, blue: 0.27),
             badgeForeground:  Color(red: 0.92, green: 0.85, blue: 0.74),
-            glow:             Color(red: 0.878, green: 0.769, blue: 0.561) // celestial gold halo
+            glow:             Color(red: 0.878, green: 0.769, blue: 0.561), // celestial gold halo
+            // Lower-section translucent gradient — indigo lift at the top, deeper
+            // navy at the bottom; mirrors the heroGradient mood so the lower half
+            // feels of-a-piece with the hero.
+            lowerCardGradient: [
+                Color(red: 0.122, green: 0.149, blue: 0.224),
+                Color(red: 0.094, green: 0.118, blue: 0.196)
+            ],
+            segmentedTrack:    Color(red: 0.086, green: 0.106, blue: 0.173).opacity(0.78),
+            segmentedActive:   Color(red: 0.165, green: 0.196, blue: 0.298)
         )
     }
 
@@ -233,6 +255,47 @@ private struct StatsPalette {
         }
     }
 
+    /// Per-theme translucent gradient for the heatmap + ranking cards. Sakura uses
+    /// the exact rgba(255,252,253,0.92)→rgba(252,246,248,0.96) blush veil from the
+    /// brief; other themes get analog veils in their own hue so the lower half
+    /// reads as continuous with each theme's atmosphere instead of flat white.
+    private static func lightLowerCardGradient(for theme: AppTheme) -> [Color] {
+        switch theme {
+        case .pink:
+            return [
+                Color(red: 1.000, green: 0.988, blue: 0.992).opacity(0.92), // #FFFCFD
+                Color(red: 0.988, green: 0.965, blue: 0.973).opacity(0.96)  // #FCF6F8
+            ]
+        case .ink:
+            return [
+                Color(red: 1.000, green: 0.996, blue: 0.984).opacity(0.94),
+                Color(red: 0.988, green: 0.969, blue: 0.929).opacity(0.96)
+            ]
+        case .paperGreen, .leafGreen:
+            return [
+                Color(red: 0.996, green: 1.000, blue: 0.988).opacity(0.94),
+                Color(red: 0.965, green: 0.984, blue: 0.957).opacity(0.96)
+            ]
+        case .starryNight:
+            return [
+                Color(red: 0.122, green: 0.149, blue: 0.224),
+                Color(red: 0.094, green: 0.118, blue: 0.196)
+            ]
+        }
+    }
+
+    /// Outer track for the custom segmented control. Theme-tinted soft pink-grey
+    /// for Sakura (exact rgba(232,222,227,0.72) from spec); ivory/sage/moss for
+    /// the literary light themes.
+    private static func lightSegmentedTrack(for theme: AppTheme) -> Color {
+        switch theme {
+        case .pink:                    return Color(red: 0.910, green: 0.871, blue: 0.890).opacity(0.72) // #E8DEE3
+        case .ink:                     return Color(red: 0.871, green: 0.827, blue: 0.757).opacity(0.55)
+        case .paperGreen, .leafGreen:  return Color(red: 0.839, green: 0.890, blue: 0.827).opacity(0.55)
+        case .starryNight:             return Color(red: 0.086, green: 0.106, blue: 0.173).opacity(0.78)
+        }
+    }
+
     /// Top→bottom sweep painted inside the hero card. Sakura gets a faint blush
     /// veil so the hero reads as a luminous petal sweep instead of warm cream.
     private static func lightHeroGradient(for theme: AppTheme) -> [Color] {
@@ -256,13 +319,14 @@ private struct StatsPalette {
     private static func lightHeatLadder(for theme: AppTheme) -> [Color] {
         switch theme {
         case .pink:
-            // Glowing cherry blossom petals: #F3E7EB → #E8C7D2 → #D9A7B8 → #C97C96 → #A85F7B.
+            // Softer empty floor + richer active steps so the heatmap feels
+            // intentional rather than pale background noise.
             return [
-                Color(red: 0.953, green: 0.906, blue: 0.922), // #F3E7EB
-                Color(red: 0.910, green: 0.780, blue: 0.824), // #E8C7D2
-                Color(red: 0.851, green: 0.655, blue: 0.722), // #D9A7B8
-                Color(red: 0.788, green: 0.486, blue: 0.588), // #C97C96
-                Color(red: 0.659, green: 0.373, blue: 0.482)  // #A85F7B
+                Color(red: 0.973, green: 0.945, blue: 0.957), // #F8F1F4 empty floor
+                Color(red: 0.937, green: 0.839, blue: 0.878), // #EFD6E0 lightest active
+                Color(red: 0.875, green: 0.655, blue: 0.745), // #DFA7BE
+                Color(red: 0.808, green: 0.525, blue: 0.651), // #CE86A6
+                Color(red: 0.741, green: 0.435, blue: 0.573)  // #BD6F92 strongest active
             ]
         case .ink:
             // Editorial sepia on paper: #F2EEE7 → #DED3C1 → #C6B08A → #A7865E → #5A5148.
@@ -364,6 +428,41 @@ private struct StatsCardModifier: ViewModifier {
 extension View {
     fileprivate func statsCard(elevated: Bool = false, cornerRadius: CGFloat = 14) -> some View {
         modifier(StatsCardModifier(elevated: elevated, cornerRadius: cornerRadius))
+    }
+
+    /// Used by the lower-half cards (heatmap, ranking) so they read as polished
+    /// translucent panels instead of flat white components.
+    fileprivate func statsLowerCard(cornerRadius: CGFloat = 14) -> some View {
+        modifier(StatsLowerCardModifier(cornerRadius: cornerRadius))
+    }
+}
+
+/// Lower-half card chrome: subtle vertical translucent gradient + hairline border
+/// + a slightly softer shadow than the standard `.statsCard()`. The translucency
+/// lets the theme background bleed through just enough that the heatmap and
+/// ranking cards feel atmospheric, not like opaque rectangles glued onto the page.
+private struct StatsLowerCardModifier: ViewModifier {
+    @Environment(\.statsPalette) private var palette
+    var cornerRadius: CGFloat = 14
+
+    func body(content: Content) -> some View {
+        content
+            .background(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .fill(
+                        LinearGradient(
+                            colors: palette.lowerCardGradient,
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .stroke(palette.border, lineWidth: 0.6)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+            .shadow(color: palette.shadow, radius: 14, x: 0, y: 7)
     }
 }
 
@@ -968,33 +1067,33 @@ struct ReadingStatsView: View {
                                     let isSelected = !isFuture && (selectedHeatmapDay.map { calendar.isDate($0, inSameDayAs: summary.day) } ?? false)
                                     let level = isFuture ? 0 : heatLevel(summary.durationSeconds, maxDuration: maxDuration)
                                     let hasData = level > 0
-                                    let isStrong = level >= 3
                                     Button {
                                         withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
                                             selectedHeatmapDay = isSelected ? nil : summary.day
                                         }
                                     } label: {
-                                        RoundedRectangle(cornerRadius: 3, style: .continuous)
+                                        RoundedRectangle(cornerRadius: 8, style: .continuous)
                                             .fill(isFuture ? Color.clear : palette.heatLevels[level])
                                             .aspectRatio(1, contentMode: .fit)
                                             .frame(maxWidth: .infinity)
-                                            // Filled cells get a subtle inner-dark stroke so each block
+                                            // Filled cells get a hairline inner stroke so each block
                                             // reads as its own swatch instead of bleeding into neighbors.
                                             .overlay(
-                                                RoundedRectangle(cornerRadius: 3, style: .continuous)
-                                                    .stroke(hasData ? palette.primaryText.opacity(0.10) : .clear, lineWidth: 0.6)
+                                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                                    .stroke(hasData ? palette.primaryText.opacity(0.08) : .clear, lineWidth: 0.5)
                                             )
                                             .overlay(
-                                                RoundedRectangle(cornerRadius: 3, style: .continuous)
+                                                RoundedRectangle(cornerRadius: 8, style: .continuous)
                                                     .stroke(isSelected ? palette.primaryText.opacity(0.65) : .clear, lineWidth: 1.6)
                                             )
-                                            // Two-tier shadow: heaviest weeks lift off the page so the
-                                            // heatmap reads as a signature visual; selection overrides.
+                                            // Uniform tiny theme-tinted depth on every active cell so
+                                            // the heatmap reads as intentional / sculpted; selection
+                                            // promotes to a tighter, stronger lift.
                                             .shadow(
                                                 color: isSelected
                                                     ? palette.primaryText.opacity(0.18)
-                                                    : (isStrong ? palette.primaryText.opacity(0.10) : .clear),
-                                                radius: isSelected ? 5 : 2.5,
+                                                    : (hasData ? palette.glow.opacity(0.10) : .clear),
+                                                radius: isSelected ? 5 : 2,
                                                 x: 0,
                                                 y: isSelected ? 2 : 1
                                             )
@@ -1009,20 +1108,23 @@ struct ReadingStatsView: View {
                     }
                 }
 
-                // Legend draws straight from `palette.heatLevels` so it always matches
-                // the actual cells — no derived/scaled colors that could drift apart.
+                // Legend uses the strongest-level color at an opacity ramp so the
+                // progression reads as one elegant arc (subtle → full) instead of
+                // five distinct hues fighting for attention. Text is softened so
+                // the legend recedes against the card.
+                let legendOpacities: [Double] = [0.18, 0.36, 0.52, 0.72, 1.0]
                 HStack(spacing: 6) {
                     Text("投入较少")
                         .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(palette.secondaryText)
-                    ForEach(palette.heatLevels.indices, id: \.self) { index in
-                        RoundedRectangle(cornerRadius: 2, style: .continuous)
-                            .fill(palette.heatLevels[index])
+                        .foregroundStyle(palette.secondaryText.opacity(0.78))
+                    ForEach(legendOpacities.indices, id: \.self) { index in
+                        RoundedRectangle(cornerRadius: 3, style: .continuous)
+                            .fill(palette.heatLevels[4].opacity(legendOpacities[index]))
                             .frame(width: 16, height: 8)
                     }
                     Text("投入充足")
                         .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(palette.secondaryText)
+                        .foregroundStyle(palette.secondaryText.opacity(0.78))
                     Spacer()
                 }
 
@@ -1045,7 +1147,7 @@ struct ReadingStatsView: View {
             }
         }
         .padding(16)
-        .statsCard()
+        .statsLowerCard()
         .animation(.easeInOut(duration: 0.18), value: selectedHeatmapDay)
     }
 
@@ -1065,12 +1167,11 @@ struct ReadingStatsView: View {
                 Spacer()
             }
 
-            Picker("阅读榜单范围", selection: $selectedTopBooksRange) {
-                ForEach(TopBooksRange.allCases) { range in
-                    Text(range.title).tag(range)
-                }
-            }
-            .pickerStyle(.segmented)
+            StatsSegmentedControl(
+                selection: $selectedTopBooksRange,
+                options: TopBooksRange.allCases,
+                title: \.title
+            )
 
             if books.isEmpty {
                 Text("\(selectedTopBooksRange.title)还没有可统计的阅读记录。")
@@ -1111,7 +1212,7 @@ struct ReadingStatsView: View {
             }
         }
         .padding(16)
-        .statsCard()
+        .statsLowerCard()
     }
 
     private func heroSubtitle(minutes: Int, streak: Int) -> String {
@@ -1632,6 +1733,57 @@ private struct SmallStatPill: View {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .stroke((tint ?? palette.secondaryText).opacity(0.38), lineWidth: 0.8)
         )
+    }
+}
+
+/// Sakura-tuned segmented control: soft theme-tinted track, near-white active pill
+/// with a diffused glow, and a spring-animated slide between segments. Replaces the
+/// stock `.segmented` Picker which read as too utilitarian for the literary tone.
+private struct StatsSegmentedControl<Value: Hashable & Identifiable>: View {
+    @Environment(\.statsPalette) private var palette
+    @Binding var selection: Value
+    let options: [Value]
+    let title: KeyPath<Value, String>
+
+    var body: some View {
+        GeometryReader { proxy in
+            let count = max(options.count, 1)
+            let trackHeight: CGFloat = 34
+            let segmentWidth = proxy.size.width / CGFloat(count)
+            let selectedIndex = options.firstIndex(where: { $0 == selection }) ?? 0
+
+            ZStack(alignment: .leading) {
+                Capsule(style: .continuous)
+                    .fill(palette.segmentedTrack)
+                    .frame(height: trackHeight)
+
+                Capsule(style: .continuous)
+                    .fill(palette.segmentedActive)
+                    .frame(width: segmentWidth - 6, height: trackHeight - 6)
+                    .shadow(color: palette.glow.opacity(0.10), radius: 16, x: 0, y: 6)
+                    .offset(x: segmentWidth * CGFloat(selectedIndex) + 3)
+                    .animation(.spring(response: 0.32, dampingFraction: 0.86), value: selection)
+
+                HStack(spacing: 0) {
+                    ForEach(options) { option in
+                        let isActive = option == selection
+                        Button {
+                            selection = option
+                        } label: {
+                            Text(option[keyPath: title])
+                                .font(.system(size: 13, weight: isActive ? .semibold : .medium, design: .rounded))
+                                .foregroundStyle(isActive ? palette.primaryText : palette.secondaryText)
+                                .frame(maxWidth: .infinity)
+                                .frame(height: trackHeight)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+            .frame(height: trackHeight)
+        }
+        .frame(height: 34)
     }
 }
 
