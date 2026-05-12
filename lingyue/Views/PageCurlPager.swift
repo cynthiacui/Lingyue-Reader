@@ -68,10 +68,16 @@ struct PageCurlPager: UIViewControllerRepresentable {
         // ReaderView already discards the pager wholesale on chapter change (via `.id`),
         // so this cache is bounded to one chapter's worth of pages.
         private var hosts: [Int: UIHostingController<AnyView>] = [:]
+        // Tracks the pageCount at the last refresh so we can detect re-pagination
+        // (e.g., async pagination completion that increases/changes page count
+        // within the same chapter) and evict non-visible hosts that may still hold
+        // stale `renderPage` output.
+        private var lastSeenPageCount: Int = -1
 
         init(_ parent: PageCurlPager) {
             self.parent = parent
             self.shownIndex = parent.currentIndex
+            self.lastSeenPageCount = parent.pageCount
         }
 
         func hostingController(for index: Int) -> UIHostingController<AnyView>? {
@@ -91,13 +97,33 @@ struct PageCurlPager: UIViewControllerRepresentable {
         }
 
         /// Push fresh root views into existing cached hosts so font / theme changes
-        /// take effect without rebuilding the whole pager.
+        /// take effect without rebuilding the whole pager. Mutating `hosts` during the
+        /// dictionary iteration is undefined behavior in Swift and was crashing on
+        /// in-chapter re-pagination that shrank the page count (e.g. font size or
+        /// line spacing decrease) — collect stale keys first, drop them in a second
+        /// pass, then refresh the rest.
+        ///
+        /// When pageCount changes (in-chapter re-pagination — async pagination
+        /// completing, font/spacing change), drop every cached host except the
+        /// currently shown one. Refreshing `rootView` on a cached UIHostingController
+        /// queues a SwiftUI render but doesn't guarantee the new tree is laid out
+        /// before UIPageViewController shows the host on the next swipe; the host
+        /// can flash blank until navigated-away-and-back. Building fresh hosts on
+        /// demand sidesteps that race because the new host starts its lifecycle
+        /// with the current `renderPage` output.
         func refreshCachedRenders() {
-            for (index, host) in hosts {
-                guard index < parent.pageCount else {
-                    hosts.removeValue(forKey: index)
-                    continue
+            let staleKeys = hosts.keys.filter { $0 >= parent.pageCount }
+            for key in staleKeys {
+                hosts.removeValue(forKey: key)
+            }
+            if lastSeenPageCount != parent.pageCount {
+                let evictKeys = hosts.keys.filter { $0 != shownIndex }
+                for key in evictKeys {
+                    hosts.removeValue(forKey: key)
                 }
+                lastSeenPageCount = parent.pageCount
+            }
+            for (index, host) in hosts {
                 host.rootView = parent.renderPage(index)
                 host.view.backgroundColor = parent.backgroundColor
             }

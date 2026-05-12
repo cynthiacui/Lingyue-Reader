@@ -1607,7 +1607,12 @@ struct ReaderView: View {
             return placeholderPage(forChapterAt: currentChapterIndex)
         }
 
-        return pages[min(currentChapterPageIndex, pages.count - 1)]
+        // Defensive clamp: in the (vanishingly rare) case currentChapterPageIndex
+        // is negative — e.g. a stale write from an in-flight gesture/setter — bare
+        // `min(..., pages.count-1)` would still subscript with a negative index and
+        // crash. Pin to a known-good range before subscripting.
+        let clampedIndex = max(0, min(currentChapterPageIndex, pages.count - 1))
+        return pages[clampedIndex]
     }
 
     private func activeVisiblePages() -> [ReaderPageItem] {
