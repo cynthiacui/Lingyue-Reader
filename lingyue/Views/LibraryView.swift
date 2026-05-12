@@ -119,10 +119,9 @@ struct LibraryView: View {
     @Environment(\.appTheme) private var theme
     @EnvironmentObject private var libraryStore: LibraryStore
     @EnvironmentObject private var downloadManager: BookDownloadManager
+    @EnvironmentObject private var overlayManager: OverlayManager
 
-    @State private var isAddingCategory = false
     @State private var newCategoryName = ""
-    @State private var categoryEditBook: Novel?
     @State private var newBookCategoryName = ""
     @State private var activeSwipeID: UUID?
     @State private var expandedCategoryID: UUID?
@@ -178,6 +177,10 @@ struct LibraryView: View {
                 if l != r { return l > r }
                 return lhs.readMinutes > rhs.readMinutes
             }
+    }
+
+    private var hasActiveOverlay: Bool {
+        expandedCategoryID != nil
     }
 
     var body: some View {
@@ -260,32 +263,6 @@ struct LibraryView: View {
                 .zIndex(10)
             }
 
-            if let categoryEditBook {
-                categoryEditOverlay(for: categoryEditBook)
-                    .transition(.opacity.combined(with: .scale(scale: 0.96)))
-                    .zIndex(11)
-            }
-
-            if isAddingCategory {
-                InputModalView(
-                    title: "新建分类",
-                    helperText: "分类会先创建为空，可以稍后加入书籍。",
-                    placeholder: "分类名称",
-                    text: $newCategoryName,
-                    confirmTitle: "添加",
-                    cancelTitle: "取消",
-                    onConfirm: addCategory,
-                    onDismiss: {
-                        withAnimation(InputModalView.presentationAnimation) {
-                            newCategoryName = ""
-                            isAddingCategory = false
-                        }
-                    }
-                )
-                .transition(InputModalView.transition)
-                .zIndex(12)
-            }
-
             if let txtImportToast {
                 LibraryCenterToast(text: txtImportToast)
                     .transition(.opacity.combined(with: .scale(scale: 0.92)))
@@ -352,16 +329,14 @@ struct LibraryView: View {
             }
         }
         .animation(.spring(response: 0.42, dampingFraction: 0.82), value: expandedCategoryID)
-        .animation(.easeInOut(duration: 0.18), value: categoryEditBook?.id)
-        .animation(InputModalView.presentationAnimation, value: isAddingCategory)
-        // While a category is expanded, hide the navigation chrome and the tab
-        // bar so the overlay's dim layer becomes the entire backdrop. Without
-        // this the toolbar buttons / search drawer / tab bar render above the
-        // dim with their own materials, looking highlighted instead of grayed
-        // out — and they remain tappable, which would let the user open
-        // unrelated UI without dismissing the popup first.
-        .toolbar(expandedCategoryID == nil ? .visible : .hidden, for: .navigationBar)
-        .toolbar(expandedCategoryID == nil ? .visible : .hidden, for: .tabBar)
+        // While a category is expanded the overlay fills the screen, so hide
+        // the navigation chrome and tab bar — leaving them visible would let
+        // the user tap into unrelated UI without dismissing first. Smaller
+        // modals (new-category input, move-book picker) are presented at the
+        // ContentView level via OverlayManager so their dim layer naturally
+        // covers the chrome instead of needing it hidden.
+        .toolbar(hasActiveOverlay ? .hidden : .visible, for: .navigationBar)
+        .toolbar(hasActiveOverlay ? .hidden : .visible, for: .tabBar)
         .navigationTitle("书架")
         .navigationBarTitleDisplayMode(.inline)
         .searchable(
@@ -378,8 +353,6 @@ struct LibraryView: View {
                 await downloadManager.refreshStates(for: libraryStore.allNovels)
             }
         }
-        .onChange(of: categoryEditBook?.id) { _, _ in closeActiveSwipe() }
-        .onChange(of: isAddingCategory) { _, _ in closeActiveSwipe() }
         // Toolbar buttons live outside the ScrollView, so the simultaneousGesture
         // above doesn't see their taps. Closing on sheet presentation keeps the
         // swipe panel from lingering behind the modal.
@@ -441,9 +414,7 @@ struct LibraryView: View {
             .padding(.horizontal, 40)
 
             Button {
-                closeActiveSwipe()
-                newCategoryName = ""
-                isAddingCategory = true
+                presentNewCategoryInput()
             } label: {
                 HStack(spacing: 6) {
                     Image(systemName: "folder.badge.plus")
@@ -583,9 +554,7 @@ struct LibraryView: View {
 
                 Menu {
                     Button {
-                        closeActiveSwipe()
-                        newCategoryName = ""
-                        isAddingCategory = true
+                        presentNewCategoryInput()
                     } label: {
                         Label("新建分类", systemImage: "plus")
                     }
@@ -640,21 +609,40 @@ struct LibraryView: View {
         libraryStore.deleteBook(novel)
     }
 
-    private func categoryEditOverlay(for novel: Novel) -> some View {
-        CategoryEditOverlay(
-            novel: novel,
-            categories: $libraryStore.categories,
-            newCategoryName: $newBookCategoryName,
-            onDismiss: {
-                categoryEditBook = nil
-                newBookCategoryName = ""
-            }
-        )
+    private func presentNewCategoryInput() {
+        closeActiveSwipe()
+        newCategoryName = ""
+        overlayManager.present {
+            InputModalView(
+                title: "新建分类",
+                helperText: "分类会先创建为空，可以稍后加入书籍。",
+                placeholder: "分类名称",
+                text: $newCategoryName,
+                confirmTitle: "添加",
+                cancelTitle: "取消",
+                onConfirm: addCategory,
+                onDismiss: {
+                    newCategoryName = ""
+                    overlayManager.dismiss()
+                }
+            )
+        }
     }
 
     private func presentCategoryEditor(for novel: Novel) {
+        closeActiveSwipe()
         newBookCategoryName = ""
-        categoryEditBook = novel
+        overlayManager.present {
+            CategoryEditOverlay(
+                novel: novel,
+                categories: $libraryStore.categories,
+                newCategoryName: $newBookCategoryName,
+                onDismiss: {
+                    newBookCategoryName = ""
+                    overlayManager.dismiss()
+                }
+            )
+        }
     }
 
     private func addCategory() {
@@ -662,10 +650,8 @@ struct LibraryView: View {
         guard !trimmedName.isEmpty else { return }
 
         _ = libraryStore.addCategory(named: trimmedName)
-        withAnimation(InputModalView.presentationAnimation) {
-            newCategoryName = ""
-            isAddingCategory = false
-        }
+        newCategoryName = ""
+        overlayManager.dismiss()
     }
 
     private func clearDownloadedData(for novel: Novel) {

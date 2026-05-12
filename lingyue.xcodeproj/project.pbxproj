@@ -32,6 +32,7 @@
 		010000000000000000000118 /* TabBarVisibility.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01000000000000000000001A /* TabBarVisibility.swift */; };
 		010000000000000000000119 /* ReadingStatsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01000000000000000000001B /* ReadingStatsView.swift */; };
 		01000000000000000000011A /* ReadingHistoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01000000000000000000001C /* ReadingHistoryView.swift */; };
+		01000000000000000000011B /* OverlayManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01000000000000000000001D /* OverlayManager.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -62,6 +63,7 @@
 		01000000000000000000001A /* TabBarVisibility.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabBarVisibility.swift; sourceTree = "<group>"; };
 		01000000000000000000001B /* ReadingStatsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReadingStatsView.swift; sourceTree = "<group>"; };
 		01000000000000000000001C /* ReadingHistoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReadingHistoryView.swift; sourceTree = "<group>"; };
+		01000000000000000000001D /* OverlayManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverlayManager.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -140,6 +142,7 @@
 				010000000000000000000011 /* CustomAlertView.swift */,
 				010000000000000000000012 /* ModalContainer.swift */,
 				010000000000000000000013 /* InputModalView.swift */,
+				01000000000000000000001D /* OverlayManager.swift */,
 				010000000000000000000014 /* AppTheme.swift */,
 				010000000000000000000016 /* DownloadsView.swift */,
 			);
@@ -255,6 +258,7 @@
 				01000000000000000000010F /* CustomAlertView.swift in Sources */,
 				010000000000000000000110 /* ModalContainer.swift in Sources */,
 				010000000000000000000111 /* InputModalView.swift in Sources */,
+				01000000000000000000011B /* OverlayManager.swift in Sources */,
 				010000000000000000000112 /* AppTheme.swift in Sources */,
 				010000000000000000000113 /* BookDownloadManager.swift in Sources */,
 				010000000000000000000114 /* DownloadsView.swift in Sources */,

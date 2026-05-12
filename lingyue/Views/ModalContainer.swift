@@ -49,6 +49,7 @@ struct ModalCard<Content: View>: View {
     let content: Content
 
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.appTheme) private var theme
 
     init(
         maxWidth: CGFloat = 360,
@@ -89,7 +90,7 @@ struct ModalCard<Content: View>: View {
             Rectangle()
                 .fill(.regularMaterial)
 
-            Color.readerSurface.opacity(colorScheme == .dark ? 0.0 : 0.32)
+            theme.cardBackground.opacity(colorScheme == .dark ? 0.18 : 0.55)
 
             LinearGradient(
                 colors: [
@@ -117,6 +118,7 @@ struct ModalButton: View {
     var isDisabled: Bool = false
 
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.appTheme) private var theme
     @ScaledMetric(relativeTo: .callout) private var minHeight: CGFloat = 44
 
     var body: some View {
@@ -161,8 +163,8 @@ struct ModalButton: View {
         case .primary:
             LinearGradient(
                 colors: [
-                    Color.readerAccent,
-                    Color.readerAccent.opacity(0.86)
+                    theme.accent,
+                    theme.accent.opacity(0.86)
                 ],
                 startPoint: .top,
                 endPoint: .bottom

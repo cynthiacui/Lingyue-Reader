@@ -4,6 +4,7 @@ struct ContentView: View {
     @StateObject private var libraryStore = LibraryStore()
     @StateObject private var themeManager = AppThemeManager()
     @StateObject private var downloadManager = BookDownloadManager()
+    @StateObject private var overlayManager = OverlayManager()
     @State private var selectedTab: AppTab = .library
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.colorScheme) private var systemColorScheme
@@ -52,11 +53,26 @@ struct ContentView: View {
                 .tag(AppTab.settings)
         }
         .tint(effectiveTheme.accent)
+        .preferredColorScheme(chromeOverride)
+        // Render transient popups above the navigation chrome and tab bar so
+        // the dim layer covers the whole window — otherwise the toolbar /
+        // search drawer / tab bar paint over the dim and look highlighted.
+        // Environment values are injected AFTER the overlay so its content
+        // inherits the same theme / stores as the TabView (overlay siblings
+        // sit outside any environment applied before `.overlay`).
+        .overlay {
+            if let presentation = overlayManager.presentation {
+                presentation.view
+                    .id(presentation.id)
+                    .transition(ModalStyle.transition)
+            }
+        }
+        .animation(ModalStyle.presentationAnimation, value: overlayManager.presentation?.id)
         .environmentObject(libraryStore)
         .environmentObject(themeManager)
         .environmentObject(downloadManager)
+        .environmentObject(overlayManager)
         .environment(\.appTheme, effectiveTheme)
-        .preferredColorScheme(chromeOverride)
         .onChange(of: scenePhase) { _, newPhase in
             if newPhase == .background {
                 Task { await libraryStore.flush() }
