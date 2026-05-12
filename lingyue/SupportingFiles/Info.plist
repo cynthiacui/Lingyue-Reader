@@ -26,7 +26,8 @@
 	<string>public.app-category.books</string>
 	<key>UIAppFonts</key>
 	<array>
-		<string>LXGWWenKaiScreen.ttf</string>
+		<string>SourceHanSerifSC-Regular.otf</string>
+		<string>MiSans-Regular.ttf</string>
 	</array>
 	<key>UIApplicationSceneManifest</key>
 	<dict>

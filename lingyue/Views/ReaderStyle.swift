@@ -1,45 +1,68 @@
 import SwiftUI
 import UIKit
 
-/// Reader body-text font choice. iOS 17 ships PingFang SC plus the Hiragino Japanese family
-/// (Mincho-style serif and a rounded "Maru" sans), but does *not* bundle Songti / Kaiti /
-/// Yuanti anymore — those families are absent from `UIFont.familyNames`. So 宋体/黑体/圆体
-/// route to the closest visually-distinct on-device face, and 楷体 is satisfied by the
-/// open-source LXGW WenKai Screen TTF bundled in `SupportingFiles/Fonts/`.
+/// Curated reader body-text font set. Four intentional choices — sans, serif, modern
+/// minimalist, rounded — chosen to feel distinct without overlap. App chrome (titles,
+/// labels, book covers) always renders in the system font; this selection only drives
+/// reader body content.
+///
+/// Raw values are preserved across enum revisions so persisted `@AppStorage` settings
+/// don't regress when entries are dropped. The legacy `kaiti` / `systemLight` / `heiti`
+/// rawValues fall through to `.system` via the `?? .system` rescue at every read site.
 enum ReaderFontFamily: String, CaseIterable, Identifiable {
+    /// 苹方 — PingFang SC, the default. Modern, clean, balanced for long sessions.
     case system
-    case systemLight
-    case songti
-    case kaiti
-    case heiti
+
+    /// 思源宋体 — bundled Source Han Serif SC. Stock-iOS Songti / Hiragino Mincho act as
+    /// the safety net if the OTF is somehow absent at runtime.
+    case songtiSerif = "songti"
+
+    /// MiSans — bundled Xiaomi MiSans Regular. Falls back to PingFang via the system
+    /// font path when the TTF is missing.
+    case misans
+
+    /// 圆体 — Hiragino Maru ProN W4 (iOS-bundled). Critical for CJK rendering because
+    /// `Font.system(design: .rounded)` only applies SF Rounded to Latin glyphs; Han
+    /// characters fall back to PingFang and read identically to 苹方. Hiragino Maru has
+    /// comprehensive CJK Han coverage and renders Chinese in a true rounded style.
     case yuanti
 
     var id: String { rawValue }
 
     var displayName: String {
         switch self {
-        case .system:      return "苹方"
-        case .systemLight: return "苹方细"
-        case .songti:      return "宋体"
-        case .kaiti:       return "楷体"
-        case .heiti:       return "黑体"
-        case .yuanti:      return "圆体"
+        case .system:       return "苹方"
+        case .songtiSerif:  return "思源宋体"
+        case .misans:       return "MiSans"
+        case .yuanti:       return "圆体"
         }
     }
 
-    /// Postscript names to try, in order. The first one that resolves wins. `kaiti` uses the
-    /// bundled LXGW WenKai Screen (registered via `UIAppFonts`); the others are stock iOS.
-    /// `systemLight` explicitly requests PingFang SC Light so the user can pick a lighter
-    /// body weight without affecting the default `system` rendering.
+    /// Postscript names to try, in order. The first one that resolves wins. Empty list
+    /// means "use the plain system font" (PingFang for CJK).
     private var postScriptCandidates: [String] {
         switch self {
-        case .system:      return []
-        case .systemLight: return ["PingFangSC-Light"]
-        case .songti:      return ["HiraMinProN-W3"]
-        case .kaiti:       return ["LXGWWenKaiScreen"]
-        case .heiti:       return ["HiraginoSans-W6", "HiraginoSans-W3"]
-        case .yuanti:      return ["HiraMaruProN-W4"]
+        case .system:
+            return []
+        case .songtiSerif:
+            return [
+                "SourceHanSerifSC-Regular",
+                "SourceHanSerifCN-Regular",
+                "STSongti-SC-Regular",
+                "HiraMinProN-W3"
+            ]
+        case .misans:
+            return ["MiSans-Regular", "MiSans-Normal"]
+        case .yuanti:
+            return ["HiraMaruProN-W4"]
         }
+    }
+
+    /// True when the *ultimate* system-font fallback should apply SF Rounded. Used only
+    /// if `.yuanti`'s postscript candidates all fail to resolve — in practice Hiragino
+    /// Maru is bundled on iOS, so this branch is defensive.
+    private var usesRoundedDesign: Bool {
+        self == .yuanti
     }
 
     var resolvedPostScriptName: String? {
@@ -50,14 +73,22 @@ enum ReaderFontFamily: String, CaseIterable, Identifiable {
         if let name = resolvedPostScriptName, let font = UIFont(name: name, size: size) {
             return font
         }
-        return UIFont.systemFont(ofSize: size, weight: .regular)
+        let base = UIFont.systemFont(ofSize: size, weight: .regular)
+        if usesRoundedDesign, let descriptor = base.fontDescriptor.withDesign(.rounded) {
+            return UIFont(descriptor: descriptor, size: size)
+        }
+        return base
     }
 
     func swiftUIFont(size: CGFloat) -> Font {
         if let name = resolvedPostScriptName {
             return Font.custom(name, size: size)
         }
-        return Font.system(size: size, weight: .regular)
+        return Font.system(
+            size: size,
+            weight: .regular,
+            design: usesRoundedDesign ? .rounded : .default
+        )
     }
 }
 

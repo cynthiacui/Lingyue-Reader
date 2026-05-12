@@ -26,7 +26,8 @@
 		010000000000000000000112 /* AppTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000014 /* AppTheme.swift */; };
 		010000000000000000000113 /* BookDownloadManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000015 /* BookDownloadManager.swift */; };
 		010000000000000000000114 /* DownloadsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000016 /* DownloadsView.swift */; };
-		010000000000000000000115 /* LXGWWenKaiScreen.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000017 /* LXGWWenKaiScreen.ttf */; };
+		01000000000000000000011F /* SourceHanSerifSC-Regular.otf in Resources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000021 /* SourceHanSerifSC-Regular.otf */; };
+		010000000000000000000120 /* MiSans-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000022 /* MiSans-Regular.ttf */; };
 		010000000000000000000116 /* PageCurlPager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000018 /* PageCurlPager.swift */; };
 		010000000000000000000117 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000019 /* PrivacyInfo.xcprivacy */; };
 		010000000000000000000118 /* TabBarVisibility.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01000000000000000000001A /* TabBarVisibility.swift */; };
@@ -60,7 +61,8 @@
 		010000000000000000000014 /* AppTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppTheme.swift; sourceTree = "<group>"; };
 		010000000000000000000015 /* BookDownloadManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookDownloadManager.swift; sourceTree = "<group>"; };
 		010000000000000000000016 /* DownloadsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadsView.swift; sourceTree = "<group>"; };
-		010000000000000000000017 /* LXGWWenKaiScreen.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = LXGWWenKaiScreen.ttf; sourceTree = "<group>"; };
+		010000000000000000000021 /* SourceHanSerifSC-Regular.otf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "SourceHanSerifSC-Regular.otf"; sourceTree = "<group>"; };
+		010000000000000000000022 /* MiSans-Regular.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "MiSans-Regular.ttf"; sourceTree = "<group>"; };
 		010000000000000000000018 /* PageCurlPager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PageCurlPager.swift; sourceTree = "<group>"; };
 		010000000000000000000019 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		01000000000000000000001A /* TabBarVisibility.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabBarVisibility.swift; sourceTree = "<group>"; };
@@ -171,7 +173,8 @@
 		010000000000000000000308 /* Fonts */ = {
 			isa = PBXGroup;
 			children = (
-				010000000000000000000017 /* LXGWWenKaiScreen.ttf */,
+				010000000000000000000021 /* SourceHanSerifSC-Regular.otf */,
+				010000000000000000000022 /* MiSans-Regular.ttf */,
 			);
 			path = Fonts;
 			sourceTree = "<group>";
@@ -236,7 +239,8 @@
 			buildActionMask = 2147483647;
 			files = (
 				010000000000000000000109 /* Assets.xcassets in Resources */,
-				010000000000000000000115 /* LXGWWenKaiScreen.ttf in Resources */,
+				01000000000000000000011F /* SourceHanSerifSC-Regular.otf in Resources */,
+				010000000000000000000120 /* MiSans-Regular.ttf in Resources */,
 				010000000000000000000117 /* PrivacyInfo.xcprivacy in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
