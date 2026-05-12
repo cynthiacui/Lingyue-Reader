@@ -99,6 +99,9 @@ struct SettingsView: View {
                     readingControlsSection
                     appThemeSection
                     storageSection
+                    if ReaderDiagnostics.isInternalBuild {
+                        diagnosticsSection
+                    }
                 }
                 .padding(.top, 12)
                 .padding(.bottom, 24)
@@ -364,6 +367,31 @@ struct SettingsView: View {
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.large)
+            }
+            .foregroundStyle(theme.primaryText)
+            .readerCard()
+        }
+    }
+
+    private var diagnosticsSection: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            SectionHeader(title: "诊断")
+
+            VStack(spacing: 12) {
+                NavigationLink {
+                    ReaderDiagnosticsView()
+                } label: {
+                    HStack {
+                        Label("阅读诊断", systemImage: "doc.text.magnifyingglass")
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(theme.secondaryText)
+                    }
+                    .frame(minHeight: 36)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
             }
             .foregroundStyle(theme.primaryText)
             .readerCard()

@@ -153,6 +153,21 @@ struct ReaderView: View {
         return loadedChapterOverrides[chapterCacheKey(chapter)] ?? chapter
     }
 
+    /// Snapshot of "where the user is" for the diagnostics log. Reads from the
+    /// reader's @State, so callers must be on the main actor.
+    private var diagnosticsSnapshot: ReaderStateSnapshot {
+        ReaderStateSnapshot(
+            novelID: activeNovel.id,
+            novelTitle: activeNovel.title,
+            chapterIndex: currentChapterIndex,
+            totalChapters: baseChapters.count,
+            chapterTitle: currentChapter.map { displayed($0.title) } ?? "",
+            pageIndex: currentChapterPageIndex,
+            totalPages: visiblePages.count,
+            pageSignature: visiblePageSignature
+        )
+    }
+
     private var horizontalMargin: CGFloat {
         if dynamicTypeSize.isAccessibilitySize { return 16 }
         return horizontalSizeClass == .compact ? 20 : 36
@@ -347,6 +362,14 @@ struct ReaderView: View {
                 persistReadingState(pages: pages)
                 lastKnownTextSize = textSize
                 if autoScroll { startAutoScroll() }
+                ReaderDiagnostics.shared.log(.lifecycle, "ReaderView onAppear", context: [
+                    "novel": activeNovel.title,
+                    "ch": String(currentChapterIndex),
+                    "chCount": String(baseChapters.count),
+                    "page": String(currentChapterPageIndex),
+                    "textSize": "\(Int(textSize.width))x\(Int(textSize.height))"
+                ])
+                ReaderDiagnostics.shared.snapshot(diagnosticsSnapshot)
             }
             .onChange(of: proxy.safeAreaInsets.top) { _, newValue in
                 ratchetStableSafeAreaInsets(top: newValue, bottom: nil)
@@ -355,11 +378,21 @@ struct ReaderView: View {
                 ratchetStableSafeAreaInsets(top: nil, bottom: newValue)
             }
             .onDisappear {
+                ReaderDiagnostics.shared.log(.lifecycle, "ReaderView onDisappear", context: [
+                    "ch": String(currentChapterIndex),
+                    "page": String(currentChapterPageIndex)
+                ])
+                ReaderDiagnostics.shared.flushNow()
                 persistReadingState(pages: pages, force: true)
                 stopAutoScroll()
             }
             .onChange(of: scenePhase) { _, newPhase in
                 guard newPhase != .active else { return }
+                ReaderDiagnostics.shared.log(.lifecycle, "scenePhase change", context: [
+                    "phase": String(describing: newPhase),
+                    "ch": String(currentChapterIndex),
+                    "page": String(currentChapterPageIndex)
+                ])
                 persistReadingState(pages: pages, force: true)
                 if newPhase == .background {
                     Task { await libraryStore.flush() }
@@ -1692,6 +1725,13 @@ struct ReaderView: View {
         let content = displayed(readerContent(for: chapter, chapterIndex: currentChapterIndex))
         guard !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
 
+        ReaderDiagnostics.shared.log(.paginationStart, "sync restore", context: [
+            "ch": String(currentChapterIndex),
+            "len": String(content.count),
+            "restoreTo": String(chapterPageIndex)
+        ])
+        let start = Date()
+
         let signature = paginationSignature(textSize: textSize)
         let pageContents = Self.paginate(
             content: content,
@@ -1701,9 +1741,21 @@ struct ReaderView: View {
             paragraphSpacing: paragraphSpacingMultiplier,
             fontFamily: readerFontFamily
         )
-        guard !pageContents.isEmpty else { return }
+        let durMs = Int(Date().timeIntervalSince(start) * 1000)
+        guard !pageContents.isEmpty else {
+            ReaderDiagnostics.shared.log(.paginationFail, "sync restore — empty result", context: [
+                "ch": String(currentChapterIndex),
+                "durMs": String(durMs)
+            ])
+            return
+        }
 
         rememberPaginatedPages(pageContents, for: signature)
+        ReaderDiagnostics.shared.log(.paginationEnd, "sync restore", context: [
+            "ch": String(currentChapterIndex),
+            "pages": String(pageContents.count),
+            "durMs": String(durMs)
+        ])
         let chapterTitle = displayed(chapter.title)
         let items = pageItems(
             from: pageContents,
@@ -1711,6 +1763,7 @@ struct ReaderView: View {
             chapterTitle: chapterTitle
         )
         applyVisiblePages(items, signature: signature)
+        ReaderDiagnostics.shared.snapshot(diagnosticsSnapshot)
     }
 
     private func clampCurrentPage(to pages: [ReaderPageItem]) {
@@ -1801,6 +1854,9 @@ struct ReaderView: View {
     @MainActor
     private func startAutoScroll() {
         stopAutoScroll()
+        ReaderDiagnostics.shared.log(.taskStart, "autoScroll loop", context: [
+            "interval": String(format: "%.1f", autoScrollSeconds)
+        ])
         autoScrollTask = Task { @MainActor in
             while !Task.isCancelled, autoScroll {
                 let seconds = max(autoScrollSeconds, 1)
@@ -1816,6 +1872,9 @@ struct ReaderView: View {
 
     @MainActor
     private func stopAutoScroll() {
+        if autoScrollTask != nil {
+            ReaderDiagnostics.shared.log(.taskCancel, "autoScroll loop")
+        }
         autoScrollTask?.cancel()
         autoScrollTask = nil
     }
@@ -1841,7 +1900,19 @@ struct ReaderView: View {
     }
 
     private func goToChapter(_ chapterIndex: Int, pageIndex: Int, landOnLastPage: Bool = false) {
-        guard baseChapters.indices.contains(chapterIndex) else { return }
+        guard baseChapters.indices.contains(chapterIndex) else {
+            ReaderDiagnostics.shared.log(.chapterJump, "rejected out-of-range", context: [
+                "target": String(chapterIndex),
+                "chCount": String(baseChapters.count)
+            ])
+            return
+        }
+        ReaderDiagnostics.shared.log(.chapterJump, "goToChapter", context: [
+            "from": String(currentChapterIndex),
+            "to": String(chapterIndex),
+            "page": String(pageIndex),
+            "landLast": landOnLastPage ? "1" : "0"
+        ])
         // Suppress pager animation: changing currentChapterPageIndex (e.g., 5 → 0) while
         // pages are being swapped to a new chapter would otherwise animate backwards on a
         // forward jump (and vice versa). Snapping is the right behavior for explicit chapter
@@ -2061,8 +2132,14 @@ struct ReaderView: View {
         // placeholder while waiting on Task.detached. Covers revisits and chapters that the
         // prefetch loop has already pre-paginated for the current settings.
         if let cached = paginationCache[signature], !cached.isEmpty {
+            ReaderDiagnostics.shared.log(.paginationEnd, "cache hit", context: [
+                "ch": String(chapterIndex),
+                "pages": String(cached.count),
+                "sig": signature
+            ])
             let items = pageItems(from: cached, chapterIndex: chapterIndex, chapterTitle: chapterTitle)
             applyVisiblePages(items, signature: signature)
+            ReaderDiagnostics.shared.snapshot(diagnosticsSnapshot)
             return
         }
 
@@ -2071,6 +2148,14 @@ struct ReaderView: View {
         let lineSpacing = self.lineSpacing
         let paragraphSpacing = self.paragraphSpacingMultiplier
         let fontFamily = readerFontFamily
+
+        ReaderDiagnostics.shared.log(.paginationStart, "async", context: [
+            "ch": String(chapterIndex),
+            "len": String(content.count),
+            "textSize": "\(Int(textSize.width))x\(Int(textSize.height))",
+            "fontSize": String(format: "%.1f", fontSize)
+        ])
+        let paginationStart = Date()
 
         let work = Task.detached(priority: .userInitiated) {
             Self.paginate(
@@ -2088,12 +2173,29 @@ struct ReaderView: View {
             work.cancel()
         }
 
-        if Task.isCancelled || pageContents.isEmpty { return }
+        let durMs = Int(Date().timeIntervalSince(paginationStart) * 1000)
+        if Task.isCancelled || pageContents.isEmpty {
+            ReaderDiagnostics.shared.log(.paginationCancel, "async", context: [
+                "ch": String(chapterIndex),
+                "durMs": String(durMs),
+                "cancelled": Task.isCancelled ? "1" : "0",
+                "empty": pageContents.isEmpty ? "1" : "0"
+            ])
+            return
+        }
 
         rememberPaginatedPages(pageContents, for: signature)
 
+        ReaderDiagnostics.shared.log(.paginationEnd, "async", context: [
+            "ch": String(chapterIndex),
+            "pages": String(pageContents.count),
+            "durMs": String(durMs),
+            "sig": signature
+        ])
+
         let items = pageItems(from: pageContents, chapterIndex: chapterIndex, chapterTitle: chapterTitle)
         applyVisiblePages(items, signature: signature)
+        ReaderDiagnostics.shared.snapshot(diagnosticsSnapshot)
     }
 
     private func pageItems(from contents: [String], chapterIndex: Int, chapterTitle: String) -> [ReaderPageItem] {
@@ -2234,7 +2336,12 @@ struct ReaderView: View {
             }
 
             prefetchingChapterKeys.insert(key)
+            ReaderDiagnostics.shared.log(.taskStart, "chapter prefetch", context: [
+                "ch": String(chapterIndex),
+                "key": String(key.prefix(16))
+            ])
             Task {
+                let start = Date()
                 do {
                     let loadedChapter = try await ChapterContentCache.shared.chapter(for: chapter)
                     let merged = mergedOverride(loaded: loadedChapter, matching: chapter)
@@ -2244,10 +2351,19 @@ struct ReaderView: View {
                         _ = prefetchingChapterKeys.remove(key)
                     }
                     await prePaginate(chapter: merged, originalChapter: chapter, chapterIndex: chapterIndex)
+                    ReaderDiagnostics.shared.log(.taskEnd, "chapter prefetch", context: [
+                        "ch": String(chapterIndex),
+                        "durMs": String(Int(Date().timeIntervalSince(start) * 1000))
+                    ])
                 } catch {
                     await MainActor.run {
                         _ = prefetchingChapterKeys.remove(key)
                     }
+                    ReaderDiagnostics.shared.log(.taskEnd, "chapter prefetch failed", context: [
+                        "ch": String(chapterIndex),
+                        "durMs": String(Int(Date().timeIntervalSince(start) * 1000)),
+                        "err": String(describing: error).prefix(80).description
+                    ])
                 }
             }
         }
@@ -2278,6 +2394,11 @@ struct ReaderView: View {
         let lineSpacing = self.lineSpacing
         let paragraphSpacing = self.paragraphSpacingMultiplier
         let fontFamily = readerFontFamily
+        ReaderDiagnostics.shared.log(.paginationStart, "prefetch prePaginate", context: [
+            "ch": String(chapterIndex),
+            "len": String(displayedContent.count)
+        ])
+        let start = Date()
         let pages = await Task.detached(priority: .utility) {
             Self.paginate(
                 content: displayedContent,
@@ -2289,8 +2410,20 @@ struct ReaderView: View {
             )
         }.value
 
-        guard !pages.isEmpty else { return }
+        let durMs = Int(Date().timeIntervalSince(start) * 1000)
+        guard !pages.isEmpty else {
+            ReaderDiagnostics.shared.log(.paginationCancel, "prefetch prePaginate", context: [
+                "ch": String(chapterIndex),
+                "durMs": String(durMs)
+            ])
+            return
+        }
         rememberPaginatedPages(pages, for: signature)
+        ReaderDiagnostics.shared.log(.paginationEnd, "prefetch prePaginate", context: [
+            "ch": String(chapterIndex),
+            "pages": String(pages.count),
+            "durMs": String(durMs)
+        ])
     }
 
     @MainActor

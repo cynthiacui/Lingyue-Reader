@@ -51,6 +51,13 @@ struct PageCurlPager: UIViewControllerRepresentable {
             let shouldAnimate = isAdjacent && !context.transaction.disablesAnimations
             let direction: UIPageViewController.NavigationDirection =
                 currentIndex > previousIndex ? .forward : .reverse
+            ReaderDiagnostics.shared.log(.pageTurnStart, "programmatic", context: [
+                "from": String(previousIndex),
+                "to": String(currentIndex),
+                "dir": direction == .forward ? "fwd" : "rev",
+                "animated": shouldAnimate ? "1" : "0",
+                "pageCount": String(pageCount)
+            ])
             pvc.setViewControllers([target], direction: direction, animated: shouldAnimate)
             context.coordinator.shownIndex = currentIndex
         }
@@ -156,11 +163,25 @@ struct PageCurlPager: UIViewControllerRepresentable {
             // freshly-zeroed page index.
             guard !isDismantled, completed,
                   let current = pvc.viewControllers?.first,
-                  let i = index(of: current) else { return }
+                  let i = index(of: current) else {
+                if !completed {
+                    ReaderDiagnostics.shared.log(.pageTurnEnd, "gesture cancelled", context: [
+                        "shown": String(shownIndex),
+                        "dismantled": isDismantled ? "1" : "0"
+                    ])
+                }
+                return
+            }
+            let from = shownIndex
             shownIndex = i
             if parent.currentIndex != i {
                 parent.currentIndex = i
             }
+            ReaderDiagnostics.shared.log(.pageTurnEnd, "gesture", context: [
+                "from": String(from),
+                "to": String(i),
+                "pageCount": String(parent.pageCount)
+            ])
         }
     }
 }

@@ -78,6 +78,13 @@ struct ContentView: View {
                 Task { await libraryStore.flush() }
             }
         }
+        // Touch the reader-diagnostics singleton at launch so the prior
+        // session's `current.json` rotates to `previous.json` even when the
+        // user never opens the reader this run — otherwise a previous
+        // session's log could be silently overwritten on the next-next launch.
+        .task {
+            _ = ReaderDiagnostics.shared
+        }
     }
 }
 
