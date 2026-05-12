@@ -12,6 +12,7 @@ struct InputModalView: View {
 
     @FocusState private var fieldFocused: Bool
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.appTheme) private var theme
 
     init(
         title: String,
@@ -68,14 +69,14 @@ struct InputModalView: View {
                             .autocorrectionDisabled()
                             .font(.body)
                             .foregroundStyle(.primary)
-                            .tint(Color.readerAccent)
+                            .tint(theme.accent)
                             .padding(.vertical, 8)
                             .onSubmit(submitIfPossible)
 
                         Rectangle()
                             .fill(
                                 fieldFocused
-                                    ? Color.readerAccent.opacity(0.55)
+                                    ? theme.accent.opacity(0.55)
                                     : Color.primary.opacity(colorScheme == .dark ? 0.18 : 0.14)
                             )
                             .frame(height: 1)

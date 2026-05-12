@@ -33,6 +33,7 @@
 		010000000000000000000119 /* ReadingStatsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01000000000000000000001B /* ReadingStatsView.swift */; };
 		01000000000000000000011A /* ReadingHistoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01000000000000000000001C /* ReadingHistoryView.swift */; };
 		01000000000000000000011B /* OverlayManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01000000000000000000001D /* OverlayManager.swift */; };
+		01000000000000000000011C /* DebugLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01000000000000000000001E /* DebugLog.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -64,6 +65,7 @@
 		01000000000000000000001B /* ReadingStatsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReadingStatsView.swift; sourceTree = "<group>"; };
 		01000000000000000000001C /* ReadingHistoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReadingHistoryView.swift; sourceTree = "<group>"; };
 		01000000000000000000001D /* OverlayManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverlayManager.swift; sourceTree = "<group>"; };
+		01000000000000000000001E /* DebugLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugLog.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -122,6 +124,7 @@
 				01000000000000000000000F /* BookImportService.swift */,
 				010000000000000000000010 /* WebRenderingService.swift */,
 				010000000000000000000015 /* BookDownloadManager.swift */,
+				01000000000000000000001E /* DebugLog.swift */,
 			);
 			path = Data;
 			sourceTree = "<group>";
@@ -262,6 +265,7 @@
 				010000000000000000000112 /* AppTheme.swift in Sources */,
 				010000000000000000000113 /* BookDownloadManager.swift in Sources */,
 				010000000000000000000114 /* DownloadsView.swift in Sources */,
+				01000000000000000000011C /* DebugLog.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

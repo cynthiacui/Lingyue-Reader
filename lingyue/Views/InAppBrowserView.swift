@@ -180,7 +180,7 @@ struct InAppBrowserView: View {
 
     private func inspectPageForBook(url: URL, pageTitle: String?, html: String) {
 #if DEBUG
-        print("[Browser] inspect \(url.absoluteString) — htmlBytes=\(html.count) detected=\(detectedBook != nil) ignored=\(ignoredBookURLs.contains(url.absoluteString))")
+        debugLog("[Browser] inspect \(url.absoluteString) — htmlBytes=\(html.count) detected=\(detectedBook != nil) ignored=\(ignoredBookURLs.contains(url.absoluteString))")
 #endif
         guard replacementCandidate == nil,
               categoryPrompt == nil,
@@ -195,7 +195,7 @@ struct InAppBrowserView: View {
             guard let candidate else { return }
             await MainActor.run {
 #if DEBUG
-                print("[Browser] candidate ready for \(url.absoluteString) — title=\(candidate.title)")
+                debugLog("[Browser] candidate ready for \(url.absoluteString) — title=\(candidate.title)")
 #endif
                 guard replacementCandidate == nil,
                       categoryPrompt == nil,
@@ -203,20 +203,20 @@ struct InAppBrowserView: View {
                       importResult == nil,
                       !ignoredBookURLs.contains(url.absoluteString) else {
 #if DEBUG
-                    print("[Browser] candidate dropped — guard triggered")
+                    debugLog("[Browser] candidate dropped — guard triggered")
 #endif
                     return
                 }
                 if let detectedBook,
                    !shouldReplaceDetectedBook(detectedBook, with: candidate) {
 #if DEBUG
-                    print("[Browser] candidate dropped — existing candidate is better")
+                    debugLog("[Browser] candidate dropped — existing candidate is better")
 #endif
                     return
                 }
                 detectedBook = candidate
 #if DEBUG
-                print("[Browser] popup armed for \(url.absoluteString)")
+                debugLog("[Browser] popup armed for \(url.absoluteString)")
 #endif
             }
         }

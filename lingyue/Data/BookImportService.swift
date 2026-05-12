@@ -123,13 +123,13 @@ final class BookImportService: Sendable {
 
         guard isLikelyBookPage(title: title, author: metadata.author, url: url, chapterCount: chapterLinks.count, html: html) else {
 #if DEBUG
-            print("[BookImport] reject \(url.absoluteString) — title=\"\(title)\" author=\"\(metadata.author)\" chapters=\(chapterLinks.count) htmlBytes=\(html.count)")
+            debugLog("[BookImport] reject \(url.absoluteString) — title=\"\(title)\" author=\"\(metadata.author)\" chapters=\(chapterLinks.count) htmlBytes=\(html.count)")
 #endif
             return nil
         }
 
 #if DEBUG
-        print("[BookImport] accept \(url.absoluteString) — title=\"\(title)\" author=\"\(metadata.author)\" chapters=\(chapterLinks.count)")
+        debugLog("[BookImport] accept \(url.absoluteString) — title=\"\(title)\" author=\"\(metadata.author)\" chapters=\(chapterLinks.count)")
 #endif
 
         return WebBookCandidate(
@@ -699,7 +699,7 @@ final class BookImportService: Sendable {
                 candidateLists.append(freshLinks)
             }
 #if DEBUG
-            print("[ChapterImport] URLSession canonical fetch -> \(freshLinks.count) chapters")
+            debugLog("[ChapterImport] URLSession canonical fetch -> \(freshLinks.count) chapters")
 #endif
         }
 
@@ -712,7 +712,7 @@ final class BookImportService: Sendable {
         if !fivedxsLinks.isEmpty {
             candidateLists.append(fivedxsLinks)
 #if DEBUG
-            print("[ChapterImport] 5dxs ajax catalog -> \(fivedxsLinks.count) chapters")
+            debugLog("[ChapterImport] 5dxs ajax catalog -> \(fivedxsLinks.count) chapters")
 #endif
         }
 
@@ -720,7 +720,7 @@ final class BookImportService: Sendable {
         if !hjwzwLinks.isEmpty {
             candidateLists.append(hjwzwLinks)
 #if DEBUG
-            print("[ChapterImport] HJWZW catalog -> \(hjwzwLinks.count) chapters")
+            debugLog("[ChapterImport] HJWZW catalog -> \(hjwzwLinks.count) chapters")
 #endif
         }
 
@@ -735,7 +735,7 @@ final class BookImportService: Sendable {
             || looksContiguousFromOne(hjwzwLinks)
 
 #if DEBUG
-        print("[ChapterImport] source=\(sourceURL.absoluteString) primary=\(primaryLinks.count) fresh=\(freshLinks.count) api=\(apiLinks.count) alreadyComplete=\(alreadyComplete)")
+        debugLog("[ChapterImport] source=\(sourceURL.absoluteString) primary=\(primaryLinks.count) fresh=\(freshLinks.count) api=\(apiLinks.count) alreadyComplete=\(alreadyComplete)")
 #endif
 
         if !alreadyComplete {
@@ -753,7 +753,7 @@ final class BookImportService: Sendable {
                     if !links.isEmpty {
                         candidateLists.append(links)
 #if DEBUG
-                        print("[ChapterImport] catalog \(catalogURL.absoluteString) -> \(links.count) chapters")
+                        debugLog("[ChapterImport] catalog \(catalogURL.absoluteString) -> \(links.count) chapters")
 #endif
                         // Stop probing once a catalog gives us the full sequence.
                         if looksContiguousFromOne(links) {
@@ -1092,7 +1092,7 @@ final class BookImportService: Sendable {
             if case .sourceBlockedContent = error { throw error }
             // fall through to WKWebView fallback for other URLSession errors (e.g. badStatus)
 #if DEBUG
-            print("[ChapterFetch] URLSession failed for \(link.url.absoluteString): \(error.localizedDescription) — trying WKWebView fallback")
+            debugLog("[ChapterFetch] URLSession failed for \(link.url.absoluteString): \(error.localizedDescription) — trying WKWebView fallback")
 #endif
         }
 
@@ -1103,7 +1103,7 @@ final class BookImportService: Sendable {
             throw WebBookImportError.sourceBlockedContent
         }
 #if DEBUG
-        print("[ChapterFetch] WKWebView render returned \(renderedHTML.count) bytes for \(link.url.absoluteString)")
+        debugLog("[ChapterFetch] WKWebView render returned \(renderedHTML.count) bytes for \(link.url.absoluteString)")
 #endif
         return try await chapterFromHTML(link: link, html: renderedHTML, allowDynamicTextEndpoint: false)
     }
@@ -2299,7 +2299,7 @@ actor ChapterContentCache {
             try data.write(to: cacheFileURL(for: key), options: [.atomic])
         } catch {
 #if DEBUG
-            print("[ChapterContentCache] write failed: \(error.localizedDescription)")
+            debugLog("[ChapterContentCache] write failed: \(error.localizedDescription)")
 #endif
         }
     }

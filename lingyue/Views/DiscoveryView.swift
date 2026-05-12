@@ -1088,7 +1088,7 @@ actor DiscoverySearchService {
     private func searchSingleSource(_ source: DiscoverySource, query: String) async -> [DiscoveryRawSearchHit] {
         guard let request = source.makeSearchRequest(for: query) else {
 #if DEBUG
-            print("[DiscoverySearch] skipped (no direct route): \(source.name)")
+            debugLog("[DiscoverySearch] skipped (no direct route): \(source.name)")
 #endif
             return []
         }
@@ -1098,13 +1098,13 @@ actor DiscoverySearchService {
             let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
             guard let html = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .gb_18030_2000) else {
 #if DEBUG
-                print("[DiscoverySearch] decode failed: \(source.name) | status=\(statusCode) bytes=\(data.count)")
+                debugLog("[DiscoverySearch] decode failed: \(source.name) | status=\(statusCode) bytes=\(data.count)")
 #endif
                 return []
             }
             guard !DiscoveryTextCleaner.isChallengePage(html) else {
 #if DEBUG
-                print("[DiscoverySearch] challenge page: \(source.name) | status=\(statusCode) bytes=\(data.count)")
+                debugLog("[DiscoverySearch] challenge page: \(source.name) | status=\(statusCode) bytes=\(data.count)")
 #endif
                 return []
             }
@@ -1126,15 +1126,15 @@ actor DiscoverySearchService {
                 let sample = html
                     .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
                     .prefix(180)
-                print("[DiscoverySearch] parsed 0: \(source.name) | status=\(statusCode) bytes=\(data.count) sample=\(sample)")
+                debugLog("[DiscoverySearch] parsed 0: \(source.name) | status=\(statusCode) bytes=\(data.count) sample=\(sample)")
             } else {
-                print("[DiscoverySearch] \(source.name): parsed \(parsedResults.count), direct \(hits.count)")
+                debugLog("[DiscoverySearch] \(source.name): parsed \(parsedResults.count), direct \(hits.count)")
             }
 #endif
             return hits
         } catch {
 #if DEBUG
-            print("[DiscoverySearch] request failed: \(source.name) | \(error.localizedDescription)")
+            debugLog("[DiscoverySearch] request failed: \(source.name) | \(error.localizedDescription)")
 #endif
             return []
         }
@@ -1462,7 +1462,7 @@ actor DiscoverySearchService {
 
         guard keepByRelevance || keepByDirectSignal else {
 #if DEBUG
-            print("[DiscoverySearch] rejected: \(source.name) | \(cleanedTitle)")
+            debugLog("[DiscoverySearch] rejected: \(source.name) | \(cleanedTitle)")
 #endif
             return nil
         }

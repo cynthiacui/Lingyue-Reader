@@ -670,7 +670,7 @@ final class LibraryStore: ObservableObject {
                 try data.write(to: url, options: [.atomic])
             } catch {
 #if DEBUG
-                print("[LibraryStore] save failed: \(error.localizedDescription)")
+                debugLog("[LibraryStore] save failed: \(error.localizedDescription)")
 #endif
             }
         }.value
@@ -687,7 +687,7 @@ final class LibraryStore: ObservableObject {
                 try data.write(to: url, options: [.atomic])
             } catch {
 #if DEBUG
-                print("[LibraryStore] stats save failed: \(error.localizedDescription)")
+                debugLog("[LibraryStore] stats save failed: \(error.localizedDescription)")
 #endif
             }
         }.value
