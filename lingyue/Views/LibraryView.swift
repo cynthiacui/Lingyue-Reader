@@ -784,7 +784,7 @@ private struct LibraryHelpPopup: View {
             VStack(spacing: 18) {
                 VStack(spacing: 6) {
                     Text("欢迎使用灵阅")
-                        .font(.system(size: 20, weight: .bold, design: .rounded))
+                        .font(.system(size: 20, weight: .semibold))
                         .foregroundStyle(theme.primaryText)
                     Text("书架功能速览")
                         .font(.system(size: 13))
@@ -1418,7 +1418,7 @@ private struct CategoryEditOverlay: View {
             VStack(alignment: .leading, spacing: 14) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("移动到分类")
-                        .font(.system(size: 18, weight: .bold, design: .rounded))
+                        .font(.system(size: 18, weight: .semibold))
                         .foregroundStyle(theme.primaryText)
 
                     Text(displayed(novel.title))
@@ -1580,7 +1580,7 @@ private struct CompactSectionHeader: View {
 
     var body: some View {
         Text(title)
-            .font(.system(size: 18, weight: .bold, design: .rounded))
+            .font(.system(size: 18, weight: .semibold))
             .foregroundStyle(theme.primaryText)
     }
 }
@@ -1725,7 +1725,7 @@ private struct StackedCategoryShelf: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Text(category.name)
-                    .font(.system(size: 16, weight: .bold, design: .rounded))
+                    .font(.system(size: 16, weight: .semibold))
                     .foregroundStyle(theme.primaryText)
                     .lineLimit(1)
 
@@ -1944,7 +1944,7 @@ private struct ExpandedCategoryOverlay: View {
                 HStack(alignment: .firstTextBaseline) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(category.name)
-                            .font(.system(size: 20, weight: .bold, design: .rounded))
+                            .font(.system(size: 20, weight: .semibold))
                             .foregroundStyle(theme.primaryText)
                         Text("\(category.novels.count) 本")
                             .font(.system(size: 12, weight: .medium))

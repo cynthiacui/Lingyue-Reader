@@ -197,7 +197,7 @@ struct DiscoveryView: View {
         return VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .lastTextBaseline, spacing: 10) {
                 Text("书库")
-                    .font(.system(size: 30, weight: .bold, design: .rounded))
+                    .font(.system(size: 30, weight: .semibold))
                     .foregroundStyle(theme.primaryText)
 
                 Text("\(sources.count)")

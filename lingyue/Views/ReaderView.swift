@@ -1160,7 +1160,7 @@ struct ReaderView: View {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
                     Text("章节目录")
-                        .font(.system(size: 18, weight: .bold, design: .rounded))
+                        .font(.system(size: 18, weight: .semibold))
                         .foregroundStyle(pageForeground)
 
                     Spacer()

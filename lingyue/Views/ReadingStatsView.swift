@@ -876,7 +876,7 @@ struct ReadingStatsView: View {
                     .frame(width: 24, height: 24)
                     .background(Circle().fill(palette.sage.opacity(0.18)))
                 Text(selectedRange.reportTitle)
-                    .font(.system(size: 17, weight: .bold, design: .rounded))
+                    .font(.system(size: 17, weight: .semibold))
                     .foregroundStyle(palette.primaryText)
                     .lineLimit(1)
                     .minimumScaleFactor(0.9)
@@ -913,7 +913,7 @@ struct ReadingStatsView: View {
         return VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
                 Text("时段轨迹")
-                    .font(.system(size: 17, weight: .bold, design: .rounded))
+                    .font(.system(size: 17, weight: .semibold))
                     .foregroundStyle(palette.primaryText)
                 Text(selectedRange.trendExplanation)
                     .font(.system(size: 12, weight: .regular))
@@ -953,7 +953,7 @@ struct ReadingStatsView: View {
         return VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .firstTextBaseline) {
                 Text("阅读日历")
-                    .font(.system(size: 17, weight: .bold, design: .rounded))
+                    .font(.system(size: 17, weight: .semibold))
                     .foregroundStyle(palette.primaryText)
                 Text("记录每一次沉浸")
                     .font(.system(size: 12, weight: .regular))
@@ -1036,7 +1036,7 @@ struct ReadingStatsView: View {
         return VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Text("阅读热力")
-                    .font(.system(size: 17, weight: .bold, design: .rounded))
+                    .font(.system(size: 17, weight: .semibold))
                     .foregroundStyle(palette.primaryText)
                 Text("记录近 12 周阅读状态")
                     .font(.system(size: 12, weight: .regular))
@@ -1159,7 +1159,7 @@ struct ReadingStatsView: View {
         return VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .firstTextBaseline) {
                 Text("阅读榜单")
-                    .font(.system(size: 17, weight: .bold, design: .rounded))
+                    .font(.system(size: 17, weight: .semibold))
                     .foregroundStyle(palette.primaryText)
                 Text("按时长排序")
                     .font(.system(size: 12, weight: .regular))
