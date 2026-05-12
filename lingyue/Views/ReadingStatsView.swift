@@ -1,5 +1,372 @@
 import SwiftUI
 
+// MARK: - Stats visual system
+//
+// The Stats tab uses a fixed "paper-style dashboard" palette that stays the same
+// regardless of which AppTheme the user picks — so cards always read as warm ivory
+// instead of being tinted by the surrounding chrome. The selected theme still
+// shows through as: (a) the page background image/pattern behind a soft neutral
+// haze, and (b) `theme.accent` used sparingly on segmented pickers, the hero
+// progress bar, calendar selection ring, and the trend-chart bars.
+//
+// Semantic accents below are intentionally muted (no neon, no rainbow) — they
+// exist to give data categories visual identity (gold = streak, sage = focus,
+// inkBlue = pace, clay = words/books, rose = highlight) without competing with
+// the literary tone of the rest of the app.
+
+private struct StatsPalette {
+    let surface: Color           // primary card fill (warm ivory)
+    let surfaceMuted: Color      // recessed pill / chip fill
+    let surfaceElevated: Color   // hero card fill (slightly brighter than `surface`)
+    let border: Color            // hairline border around cards
+    let shadow: Color            // soft warm card shadow
+    let divider: Color           // metric-strip dividers
+    let primaryText: Color
+    let secondaryText: Color
+
+    let gold: Color              // streak / achievement
+    let sage: Color              // focus / daily summary
+    let inkBlue: Color           // reading pace
+    let clay: Color              // words / books
+    let rose: Color              // accent highlight
+
+    // 5-step heatmap ladder: index 0 = no reading, index 4 = strongest.
+    // Picked per-theme so the heatmap reads as "reading" rather than a generic
+    // green health/fitness grid. The calendar uses `readingAccent` (a softer mid
+    // tone from the same family) so it ties back to the heatmap without screaming.
+    let heatLevels: [Color]
+    let readingAccent: Color
+
+    // "Reading time" accent. Always warm — never the cold ink-grey that
+    // `theme.accent` resolves to for the ink theme. The hero number stripe, daily
+    // progress bar, hero chart-icon chip, metric `总时长`, the period-summary
+    // duration text, and the trend-chart bars all pull from this so reading time
+    // reads as a single semantic color across the page.
+    let readingTime: Color
+    let chartGradient: [Color]   // [top, bottom] for trend bar fills
+    let chartGridLine: Color     // subtle hairline for chart baseline + grid
+    let progressTrack: Color     // theme-tinted rail behind the goal progress bar
+    let heroGradient: [Color]    // top→bottom sweep painted inside the hero card
+    let badgeBackground: Color   // warm beige for the "已移出书架" tag
+    let badgeForeground: Color
+    // Soft theme-tinted color used as a low-opacity shadow / aura under accents
+    // (progress bar fill, streak badge, selected chart bar, selected calendar day).
+    // Always the same hue family as `readingTime`; never gaming-RGB neon.
+    let glow: Color
+
+    /// Rotating accent for the top-books leaderboard rank circles. Gold for #1,
+    /// then dusty blue / sage / clay / rose so each rank reads as its own role
+    /// without rainbow chaos.
+    var rankAccents: [Color] { [gold, inkBlue, sage, clay, rose] }
+
+    static func light(for theme: AppTheme) -> StatsPalette {
+        let ladder = lightHeatLadder(for: theme)
+        let reading = lightReadingTime(for: theme)
+        let chart = lightChartGradient(for: theme)
+        let achievement = lightAchievement(for: theme)
+        let surfaces = lightSurfaces(for: theme)
+        return StatsPalette(
+            // Surfaces are theme-aware so Sakura escapes the warm-cream cast.
+            // Sakura → airy blush white (#FDF7F8); Ink / Forest stay on warm paper.
+            surface:          surfaces.base,
+            surfaceMuted:     surfaces.muted,
+            surfaceElevated:  surfaces.elevated,
+            border:           Color.black.opacity(0.06),
+            shadow:           Color.black.opacity(0.05),
+            divider:          Color.black.opacity(0.07),
+            // Strong near-black main text + a darker, less misty secondary so
+            // labels stay legible against the warm paper.
+            primaryText:      Color(red: 0.105, green: 0.098, blue: 0.086),
+            secondaryText:    Color(red: 0.355, green: 0.325, blue: 0.275),
+            // `gold` is the streak/achievement/rank-1 accent — theme-aware so Sakura
+            // never resolves to a mustard yellow on a pink page. Kept the field name
+            // for compatibility with downstream callers.
+            gold:             achievement,
+            sage:             Color(red: 0.561, green: 0.655, blue: 0.557),
+            inkBlue:          Color(red: 0.431, green: 0.502, blue: 0.596),
+            clay:             Color(red: 0.78, green: 0.604, blue: 0.482),
+            rose:             Color(red: 0.78, green: 0.522, blue: 0.573),
+            heatLevels:       ladder,
+            // Calendar fill = mid-ladder (level 2) — softer than the dark cells
+            // but still clearly part of the same color family.
+            readingAccent:    ladder[2],
+            readingTime:      reading,
+            chartGradient:    chart,
+            chartGridLine:    Color.black.opacity(0.09),
+            progressTrack:    lightProgressTrack(for: theme),
+            heroGradient:     lightHeroGradient(for: theme),
+            badgeBackground:  Color(red: 0.937, green: 0.871, blue: 0.804), // warm beige
+            badgeForeground:  Color(red: 0.478, green: 0.349, blue: 0.275), // warm clay text
+            glow:             lightGlow(for: theme)
+        )
+    }
+
+    static func dark(for theme: AppTheme) -> StatsPalette {
+        let ladder = darkHeatLadder(for: theme)
+        // Exact deep-midnight palette: muted #161B2C, base #1A2033, elevated #1C2340.
+        // Indigo over neutral grey so the navy stays the dominant note; accents
+        // separate cleanly without brightening the overall UI.
+        return StatsPalette(
+            surface:          Color(red: 0.102, green: 0.125, blue: 0.200), // #1A2033
+            surfaceMuted:     Color(red: 0.086, green: 0.106, blue: 0.173), // #161B2C
+            surfaceElevated:  Color(red: 0.110, green: 0.137, blue: 0.251), // #1C2340
+            border:           Color.white.opacity(0.07),
+            shadow:           Color.black.opacity(0.40),
+            divider:          Color.white.opacity(0.09),
+            primaryText:      Color(red: 0.96, green: 0.94, blue: 0.88),
+            secondaryText:    Color(red: 0.78, green: 0.74, blue: 0.65),
+            gold:             Color(red: 0.878, green: 0.769, blue: 0.561), // #E0C48F
+            sage:             Color(red: 0.66, green: 0.79, blue: 0.64),
+            inkBlue:          Color(red: 0.60, green: 0.68, blue: 0.80),
+            clay:             Color(red: 0.86, green: 0.69, blue: 0.55),
+            rose:             Color(red: 0.86, green: 0.60, blue: 0.65),
+            heatLevels:       ladder,
+            readingAccent:    ladder[2],
+            readingTime:      Color(red: 0.878, green: 0.769, blue: 0.561), // #E0C48F
+            chartGradient: [
+                Color(red: 0.878, green: 0.769, blue: 0.561), // #E0C48F
+                Color(red: 0.784, green: 0.643, blue: 0.416)  // #C8A46A
+            ],
+            chartGridLine:    Color.white.opacity(0.09),
+            progressTrack:    Color(red: 0.878, green: 0.769, blue: 0.561).opacity(0.18),
+            heroGradient: [
+                Color(red: 0.110, green: 0.137, blue: 0.251), // #1C2340
+                Color(red: 0.094, green: 0.118, blue: 0.196)  // deeper indigo for the falloff
+            ],
+            badgeBackground:  Color(red: 0.42, green: 0.34, blue: 0.27),
+            badgeForeground:  Color(red: 0.92, green: 0.85, blue: 0.74),
+            glow:             Color(red: 0.878, green: 0.769, blue: 0.561) // celestial gold halo
+        )
+    }
+
+    /// Theme primary accent — same color the streak badge, progress bar, chart icon
+    /// circle, and reading-time metric pull from. Picked per theme so Sakura reads as
+    /// luminous rose (not mustard gold), Forest as breathable green, Ink as warm sepia.
+    private static func lightReadingTime(for theme: AppTheme) -> Color {
+        switch theme {
+        case .pink:                            return Color(red: 0.788, green: 0.486, blue: 0.588) // #C97C96
+        case .ink:                             return Color(red: 0.655, green: 0.525, blue: 0.369) // #A7865E warm sepia
+        case .paperGreen, .leafGreen:          return Color(red: 0.435, green: 0.561, blue: 0.447) // #6F8F72
+        case .starryNight:                     return Color(red: 0.878, green: 0.769, blue: 0.561) // #E0C48F
+        }
+    }
+
+    /// Streak / achievement / rank-1 accent. Decoupled from `readingTime` so each theme
+    /// can paint achievement-style elements in a related but distinct accent. Sakura
+    /// gets a softer rose (#D9A7B8 highlight), keeping the streak feel romantic rather
+    /// than yellow-gold; Ink keeps warm paper-gold; Forest uses deep moss; Starry
+    /// keeps champagne for the celestial mood.
+    private static func lightAchievement(for theme: AppTheme) -> Color {
+        switch theme {
+        case .pink:                            return Color(red: 0.788, green: 0.486, blue: 0.588) // #C97C96 primary rose
+        case .ink:                             return Color(red: 0.776, green: 0.690, blue: 0.541) // #C6B08A muted paper gold
+        case .paperGreen, .leafGreen:          return Color(red: 0.333, green: 0.455, blue: 0.353) // #55745A deep moss
+        case .starryNight:                     return Color(red: 0.878, green: 0.769, blue: 0.561) // #E0C48F
+        }
+    }
+
+    /// Bar-chart top→bottom gradient — top is the soft accent, bottom is the deep
+    /// accent, so the bars carry an internal light-to-shadow falloff that mirrors
+    /// the heatmap palette without being a flat duplicate.
+    private static func lightChartGradient(for theme: AppTheme) -> [Color] {
+        switch theme {
+        case .pink:
+            return [
+                Color(red: 0.851, green: 0.655, blue: 0.722), // #D9A7B8 soft accent
+                Color(red: 0.659, green: 0.373, blue: 0.482)  // #A85F7B deep rose
+            ]
+        case .ink:
+            return [
+                Color(red: 0.776, green: 0.690, blue: 0.541), // #C6B08A
+                Color(red: 0.353, green: 0.318, blue: 0.282)  // #5A5148 soft ink
+            ]
+        case .paperGreen, .leafGreen:
+            return [
+                Color(red: 0.553, green: 0.667, blue: 0.545), // #8DAA8B highlight
+                Color(red: 0.333, green: 0.455, blue: 0.353)  // #55745A deep
+            ]
+        case .starryNight:
+            return [
+                Color(red: 0.878, green: 0.769, blue: 0.561), // #E0C48F
+                Color(red: 0.784, green: 0.643, blue: 0.416)  // #C8A46A
+            ]
+        }
+    }
+
+    /// Pale, theme-tinted track for the daily-goal progress bar. Sakura gets the
+    /// faintest rose veil, Ink gets warm paper, Forest gets pale moss.
+    private static func lightProgressTrack(for theme: AppTheme) -> Color {
+        switch theme {
+        case .pink:                            return Color(red: 0.953, green: 0.906, blue: 0.922) // #F3E7EB
+        case .ink:                             return Color(red: 0.949, green: 0.933, blue: 0.906) // #F2EEE7
+        case .paperGreen, .leafGreen:          return Color(red: 0.929, green: 0.953, blue: 0.925) // #EDF3EC
+        case .starryNight:                     return Color(red: 0.913, green: 0.875, blue: 0.812) // warm beige fallback
+        }
+    }
+
+    /// Soft theme-aware ambient glow (used as a Color value, applied at low opacity
+    /// as a shadow). Sakura → cherry-blossom rose, Ink → sepia, Forest → moss, Starry
+    /// → champagne. Same color as `readingTime` by design but exposed separately so
+    /// the glow opacity can be tuned independently of icon/text contrast.
+    private static func lightGlow(for theme: AppTheme) -> Color {
+        lightReadingTime(for: theme)
+    }
+
+    /// Per-theme card surface trio. Sakura needs to escape the warm-cream cast that
+    /// previously pulled the whole page toward yellow; Ink and Forest still want the
+    /// editorial paper feel so they stay on warm ivory.
+    private static func lightSurfaces(for theme: AppTheme) -> (base: Color, muted: Color, elevated: Color) {
+        switch theme {
+        case .pink:
+            // Sakura: airy blush white — a luminous pink haze, not warm cream.
+            return (
+                base:     Color(red: 0.992, green: 0.969, blue: 0.973), // #FDF7F8
+                muted:    Color(red: 0.980, green: 0.957, blue: 0.965), // #FAF4F6
+                elevated: Color(red: 1.000, green: 0.976, blue: 0.980)  // #FFF9FA
+            )
+        default:
+            return (
+                base:     Color(red: 1.000, green: 0.992, blue: 0.973), // warm ivory
+                muted:    Color(red: 0.961, green: 0.949, blue: 0.918),
+                elevated: Color(red: 1.000, green: 0.996, blue: 0.984)
+            )
+        }
+    }
+
+    /// Top→bottom sweep painted inside the hero card. Sakura gets a faint blush
+    /// veil so the hero reads as a luminous petal sweep instead of warm cream.
+    private static func lightHeroGradient(for theme: AppTheme) -> [Color] {
+        switch theme {
+        case .pink:
+            return [
+                Color(red: 1.000, green: 0.980, blue: 0.984), // #FFFAFB
+                Color(red: 0.984, green: 0.933, blue: 0.945)  // #FBEEF1 soft blush sweep
+            ]
+        default:
+            return [
+                Color(red: 1.000, green: 0.996, blue: 0.984),
+                Color(red: 0.984, green: 0.953, blue: 0.886)
+            ]
+        }
+    }
+
+    /// Per-theme 5-step heatmap ladders. Tuned for "luminous cherry blossom" (Sakura),
+    /// "editorial sepia on paper" (Ink), and "sunlight-through-leaves moss" (Forest);
+    /// starryNight uses the dark champagne ramp via `darkHeatLadder`.
+    private static func lightHeatLadder(for theme: AppTheme) -> [Color] {
+        switch theme {
+        case .pink:
+            // Glowing cherry blossom petals: #F3E7EB → #E8C7D2 → #D9A7B8 → #C97C96 → #A85F7B.
+            return [
+                Color(red: 0.953, green: 0.906, blue: 0.922), // #F3E7EB
+                Color(red: 0.910, green: 0.780, blue: 0.824), // #E8C7D2
+                Color(red: 0.851, green: 0.655, blue: 0.722), // #D9A7B8
+                Color(red: 0.788, green: 0.486, blue: 0.588), // #C97C96
+                Color(red: 0.659, green: 0.373, blue: 0.482)  // #A85F7B
+            ]
+        case .ink:
+            // Editorial sepia on paper: #F2EEE7 → #DED3C1 → #C6B08A → #A7865E → #5A5148.
+            return [
+                Color(red: 0.949, green: 0.933, blue: 0.906), // #F2EEE7
+                Color(red: 0.871, green: 0.827, blue: 0.757), // #DED3C1
+                Color(red: 0.776, green: 0.690, blue: 0.541), // #C6B08A
+                Color(red: 0.655, green: 0.525, blue: 0.369), // #A7865E
+                Color(red: 0.353, green: 0.318, blue: 0.282)  // #5A5148
+            ]
+        case .paperGreen, .leafGreen, .starryNight:
+            // Breathable organic moss: #EDF3EC → #D6E3D3 → #B7C7B2 → #8DAA8B → #55745A.
+            return [
+                Color(red: 0.929, green: 0.953, blue: 0.925), // #EDF3EC
+                Color(red: 0.839, green: 0.890, blue: 0.827), // #D6E3D3
+                Color(red: 0.718, green: 0.780, blue: 0.698), // #B7C7B2
+                Color(red: 0.553, green: 0.667, blue: 0.545), // #8DAA8B
+                Color(red: 0.333, green: 0.455, blue: 0.353)  // #55745A
+            ]
+        }
+    }
+
+    /// Dark mode currently only fires for `.starryNight` (champagne gold accent),
+    /// so the dark heatmap ramps from a deep indigo recess up through a solid
+    /// celestial gold so the brightest reading weeks read as luminous against the
+    /// navy. Solid colors (no opacity tints) keep the top cells from being washed
+    /// out by the card behind them.
+    private static func darkHeatLadder(for theme: AppTheme) -> [Color] {
+        return [
+            Color(red: 0.078, green: 0.094, blue: 0.157), // #141828 deeper than surface so empty cells read as recesses
+            Color(red: 0.314, green: 0.275, blue: 0.196), // #50463A muted bronze
+            Color(red: 0.502, green: 0.420, blue: 0.275), // #806B46 toasted gold
+            Color(red: 0.706, green: 0.588, blue: 0.392), // #B49664 ripe gold
+            Color(red: 0.878, green: 0.769, blue: 0.561)  // #E0C48F solid primary gold
+        ]
+    }
+}
+
+private struct StatsPaletteEnvironmentKey: EnvironmentKey {
+    static let defaultValue: StatsPalette = .light(for: .paperGreen)
+}
+
+extension EnvironmentValues {
+    fileprivate var statsPalette: StatsPalette {
+        get { self[StatsPaletteEnvironmentKey.self] }
+        set { self[StatsPaletteEnvironmentKey.self] = newValue }
+    }
+}
+
+/// Very light warm wash over `ThemeBackgroundView` — just enough to keep card text
+/// legible against whatever artwork the theme draws, without veiling the whole page.
+/// Previous versions used a 60-80% white overlay which read as frosted-glass fog;
+/// this one stays barely-there so the theme art still feels present between cards.
+private struct StatsBackgroundDim: View {
+    let palette: StatsPalette
+    let isDark: Bool
+
+    var body: some View {
+        Rectangle()
+            .fill(
+                LinearGradient(
+                    // Dark mode: barely-there indigo wash instead of a grey fog so
+                    // the navy art reads through cleanly while still giving the
+                    // page a hair of vertical falloff for depth.
+                    colors: isDark
+                        ? [palette.surfaceMuted.opacity(0.10), palette.surfaceMuted.opacity(0.20)]
+                        : [palette.surface.opacity(0.18), palette.surface.opacity(0.26)],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            )
+            .ignoresSafeArea()
+            .allowsHitTesting(false)
+    }
+}
+
+/// Unified Stats card chrome: warm ivory fill, hairline border, soft warm shadow.
+/// Use everywhere a card sits on the Stats page so the visual rhythm is consistent.
+private struct StatsCardModifier: ViewModifier {
+    @Environment(\.statsPalette) private var palette
+    var elevated: Bool = false
+    var cornerRadius: CGFloat = 14
+
+    func body(content: Content) -> some View {
+        content
+            .background(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .fill(elevated ? palette.surfaceElevated : palette.surface)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .stroke(palette.border, lineWidth: 0.6)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+            .shadow(color: palette.shadow, radius: 12, x: 0, y: 6)
+    }
+}
+
+extension View {
+    fileprivate func statsCard(elevated: Bool = false, cornerRadius: CGFloat = 14) -> some View {
+        modifier(StatsCardModifier(elevated: elevated, cornerRadius: cornerRadius))
+    }
+}
+
 struct ReadingStatsView: View {
     @EnvironmentObject private var libraryStore: LibraryStore
     @Environment(\.appTheme) private var theme
@@ -111,12 +478,21 @@ struct ReadingStatsView: View {
     }
 
     private var bodySpacing: CGFloat {
-        horizontalSizeClass == .compact ? 14 : 18
+        horizontalSizeClass == .compact ? 16 : 20
+    }
+
+    private var isDarkStats: Bool {
+        theme.preferredColorScheme == .dark
+    }
+
+    private var palette: StatsPalette {
+        isDarkStats ? .dark(for: theme) : .light(for: theme)
     }
 
     var body: some View {
         ZStack {
             ThemeBackgroundView()
+            StatsBackgroundDim(palette: palette, isDark: isDarkStats)
 
             ScrollView {
                 VStack(alignment: .leading, spacing: bodySpacing) {
@@ -134,6 +510,7 @@ struct ReadingStatsView: View {
                 .padding(.bottom, 24)
             }
         }
+        .environment(\.statsPalette, palette)
         .navigationTitle("阅读统计")
         .navigationBarTitleDisplayMode(.large)
         .toolbar {
@@ -188,29 +565,73 @@ struct ReadingStatsView: View {
         let dailyProgress = hasGoal ? min(Double(todayMinutes) / Double(dailyGoalMinutes), 1) : 0
         let goalReached = hasGoal && todayMinutes >= dailyGoalMinutes
 
-        return VStack(alignment: .leading, spacing: 12) {
+        return VStack(alignment: .leading, spacing: 16) {
             HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: 10) {
                     Text("阅读投入")
-                        .font(.system(size: 15, weight: .semibold, design: .rounded))
-                        .foregroundStyle(theme.secondaryText)
+                        .font(.system(size: 11, weight: .medium, design: .rounded))
+                        .tracking(1.2)
+                        .foregroundStyle(palette.secondaryText.opacity(0.85))
                     Text(formatDuration(totalDuration))
-                        .font(.system(size: 34, weight: .bold, design: .rounded))
-                        .foregroundStyle(theme.primaryText)
-                    Text(heroSubtitle(minutes: minutes, streak: streak))
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(theme.secondaryText)
-                        .lineLimit(2)
+                        .font(.system(size: 31, weight: .semibold, design: .rounded))
+                        .foregroundStyle(palette.primaryText)
+                    HStack(spacing: 8) {
+                        if streak > 0 {
+                            HStack(spacing: 4) {
+                                Image(systemName: "flame.fill")
+                                    .font(.system(size: 11, weight: .bold))
+                                Text("连读 \(streak) 天")
+                                    .font(.system(size: 12, weight: .bold, design: .rounded))
+                            }
+                            .foregroundStyle(palette.gold)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .background(
+                                Capsule()
+                                    .fill(
+                                        LinearGradient(
+                                            colors: [
+                                                palette.gold.opacity(0.28),
+                                                palette.gold.opacity(0.14)
+                                            ],
+                                            startPoint: .top,
+                                            endPoint: .bottom
+                                        )
+                                    )
+                            )
+                            .overlay(Capsule().stroke(palette.gold.opacity(0.42), lineWidth: 0.7))
+                            // Layered glow: a soft theme-tinted aura + a tighter inner
+                            // shadow for depth. Stays atmospheric, never harsh.
+                            .shadow(color: palette.glow.opacity(0.30), radius: 8, x: 0, y: 2)
+                            .shadow(color: palette.glow.opacity(0.18), radius: 2, x: 0, y: 1)
+                        }
+                        Text(heroSubtitle(minutes: minutes, streak: streak))
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(palette.secondaryText.opacity(0.92))
+                            .lineLimit(2)
+                    }
                 }
 
                 Spacer()
 
                 ZStack {
                     Circle()
-                        .fill(theme.accent.opacity(0.16))
+                        .fill(
+                            RadialGradient(
+                                colors: [
+                                    palette.readingTime.opacity(0.32),
+                                    palette.readingTime.opacity(0.06)
+                                ],
+                                center: .center,
+                                startRadius: 4,
+                                endRadius: 32
+                            )
+                        )
+                    Circle()
+                        .stroke(palette.readingTime.opacity(0.18), lineWidth: 0.6)
                     Image(systemName: "chart.line.uptrend.xyaxis")
-                        .font(.system(size: 28, weight: .semibold))
-                        .foregroundStyle(theme.accent)
+                        .font(.system(size: 26, weight: .semibold))
+                        .foregroundStyle(palette.readingTime)
                 }
                 .frame(width: 58, height: 58)
             }
@@ -227,7 +648,7 @@ struct ReadingStatsView: View {
                                 Image(systemName: "chevron.down")
                                     .font(.system(size: 8, weight: .bold))
                             }
-                            .foregroundStyle(theme.secondaryText)
+                            .foregroundStyle(palette.secondaryText)
                         }
                         Spacer()
                         if goalReached {
@@ -237,11 +658,25 @@ struct ReadingStatsView: View {
                                 Text("已达成")
                                     .font(.system(size: 11, weight: .bold, design: .rounded))
                             }
-                            .foregroundStyle(theme.accent)
+                            .foregroundStyle(palette.sage)
                         }
                     }
-                    ProgressView(value: dailyProgress)
-                        .tint(theme.accent)
+                    // Custom progress rail: theme-tinted track + warm reading-time
+                    // fill. SwiftUI's default ProgressView track rendered as a
+                    // cold grey bar on the ink theme — explicit colors fix that.
+                    // The fill carries a subtle theme-tinted glow that reinforces
+                    // the same accent without lighting up like a status bar.
+                    GeometryReader { proxy in
+                        ZStack(alignment: .leading) {
+                            Capsule()
+                                .fill(palette.progressTrack)
+                            Capsule()
+                                .fill(palette.readingTime)
+                                .frame(width: max(0, proxy.size.width * dailyProgress))
+                                .shadow(color: palette.glow.opacity(0.32), radius: 4, x: 0, y: 1)
+                        }
+                    }
+                    .frame(height: 6)
                 }
             } else {
                 Menu {
@@ -253,17 +688,32 @@ struct ReadingStatsView: View {
                         Text("设定今日目标")
                             .font(.system(size: 12, weight: .semibold, design: .rounded))
                     }
-                    .foregroundStyle(theme.accent)
+                    .foregroundStyle(palette.readingTime)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 7)
-                    .background(Capsule().fill(theme.accent.opacity(0.14)))
+                    .background(Capsule().fill(palette.readingTime.opacity(0.16)))
+                    .overlay(Capsule().stroke(palette.readingTime.opacity(0.28), lineWidth: 0.7))
                 }
             }
         }
         .padding(18)
-        .background(theme.cardBackground.opacity(0.92))
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .shadow(color: theme.cardShadow, radius: 14, x: 0, y: 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: palette.heroGradient,
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                )
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(palette.border, lineWidth: 0.6)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .shadow(color: palette.shadow, radius: 14, x: 0, y: 7)
     }
 
     @ViewBuilder
@@ -290,9 +740,9 @@ struct ReadingStatsView: View {
     private var globalMetrics: some View {
         StatMetricStrip(
             metrics: [
-                StatMetric(title: "总时长", value: formatMetricDuration(totalDuration), icon: "clock.fill"),
-                StatMetric(title: "读过/读完", value: "\(readBookCount)本/\(finishedBookCount)本", icon: "books.vertical.fill"),
-                StatMetric(title: "翻页数", value: formatCount(totalPages), icon: "arrow.turn.up.right")
+                StatMetric(title: "总时长", value: formatMetricDuration(totalDuration), icon: "clock.fill", tint: palette.readingTime),
+                StatMetric(title: "读过/读完", value: "\(readBookCount)本/\(finishedBookCount)本", icon: "books.vertical.fill", tint: palette.clay),
+                StatMetric(title: "翻页数", value: formatCount(totalPages), icon: "arrow.turn.up.right", tint: palette.sage)
             ]
         )
     }
@@ -322,53 +772,53 @@ struct ReadingStatsView: View {
         return VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
                 Image(systemName: selectedRange.systemImage)
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(theme.primaryText)
-                    .frame(width: 20, height: 20)
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(palette.sage)
+                    .frame(width: 24, height: 24)
+                    .background(Circle().fill(palette.sage.opacity(0.18)))
                 Text(selectedRange.reportTitle)
                     .font(.system(size: 17, weight: .bold, design: .rounded))
-                    .foregroundStyle(theme.primaryText)
+                    .foregroundStyle(palette.primaryText)
                     .lineLimit(1)
                     .minimumScaleFactor(0.9)
                 Spacer(minLength: 0)
                 Text(formatDuration(duration))
                     .font(.system(size: 15, weight: .bold, design: .rounded))
-                    .foregroundStyle(theme.accent)
+                    .foregroundStyle(palette.readingTime)
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
             }
-            .frame(height: 24)
+            .frame(height: 28)
 
             HStack(spacing: 10) {
-                SmallStatPill(title: "阅读步调", value: hasPeriodData && speed > 0 ? String(format: "%.1f 页/分", speed) : "—")
-                SmallStatPill(title: "字数", value: hasPeriodData ? formatCharacterCount(characters) : "—")
-                SmallStatPill(title: "翻页", value: hasPeriodData ? formatCount(pages) : "—")
+                SmallStatPill(title: "阅读步调", value: hasPeriodData && speed > 0 ? String(format: "%.1f 页/分", speed) : "—", tint: palette.inkBlue)
+                SmallStatPill(title: "字数", value: hasPeriodData ? formatCharacterCount(characters) : "—", tint: palette.clay)
+                SmallStatPill(title: "翻页", value: hasPeriodData ? formatCount(pages) : "—", tint: palette.sage)
             }
 
             Text(hasPeriodData ? rangeCommentary(for: selectedRange) : emptyPeriodHint(for: selectedRange))
                 .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(theme.secondaryText)
+                .foregroundStyle(palette.secondaryText)
                 .lineLimit(1)
                 .minimumScaleFactor(0.85)
                 .frame(height: 18)
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(theme.cardBackground.opacity(0.86))
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .statsCard()
     }
 
     private var trendCard: some View {
         let points = trendPoints(for: selectedRange)
 
         return VStack(alignment: .leading, spacing: 12) {
-            HStack {
+            HStack(spacing: 8) {
                 Text("时段轨迹")
                     .font(.system(size: 17, weight: .bold, design: .rounded))
-                    .foregroundStyle(theme.primaryText)
+                    .foregroundStyle(palette.primaryText)
                 Text(selectedRange.trendExplanation)
                     .font(.system(size: 12, weight: .regular))
-                    .foregroundStyle(theme.secondaryText)
+                    .foregroundStyle(palette.secondaryText)
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
                 Spacer()
@@ -381,8 +831,7 @@ struct ReadingStatsView: View {
             )
         }
         .padding(16)
-        .background(theme.cardBackground.opacity(0.86))
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .statsCard()
         .animation(.easeInOut(duration: 0.18), value: selectedTrendPointID)
     }
 
@@ -406,19 +855,19 @@ struct ReadingStatsView: View {
             HStack(alignment: .firstTextBaseline) {
                 Text("阅读日历")
                     .font(.system(size: 17, weight: .bold, design: .rounded))
-                    .foregroundStyle(theme.primaryText)
+                    .foregroundStyle(palette.primaryText)
                 Text("记录每一次沉浸")
                     .font(.system(size: 12, weight: .regular))
-                    .foregroundStyle(theme.secondaryText)
+                    .foregroundStyle(palette.secondaryText)
                     .lineLimit(1)
                     .minimumScaleFactor(0.75)
                 Spacer()
             }
 
             HStack(spacing: 10) {
-                SmallStatPill(title: "当前连续", value: "\(streak) 天")
-                SmallStatPill(title: "最长连续", value: "\(longestStreak) 天")
-                SmallStatPill(title: activeDaysLabel, value: "\(activeDays) 天")
+                SmallStatPill(title: "当前连续", value: "\(streak) 天", tint: palette.gold)
+                SmallStatPill(title: "最长连续", value: "\(longestStreak) 天", tint: palette.gold)
+                SmallStatPill(title: activeDaysLabel, value: "\(activeDays) 天", tint: palette.sage)
             }
 
             HStack(spacing: 8) {
@@ -432,7 +881,7 @@ struct ReadingStatsView: View {
 
                 Text(monthTitle(monthStart))
                     .font(.system(size: 15, weight: .bold, design: .rounded))
-                    .foregroundStyle(theme.primaryText)
+                    .foregroundStyle(palette.primaryText)
                     .frame(maxWidth: .infinity)
 
                 CalendarNavigationButton(systemName: "chevron.right", isEnabled: canMoveForwardMonth) {
@@ -464,17 +913,16 @@ struct ReadingStatsView: View {
 
             HStack(spacing: 6) {
                 Circle()
-                    .fill(theme.accent)
+                    .fill(palette.readingAccent.opacity(0.95))
                     .frame(width: 7, height: 7)
                 Text("有颜色代表当天读过，描边为今天")
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(theme.secondaryText)
+                    .foregroundStyle(palette.secondaryText)
                 Spacer()
             }
         }
         .padding(16)
-        .background(theme.cardBackground.opacity(0.86))
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .statsCard()
     }
 
     private var heatmapCard: some View {
@@ -490,10 +938,10 @@ struct ReadingStatsView: View {
             HStack {
                 Text("阅读热力")
                     .font(.system(size: 17, weight: .bold, design: .rounded))
-                    .foregroundStyle(theme.primaryText)
+                    .foregroundStyle(palette.primaryText)
                 Text("记录近 12 周阅读状态")
                     .font(.system(size: 12, weight: .regular))
-                    .foregroundStyle(theme.secondaryText)
+                    .foregroundStyle(palette.secondaryText)
                     .lineLimit(1)
                     .minimumScaleFactor(0.75)
                 Spacer()
@@ -505,7 +953,7 @@ struct ReadingStatsView: View {
                         ForEach(weekdayLabels, id: \.self) { label in
                             Text(label)
                                 .font(.system(size: 9, weight: .semibold, design: .rounded))
-                                .foregroundStyle(theme.secondaryText)
+                                .foregroundStyle(palette.secondaryText)
                                 .frame(width: 14)
                                 .frame(maxHeight: .infinity)
                         }
@@ -518,20 +966,38 @@ struct ReadingStatsView: View {
                                     let summary = summaries[weekday * 12 + week]
                                     let isFuture = summary.day > today
                                     let isSelected = !isFuture && (selectedHeatmapDay.map { calendar.isDate($0, inSameDayAs: summary.day) } ?? false)
+                                    let level = isFuture ? 0 : heatLevel(summary.durationSeconds, maxDuration: maxDuration)
+                                    let hasData = level > 0
+                                    let isStrong = level >= 3
                                     Button {
                                         withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
                                             selectedHeatmapDay = isSelected ? nil : summary.day
                                         }
                                     } label: {
                                         RoundedRectangle(cornerRadius: 3, style: .continuous)
-                                            .fill(isFuture ? Color.clear : heatColor(summary.durationSeconds, maxDuration: maxDuration))
+                                            .fill(isFuture ? Color.clear : palette.heatLevels[level])
                                             .aspectRatio(1, contentMode: .fit)
                                             .frame(maxWidth: .infinity)
+                                            // Filled cells get a subtle inner-dark stroke so each block
+                                            // reads as its own swatch instead of bleeding into neighbors.
                                             .overlay(
                                                 RoundedRectangle(cornerRadius: 3, style: .continuous)
-                                                    .stroke(isSelected ? theme.accent : .clear, lineWidth: 2)
+                                                    .stroke(hasData ? palette.primaryText.opacity(0.10) : .clear, lineWidth: 0.6)
                                             )
-                                            .shadow(color: isSelected ? theme.accent.opacity(0.18) : .clear, radius: 5, x: 0, y: 2)
+                                            .overlay(
+                                                RoundedRectangle(cornerRadius: 3, style: .continuous)
+                                                    .stroke(isSelected ? palette.primaryText.opacity(0.65) : .clear, lineWidth: 1.6)
+                                            )
+                                            // Two-tier shadow: heaviest weeks lift off the page so the
+                                            // heatmap reads as a signature visual; selection overrides.
+                                            .shadow(
+                                                color: isSelected
+                                                    ? palette.primaryText.opacity(0.18)
+                                                    : (isStrong ? palette.primaryText.opacity(0.10) : .clear),
+                                                radius: isSelected ? 5 : 2.5,
+                                                x: 0,
+                                                y: isSelected ? 2 : 1
+                                            )
                                     }
                                     .buttonStyle(.plain)
                                     .disabled(isFuture)
@@ -543,18 +1009,20 @@ struct ReadingStatsView: View {
                     }
                 }
 
+                // Legend draws straight from `palette.heatLevels` so it always matches
+                // the actual cells — no derived/scaled colors that could drift apart.
                 HStack(spacing: 6) {
                     Text("投入较少")
                         .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(theme.secondaryText)
-                    ForEach(0..<5, id: \.self) { index in
+                        .foregroundStyle(palette.secondaryText)
+                    ForEach(palette.heatLevels.indices, id: \.self) { index in
                         RoundedRectangle(cornerRadius: 2, style: .continuous)
-                            .fill(heatColor(index == 0 ? 0 : maxDuration * Double(index) / 4, maxDuration: maxDuration))
+                            .fill(palette.heatLevels[index])
                             .frame(width: 16, height: 8)
                     }
                     Text("投入充足")
                         .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(theme.secondaryText)
+                        .foregroundStyle(palette.secondaryText)
                     Spacer()
                 }
 
@@ -563,21 +1031,21 @@ struct ReadingStatsView: View {
                         icon: "calendar",
                         title: dayTitle(selectedSummary.day),
                         value: formatDuration(selectedSummary.durationSeconds),
-                        detail: "\(formatCount(selectedSummary.pageTurns)) 页 · \(formatCharacterCount(selectedSummary.characterCount))"
+                        detail: "\(formatCount(selectedSummary.pageTurns)) 页 · \(formatCharacterCount(selectedSummary.characterCount))",
+                        tint: palette.readingAccent
                     )
                     .transition(.opacity.combined(with: .move(edge: .top)))
                 }
             } else {
                 Text("近 12 周还没有阅读记录。开始阅读后，这里会显示你的节奏。")
                     .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(theme.secondaryText)
+                    .foregroundStyle(palette.secondaryText)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.vertical, 4)
             }
         }
         .padding(16)
-        .background(theme.cardBackground.opacity(0.86))
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .statsCard()
         .animation(.easeInOut(duration: 0.18), value: selectedHeatmapDay)
     }
 
@@ -590,10 +1058,10 @@ struct ReadingStatsView: View {
             HStack(alignment: .firstTextBaseline) {
                 Text("阅读榜单")
                     .font(.system(size: 17, weight: .bold, design: .rounded))
-                    .foregroundStyle(theme.primaryText)
+                    .foregroundStyle(palette.primaryText)
                 Text("按时长排序")
                     .font(.system(size: 12, weight: .regular))
-                    .foregroundStyle(theme.secondaryText)
+                    .foregroundStyle(palette.secondaryText)
                 Spacer()
             }
 
@@ -607,15 +1075,17 @@ struct ReadingStatsView: View {
             if books.isEmpty {
                 Text("\(selectedTopBooksRange.title)还没有可统计的阅读记录。")
                     .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(theme.secondaryText)
+                    .foregroundStyle(palette.secondaryText)
             } else {
                 ForEach(Array(books.prefix(5).enumerated()), id: \.element.id) { index, item in
+                    let rankColor = palette.rankAccents[index % palette.rankAccents.count]
                     HStack(spacing: 12) {
                         Text("\(index + 1)")
-                            .font(.system(size: 12, weight: .bold, design: .rounded))
-                            .foregroundStyle(theme.accent)
-                            .frame(width: 24, height: 24)
-                            .background(Circle().fill(theme.accent.opacity(0.12)))
+                            .font(.system(size: 13, weight: .bold, design: .rounded))
+                            .foregroundStyle(rankColor)
+                            .frame(width: 26, height: 26)
+                            .background(Circle().fill(rankColor.opacity(0.22)))
+                            .overlay(Circle().stroke(rankColor.opacity(0.42), lineWidth: 0.8))
 
                         if let book = booksByID[item.id] {
                             StatsBookCover(book: book, width: 38, height: 54)
@@ -624,7 +1094,7 @@ struct ReadingStatsView: View {
                             HStack(spacing: 6) {
                                 Text(item.title)
                                     .font(.system(size: 15, weight: .bold, design: .rounded))
-                                    .foregroundStyle(theme.primaryText)
+                                    .foregroundStyle(palette.primaryText)
                                     .lineLimit(1)
                                 if booksByID[item.id]?.isDeleted == true {
                                     RemovedFromLibraryBadge()
@@ -632,7 +1102,7 @@ struct ReadingStatsView: View {
                             }
                             Text("\(formatDuration(item.durationSeconds)) · \(formatCount(item.pageTurns)) 页 · \(formatCharacterCount(item.characterCount))")
                                 .font(.system(size: 12, weight: .medium))
-                                .foregroundStyle(theme.secondaryText)
+                                .foregroundStyle(palette.secondaryText)
                         }
                         Spacer()
                     }
@@ -641,8 +1111,7 @@ struct ReadingStatsView: View {
             }
         }
         .padding(16)
-        .background(theme.cardBackground.opacity(0.86))
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .statsCard()
     }
 
     private func heroSubtitle(minutes: Int, streak: Int) -> String {
@@ -868,10 +1337,18 @@ struct ReadingStatsView: View {
         return longest
     }
 
+    /// Quantizes a duration into one of the palette's 5 fixed heat levels so the
+    /// heatmap reads as discrete intensity steps (matching the legend swatches) rather
+    /// than a continuous gradient where adjacent cells look almost identical.
     private func heatColor(_ duration: TimeInterval, maxDuration: TimeInterval) -> Color {
-        guard duration > 0 else { return theme.secondaryText.opacity(0.10) }
-        let intensity = min(max(duration / maxDuration, 0.18), 1)
-        return theme.accent.opacity(0.18 + intensity * 0.72)
+        palette.heatLevels[heatLevel(duration, maxDuration: maxDuration)]
+    }
+
+    private func heatLevel(_ duration: TimeInterval, maxDuration: TimeInterval) -> Int {
+        guard duration > 0 else { return 0 }
+        let normalized = min(max(duration / maxDuration, 0), 1)
+        // Map (0, 1] → indices 1...4 (level 0 is reserved for "no reading").
+        return min(4, max(1, Int(ceil(normalized * 4))))
     }
 
     private func moveDisplayedCalendar(by value: Int, component: Calendar.Component) {
@@ -1065,10 +1542,13 @@ private struct StatMetric: Identifiable {
     let title: String
     let value: String
     let icon: String
+    /// Optional per-metric tint for the icon chip. When nil, defaults to the
+    /// theme accent so metrics introduced without explicit color still look reasonable.
+    var tint: Color? = nil
 }
 
 private struct StatMetricStrip: View {
-    @Environment(\.appTheme) private var theme
+    @Environment(\.statsPalette) private var palette
     let metrics: [StatMetric]
 
     var body: some View {
@@ -1079,7 +1559,7 @@ private struct StatMetricStrip: View {
 
                 if index < metrics.count - 1 {
                     Rectangle()
-                        .fill(theme.secondaryText.opacity(0.12))
+                        .fill(palette.divider)
                         .frame(width: 1, height: 52)
                         .padding(.horizontal, 4)
                 }
@@ -1087,34 +1567,34 @@ private struct StatMetricStrip: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 14)
-        .background(theme.cardBackground.opacity(0.86))
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .statsCard()
     }
 }
 
 private struct StatMetricColumn: View {
-    @Environment(\.appTheme) private var theme
+    @Environment(\.statsPalette) private var palette
     let metric: StatMetric
 
     var body: some View {
+        let tint = metric.tint ?? palette.readingTime
         VStack(alignment: .leading, spacing: 7) {
             HStack(spacing: 6) {
                 Image(systemName: metric.icon)
                     .font(.system(size: 12, weight: .bold))
-                    .foregroundStyle(theme.accent)
+                    .foregroundStyle(tint)
                     .frame(width: 24, height: 24)
-                    .background(Circle().fill(theme.accent.opacity(0.13)))
+                    .background(Circle().fill(tint.opacity(0.18)))
 
                 Text(metric.title)
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(theme.secondaryText)
+                    .foregroundStyle(palette.secondaryText)
                     .lineLimit(1)
                     .minimumScaleFactor(0.75)
             }
 
             Text(metric.value)
                 .font(.system(size: 22, weight: .bold, design: .rounded))
-                .foregroundStyle(theme.primaryText)
+                .foregroundStyle(palette.primaryText)
                 .lineLimit(1)
                 .minimumScaleFactor(0.62)
         }
@@ -1123,31 +1603,40 @@ private struct StatMetricColumn: View {
 }
 
 private struct SmallStatPill: View {
-    @Environment(\.appTheme) private var theme
+    @Environment(\.statsPalette) private var palette
     let title: String
     let value: String
+    /// Optional accent that tints the value text + a subtle background wash. Lets
+    /// each pill in a row carry a different semantic role (pace / words / pages).
+    var tint: Color? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(title)
                 .font(.system(size: 10, weight: .bold))
-                .foregroundStyle(theme.secondaryText)
+                .foregroundStyle(palette.secondaryText)
             Text(value)
-                .font(.system(size: 12, weight: .bold, design: .rounded))
-                .foregroundStyle(theme.primaryText)
+                .font(.system(size: 13, weight: .bold, design: .rounded))
+                .foregroundStyle(tint ?? palette.primaryText)
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
-        .background(theme.subtleCardBackground.opacity(0.72))
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill((tint ?? palette.secondaryText).opacity(0.18))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke((tint ?? palette.secondaryText).opacity(0.38), lineWidth: 0.8)
+        )
     }
 }
 
 private struct StatsTrendChart: View {
-    @Environment(\.appTheme) private var theme
+    @Environment(\.statsPalette) private var palette
     let points: [TrendPoint]
     @Binding var selectedPointID: String?
     var hasReadingData: Bool = true
@@ -1164,9 +1653,20 @@ private struct StatsTrendChart: View {
 
             ZStack(alignment: .topLeading) {
                 if hasReadingData {
+                    // Three airy gridlines that quietly mark the plot rhythm without
+                    // boxing the bars in. Baseline gets ~1.6x opacity so the chart
+                    // still reads as a real chart when only one bar is visible.
                     Rectangle()
-                        .fill(theme.secondaryText.opacity(0.12))
-                        .frame(height: 1)
+                        .fill(palette.chartGridLine.opacity(0.35))
+                        .frame(height: 0.5)
+                        .position(x: width / 2, y: topInset + plotHeight * 0.33)
+                    Rectangle()
+                        .fill(palette.chartGridLine.opacity(0.35))
+                        .frame(height: 0.5)
+                        .position(x: width / 2, y: topInset + plotHeight * 0.66)
+                    Rectangle()
+                        .fill(palette.chartGridLine.opacity(0.65))
+                        .frame(height: 0.6)
                         .position(x: width / 2, y: axisY)
 
                     ForEach(Array(points.enumerated()), id: \.element.id) { index, point in
@@ -1174,7 +1674,7 @@ private struct StatsTrendChart: View {
                             let x = xPosition(for: index, width: width)
                             Text(point.label)
                                 .font(.system(size: 10, weight: selectedPointID == point.id ? .bold : .semibold, design: .rounded))
-                                .foregroundStyle(selectedPointID == point.id ? theme.accent : theme.secondaryText)
+                                .foregroundStyle(selectedPointID == point.id ? palette.readingTime : palette.secondaryText)
                                 .frame(width: 46)
                                 .position(x: clamped(x, minimum: 23, maximum: width - 23), y: axisY + 15)
                         }
@@ -1190,25 +1690,37 @@ private struct StatsTrendChart: View {
                         let x = xPosition(for: index, width: width)
                         let height = barHeight(for: point.durationSeconds, maxValue: maxValue)
                         let isSelected = selectedPointID == point.id
+                        let top = palette.chartGradient.first ?? palette.readingTime
+                        let bottom = palette.chartGradient.last ?? palette.readingTime
 
                         Button {
                             withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
                                 selectedPointID = point.id
                             }
                         } label: {
-                            RoundedRectangle(cornerRadius: 4, style: .continuous)
+                            RoundedRectangle(cornerRadius: 3, style: .continuous)
                                 .fill(
                                     LinearGradient(
                                         colors: [
-                                            theme.accent.opacity(isSelected ? 1 : 0.92),
-                                            theme.accent.opacity(isSelected ? 0.48 : 0.30)
+                                            top.opacity(isSelected ? 1 : 0.92),
+                                            bottom.opacity(isSelected ? 0.88 : 0.70)
                                         ],
                                         startPoint: .top,
                                         endPoint: .bottom
                                     )
                                 )
                                 .frame(width: barWidth, height: height)
-                                .shadow(color: isSelected ? theme.accent.opacity(0.24) : .clear, radius: 5, x: 0, y: 2)
+                                // Cinematic, blurred glow: every bar carries a quiet
+                                // ambient halo so the trend feels luminous; selected
+                                // bar lifts into a stronger, tighter aura.
+                                .shadow(
+                                    color: isSelected
+                                        ? palette.glow.opacity(0.42)
+                                        : palette.glow.opacity(0.14),
+                                    radius: isSelected ? 7 : 4,
+                                    x: 0,
+                                    y: isSelected ? 2 : 1
+                                )
                                 .frame(width: tapWidth, height: plotHeight, alignment: .bottom)
                                 .contentShape(Rectangle())
                         }
@@ -1225,11 +1737,12 @@ private struct StatsTrendChart: View {
                     let height = barHeight(for: selected.durationSeconds, maxValue: maxValue)
                     Text(compactDuration(selected.durationSeconds))
                         .font(.system(size: 10, weight: .bold, design: .rounded))
-                        .foregroundStyle(theme.accent)
+                        .foregroundStyle(palette.readingTime)
                         .padding(.horizontal, 7)
                         .padding(.vertical, 3)
-                        .background(Capsule().fill(theme.cardBackground.opacity(0.96)))
-                        .shadow(color: theme.cardShadow.opacity(0.65), radius: 5, x: 0, y: 2)
+                        .background(Capsule().fill(palette.surfaceElevated))
+                        .overlay(Capsule().stroke(palette.border, lineWidth: 0.6))
+                        .shadow(color: palette.shadow, radius: 5, x: 0, y: 2)
                         .fixedSize()
                         .position(
                             x: clamped(x, minimum: 28, maximum: width - 28),
@@ -1243,9 +1756,9 @@ private struct StatsTrendChart: View {
     }
 
     private var barWidth: CGFloat {
-        if points.count <= 12 { return 14 }
-        if points.count <= 24 { return 9 }
-        return 5
+        if points.count <= 12 { return 11 }
+        if points.count <= 24 { return 7 }
+        return 4
     }
 
     private var tapWidth: CGFloat {
@@ -1281,28 +1794,31 @@ private struct StatsTrendChart: View {
 }
 
 private struct StatsSelectionPill: View {
-    @Environment(\.appTheme) private var theme
+    @Environment(\.statsPalette) private var palette
     let icon: String
     let title: String
     let value: String
     let detail: String
+    var tint: Color? = nil
 
     var body: some View {
+        let accent = tint ?? palette.inkBlue
+
         HStack(spacing: 10) {
             Image(systemName: icon)
                 .font(.system(size: 12, weight: .bold))
-                .foregroundStyle(theme.accent)
+                .foregroundStyle(accent)
                 .frame(width: 26, height: 26)
-                .background(Circle().fill(theme.accent.opacity(0.13)))
+                .background(Circle().fill(accent.opacity(0.18)))
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
                     .font(.system(size: 12, weight: .bold, design: .rounded))
-                    .foregroundStyle(theme.primaryText)
+                    .foregroundStyle(palette.primaryText)
                     .lineLimit(1)
                 Text(detail)
                     .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(theme.secondaryText)
+                    .foregroundStyle(palette.secondaryText)
                     .lineLimit(1)
             }
 
@@ -1310,19 +1826,23 @@ private struct StatsSelectionPill: View {
 
             Text(value)
                 .font(.system(size: 13, weight: .bold, design: .rounded))
-                .foregroundStyle(theme.accent)
+                .foregroundStyle(accent)
                 .lineLimit(1)
                 .minimumScaleFactor(0.75)
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
-        .background(theme.subtleCardBackground.opacity(0.74))
+        .background(palette.surfaceMuted)
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(palette.border, lineWidth: 0.6)
+        )
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 }
 
 private struct CalendarNavigationButton: View {
-    @Environment(\.appTheme) private var theme
+    @Environment(\.statsPalette) private var palette
     let systemName: String
     var isEnabled: Bool = true
     let action: () -> Void
@@ -1331,9 +1851,13 @@ private struct CalendarNavigationButton: View {
         Button(action: action) {
             Image(systemName: systemName)
                 .font(.system(size: 12, weight: .bold))
-                .foregroundStyle(isEnabled ? theme.primaryText : theme.secondaryText.opacity(0.4))
+                .foregroundStyle(isEnabled ? palette.primaryText : palette.secondaryText.opacity(0.45))
                 .frame(width: 34, height: 30)
-                .background(theme.subtleCardBackground.opacity(isEnabled ? 0.76 : 0.34))
+                .background(palette.surfaceMuted.opacity(isEnabled ? 1 : 0.5))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(palette.border, lineWidth: 0.6)
+                )
                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
         .buttonStyle(.plain)
@@ -1342,7 +1866,7 @@ private struct CalendarNavigationButton: View {
 }
 
 private struct StatsMonthlyReadingCalendar: View {
-    @Environment(\.appTheme) private var theme
+    @Environment(\.statsPalette) private var palette
     let month: Date
     let summaries: [DailyReadingSummary]
     let dayTitle: (Date) -> String
@@ -1362,7 +1886,7 @@ private struct StatsMonthlyReadingCalendar: View {
                 ForEach(weekdayTitles, id: \.self) { title in
                     Text(title)
                         .font(.system(size: 10, weight: .semibold, design: .rounded))
-                        .foregroundStyle(theme.secondaryText)
+                        .foregroundStyle(palette.secondaryText)
                         .frame(maxWidth: .infinity)
                 }
 
@@ -1394,7 +1918,7 @@ private struct StatsMonthlyReadingCalendar: View {
 }
 
 private struct CalendarDayCell: View {
-    @Environment(\.appTheme) private var theme
+    @Environment(\.statsPalette) private var palette
     let summary: DailyReadingSummary
     let isCurrentMonth: Bool
     private let calendar = Calendar.current
@@ -1409,7 +1933,7 @@ private struct CalendarDayCell: View {
                 .foregroundStyle(textColor(hasRead: hasRead, isToday: isToday))
 
             Capsule()
-                .fill(hasRead && isCurrentMonth ? theme.accent.opacity(0.78) : .clear)
+                .fill(hasRead && isCurrentMonth ? palette.readingAccent.opacity(0.95) : .clear)
                 .frame(width: 14, height: 3)
         }
         .frame(height: 38)
@@ -1417,46 +1941,58 @@ private struct CalendarDayCell: View {
         .background(
             RoundedRectangle(cornerRadius: 7, style: .continuous)
                 .fill(backgroundColor(hasRead: hasRead, isToday: isToday))
+                // Cinematic, blurred ambient glow only under read days in the current
+                // month. Theme-tinted via palette.glow so Sakura reads as rose,
+                // Forest as moss, etc. — never neon.
+                .shadow(
+                    color: (hasRead && isCurrentMonth) ? palette.glow.opacity(0.22) : .clear,
+                    radius: 6,
+                    x: 0,
+                    y: 1
+                )
         )
         .overlay(
             // Inset the stroke so it sits inside the rounded background rather than getting
             // half-clipped by the cell's outer edge.
             RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .inset(by: 1)
-                .stroke(borderColor(isToday: isToday), lineWidth: borderWidth(isToday: isToday))
+                .inset(by: 0.6)
+                .stroke(borderColor(hasRead: hasRead, isToday: isToday), lineWidth: borderWidth(isToday: isToday))
         )
         .opacity(isCurrentMonth ? 1 : 0.34)
     }
 
     private func backgroundColor(hasRead: Bool, isToday: Bool) -> Color {
         guard isCurrentMonth else {
-            return theme.subtleCardBackground.opacity(0.26)
+            return palette.surfaceMuted.opacity(0.45)
         }
-        // Today gets the same fill as other read days — the outline ring (below) is what
-        // distinguishes it, so the streak reads as one consistent swatch rather than
-        // having today pop out as a darker block.
+        // Read days pull the theme-aware reading accent so the calendar speaks
+        // the same color language as the heatmap, just softer. Today is marked
+        // by the stronger outline ring — not a darker fill — so a streak still
+        // reads as one consistent swatch.
         if hasRead {
-            return theme.accent.opacity(0.55)
+            return palette.readingAccent.opacity(0.42)
         }
-        return theme.subtleCardBackground.opacity(0.50)
+        return palette.surfaceMuted.opacity(0.75)
     }
 
     private func textColor(hasRead: Bool, isToday: Bool) -> Color {
         guard isCurrentMonth else {
-            return theme.secondaryText.opacity(0.58)
+            return palette.secondaryText.opacity(0.55)
         }
         if hasRead {
-            return theme.primaryText
+            return palette.primaryText
         }
-        return theme.secondaryText.opacity(0.72)
+        return palette.secondaryText.opacity(0.82)
     }
 
-    private func borderColor(isToday: Bool) -> Color {
-        isToday ? theme.primaryText.opacity(0.7) : .clear
+    private func borderColor(hasRead: Bool, isToday: Bool) -> Color {
+        if isToday { return palette.primaryText.opacity(0.88) }
+        if hasRead { return palette.readingAccent.opacity(0.68) }
+        return .clear
     }
 
     private func borderWidth(isToday: Bool) -> CGFloat {
-        isToday ? 1.4 : 0
+        isToday ? 1.8 : 0.6
     }
 }
 

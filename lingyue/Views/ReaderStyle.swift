@@ -321,17 +321,18 @@ struct SectionHeader: View {
     }
 }
 
-/// Pill displayed next to a book title when its `ReadingStatsBook` is `isDeleted`. Used by
-/// the stats top-books card and the browsing-history list so the same visual marks both.
+/// Pill displayed next to a book title when its `ReadingStatsBook` is `isDeleted`. Used
+/// by the stats top-books card and the browsing-history list, so it's intentionally
+/// theme-agnostic — a warm beige/clay so the pill reads as a soft "archived" tag
+/// instead of generic theme-tinted grey.
 struct RemovedFromLibraryBadge: View {
-    @Environment(\.appTheme) private var theme
-
     var body: some View {
         Text("已移出书架")
             .font(.system(size: 10, weight: .bold))
-            .foregroundStyle(theme.secondaryText)
-            .padding(.horizontal, 5)
-            .padding(.vertical, 2)
-            .background(Capsule().fill(theme.subtleCardBackground))
+            .foregroundStyle(Color(red: 0.478, green: 0.349, blue: 0.275))
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2.5)
+            .background(Capsule().fill(Color(red: 0.949, green: 0.886, blue: 0.820)))
+            .overlay(Capsule().stroke(Color(red: 0.769, green: 0.643, blue: 0.522).opacity(0.45), lineWidth: 0.6))
     }
 }
