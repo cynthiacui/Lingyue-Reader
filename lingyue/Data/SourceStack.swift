@@ -31,12 +31,22 @@ struct SourceStack: Sendable {
     /// Process-wide default. Constructed lazily on first access so unit
     /// tests can inject their own stack without paying the WebView
     /// renderer's startup cost.
+    ///
+    /// The fast-path adapter list grows here as adapters become
+    /// usable. Order matters: registry methods (`source(withID:)`,
+    /// `enabledSources()`) return them in this order, so list the
+    /// most-specific URL recognizer first when two adapters could
+    /// claim the same host.
     static let live: SourceStack = {
         let loader = CompositeSourceLoader()
         let store = FileEditableSourceStore()
         let registry = InternalSourceRegistry(
             editableStore: store,
-            loader: loader
+            loader: loader,
+            fastPathAdapters: [
+                FivedxsBookSource(loader: loader),
+                BiqugeAPIBookSource(loader: loader)
+            ]
         )
         return SourceStack(
             loader: loader,
