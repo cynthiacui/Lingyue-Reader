@@ -129,9 +129,11 @@ public struct BiqugeAPIBookSource: BookSource {
     /// or chapter URL shapes — mirrors `BookImportService.bookID(from:)`
     /// for the `/book/...` subset, so anything legacy accepts the
     /// adapter accepts too. Path is lowercased to absorb the rare
-    /// `/Book/` casing seen on mirror hosts.
+    /// `/Book/` casing seen on mirror hosts, and a fragment fallback
+    /// covers SPA-style mirrors like `bqg355.xyz/#/book/<id>/` where
+    /// the route lives in the URL fragment rather than the path.
     static func bookID(from url: URL) -> String? {
-        let path = url.path.lowercased()
+        let path = routePath(from: url)
         let patterns = [
             #"/book/(\d+)/\d+(?:_\d+)?\.html?$"#,    // chapter: /book/<id>/<chap>.html
             #"/book/(\d+)/index\.html?$"#,            // detail (index): /book/<id>/index.html
@@ -150,6 +152,20 @@ public struct BiqugeAPIBookSource: BookSource {
         return nil
     }
 
+    /// Returns the URL's effective route path. Most Biquge mirrors put
+    /// the route in `url.path`; SPA mirrors (e.g. `bqg355.xyz`) put it
+    /// in the URL fragment after `#/`, leaving the real path as `/`.
+    /// Falls back to the fragment when the path is empty so both shapes
+    /// feed the same regex set.
+    private static func routePath(from url: URL) -> String {
+        let rawPath = url.path.lowercased()
+        let rawFragment = url.fragment(percentEncoded: false)?.lowercased() ?? ""
+        guard (rawPath.isEmpty || rawPath == "/"), !rawFragment.isEmpty else {
+            return rawPath
+        }
+        return rawFragment.hasPrefix("/") ? rawFragment : "/" + rawFragment
+    }
+
     static func endpointURL(host: String, bookID: String) -> URL? {
         var components = URLComponents()
         components.scheme = "https"
@@ -165,7 +181,7 @@ public struct BiqugeAPIBookSource: BookSource {
     /// chapter URLs (`123_2.html`) point at the same `chapterid` as
     /// the canonical first page.
     static func bookAndChapterID(from url: URL) -> (bookID: String, chapterID: String)? {
-        let path = url.path
+        let path = routePath(from: url)
         guard let regex = try? NSRegularExpression(pattern: #"/book/(\d+)/(\d+)(?:_\d+)?\.html?$"#) else {
             return nil
         }

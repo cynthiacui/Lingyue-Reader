@@ -47,7 +47,24 @@ final class BiqugeAPIBookSourceTests: XCTestCase {
             BiqugeAPIBookSource.bookID(from: URL(string: "https://m.bqgl.cc/Book/12345/")!),
             "12345"
         )
+        // SPA mirror — the route is in the URL fragment, not the path.
+        // Real failure seen on `3375.bqg355.xyz/#/book/113680/`.
+        XCTAssertEqual(
+            BiqugeAPIBookSource.bookID(from: URL(string: "https://3375.bqg355.xyz/#/book/113680/")!),
+            "113680"
+        )
+        XCTAssertEqual(
+            BiqugeAPIBookSource.bookID(from: URL(string: "https://3375.bqg355.xyz/#/book/113680/7.html")!),
+            "113680"
+        )
         XCTAssertNil(BiqugeAPIBookSource.bookID(from: URL(string: "https://bqg99.cc/category/scifi")!))
+    }
+
+    func testBookAndChapterIDExtractionHandlesSPAFragment() {
+        let url = URL(string: "https://3375.bqg355.xyz/#/book/113680/7.html")!
+        let ids = BiqugeAPIBookSource.bookAndChapterID(from: url)
+        XCTAssertEqual(ids?.bookID, "113680")
+        XCTAssertEqual(ids?.chapterID, "7")
     }
 
     func testEndpointURLBuildsAPIPathWithQuery() {
