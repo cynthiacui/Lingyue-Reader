@@ -369,32 +369,50 @@ project file before the phase starts) belongs on the **App Store**
 target long-term: the public-facing app should have the clean name, and
 the risky/changing build should have the qualified one. So:
 
-- Existing `lingyue` target is renamed → `LingyueInternal`, **and its
-  bundle ID changes** to `com.lingyue.reader.internal` (or
-  `.dev` — pick at phase start). This is a one-time TestFlight migration
-  cost: existing testers move to a new App Store Connect record. We pay
-  it once, before any external launch, while the user base is small.
-- New `LingyueAppStore` target keeps the canonical `com.lingyue.reader`
-  bundle ID, paired with a new App Store Connect record under the same
-  ID. From this point forward, App Store updates ship through that record.
-**Migration cost is real.** iOS sandboxes by bundle ID — once `lingyue`
-becomes `LingyueInternal` with a new bundle ID, the new install cannot
-read the old install's `Application Support` directory. There is no
-"probe the legacy container" trick. The honest path is a two-cycle
-migration:
+A bundle ID maps 1:1 to an App Store Connect app record — you can't
+"reuse" an existing ID for a different record. So the strategy below
+preserves the existing record for the eventual public App Store launch
+and creates a fresh record for the Internal track.
 
-1. **Last update under the current bundle ID.** Ship a "Backup library"
-   feature in the existing app: full export of `LibraryStore.json`,
+- Existing `lingyue` target is renamed → `LingyueInternal`, **and its
+  bundle ID changes** to `com.lingyue.reader.internal` (or `.dev` — pick
+  at phase start). This requires creating a **new App Store Connect app
+  record** under the new bundle ID, with its own (new, empty) TestFlight.
+  Existing testers will need a fresh TestFlight invite to that new app
+  and a fresh install. One-time migration cost, paid while the tester
+  base is small.
+- New `LingyueAppStore` target keeps the canonical `com.lingyue.reader`
+  bundle ID. It uploads to the **existing App Store Connect record** —
+  the one the current `lingyue` build has been using for TestFlight all
+  along. That record's TestFlight history continues; when the App
+  Store-safe target is ready, the public submission goes through this
+  same record.
+**Migration cost is real.** iOS sandboxes by bundle ID — once a build
+ships under a new bundle ID, it cannot read the old install's
+`Application Support` directory. There is no "probe the legacy
+container" trick. The honest path is a four-step sequence:
+
+1. **Final `com.lingyue.reader` TestFlight build (existing record).**
+   Before any rename, ship a "Backup library" feature in the current
+   `lingyue` target: full export of `LibraryStore.json`,
    `EditableSourceStore.json`, and reader bookmarks into a single
    `.lingyue-backup` file via `UIDocumentPicker` / share sheet. Doubles
-   as a general-purpose backup feature.
-2. **First Internal build under the new bundle ID.** Onboarding step
-   "Import previous library" accepts the same `.lingyue-backup` file
-   from Files. Tester opens the file, the new build hydrates its
-   sandbox.
-3. **Existing testers** uninstall the old `com.lingyue.reader` install
-   after import. New testers (and all future App Store users) never see
-   this dance.
+   as a general-purpose backup feature. This is the **last build that
+   uploads to the existing App Store Connect record via the old `lingyue`
+   target shape** — every later upload to that record is the App
+   Store-safe target.
+2. **Create the new App Store Connect record for Internal.** New bundle
+   ID `com.lingyue.reader.internal`, new app in App Store Connect, new
+   (empty) TestFlight group. Invite existing testers.
+3. **First `LingyueInternal` TestFlight build.** Onboarding step "Import
+   previous library" accepts the `.lingyue-backup` file from Files.
+   Tester opens the file, the new build hydrates its sandbox. From this
+   point on, every upload from the renamed/split project goes to one of
+   two records — Internal builds to the new record,
+   `LingyueAppStore` builds to the existing `com.lingyue.reader` record.
+4. **Existing testers** uninstall the old `com.lingyue.reader` install
+   from step 1 once import is verified. New testers (and all future App
+   Store users) never see this dance.
 
 Alternatives considered and rejected: App Group container — only helps
 if the old build was already using the group, which it wasn't; CloudKit
