@@ -238,6 +238,13 @@ express. Move those adapters here as direct `BookSource` conformers:
    `InternalSourceRegistry.source(withID:)` internally — same UX, new
    plumbing. Behind a `UserDefaults` flag for one TestFlight cycle so we
    can A/B against the old path.
+   - **Status (in-progress):** shadow-route is wired for Biquge catalog,
+     Biquge chapter content, and 5dxs catalog behind the
+     `lingyue.useSourceRegistryForCatalog` flag (default off). Empty or
+     thrown registry results fall through to legacy unchanged, so the
+     legacy path stays authoritative until the flag flips. Outstanding:
+     flip the flag in a TestFlight build, watch `ReaderDiagnostics` for
+     drift, then delete the legacy bespoke methods once clean.
 
 ---
 
