@@ -218,16 +218,183 @@ final class BiqugeAPIBookSourceTests: XCTestCase {
         }
     }
 
-    func testFetchChapterThrowsParseFailed() async {
+    // MARK: - fetchChapter
+
+    func testBookAndChapterIDExtraction() {
+        let ids = BiqugeAPIBookSource.bookAndChapterID(
+            from: URL(string: "https://bqg99.cc/book/12345/7.html")!
+        )
+        XCTAssertEqual(ids?.bookID, "12345")
+        XCTAssertEqual(ids?.chapterID, "7")
+
+        // Split-paginated chapter URLs (_2 suffix) drop the suffix.
+        let split = BiqugeAPIBookSource.bookAndChapterID(
+            from: URL(string: "https://bqg99.cc/book/12345/7_2.html")!
+        )
+        XCTAssertEqual(split?.chapterID, "7")
+
+        // Book-only path has no chapter.
+        XCTAssertNil(BiqugeAPIBookSource.bookAndChapterID(
+            from: URL(string: "https://bqg99.cc/book/12345/")!
+        ))
+    }
+
+    func testChapterEndpointURLBuildsAPIPathWithIDs() {
+        let url = BiqugeAPIBookSource.chapterEndpointURL(
+            host: "apiqu.cc", bookID: "12345", chapterID: "7"
+        )
+        XCTAssertEqual(url?.scheme, "https")
+        XCTAssertEqual(url?.host, "apiqu.cc")
+        XCTAssertEqual(url?.path, "/api/chapter")
+        // Query item order is preserved by URLComponents.
+        let items = URLComponents(url: url!, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        XCTAssertEqual(items, [
+            URLQueryItem(name: "id", value: "12345"),
+            URLQueryItem(name: "chapterid", value: "7")
+        ])
+    }
+
+    func testFetchChapterDecodesJSONIntoChapterContent() async throws {
+        let json = """
+        {
+          "chaptername": "第一章 序章",
+          "txt": "第一段。\\r\\n第二段，含&nbsp;空格。\\r\\n第三段。"
+        }
+        """
+        let loader = StubLoader(responses: [
+            .success(.init(html: json, finalURL: URL(string: "https://apiqu.cc/api/chapter")!))
+        ])
+        let source = BiqugeAPIBookSource(loader: loader)
+        let content = try await source.fetchChapter(
+            url: URL(string: "https://bqg99.cc/book/12345/1.html")!
+        )
+
+        XCTAssertEqual(content.title, "第一章 序章")
+        XCTAssertEqual(content.paragraphs.count, 3)
+        XCTAssertEqual(content.paragraphs[0], "第一段。")
+        XCTAssertEqual(content.paragraphs[1], "第二段，含 空格。")
+        XCTAssertEqual(content.paragraphs[2], "第三段。")
+
+        let requested = await loader.requestedURLs()
+        XCTAssertEqual(requested.first?.path, "/api/chapter")
+        XCTAssertTrue(requested.first?.query?.contains("id=12345") ?? false)
+        XCTAssertTrue(requested.first?.query?.contains("chapterid=1") ?? false)
+    }
+
+    func testFetchChapterStripsBrTagsAndResidualHTML() async throws {
+        let json = """
+        {"chaptername": "第二章", "txt": "<p>段一。</p><br/>段二。<br><br>段三。"}
+        """
+        let loader = StubLoader(responses: [
+            .success(.init(html: json, finalURL: URL(string: "https://apiqu.cc/")!))
+        ])
+        let source = BiqugeAPIBookSource(loader: loader)
+        let content = try await source.fetchChapter(
+            url: URL(string: "https://bqg99.cc/book/12345/2.html")!
+        )
+        XCTAssertEqual(content.paragraphs, ["段一。", "段二。", "段三。"])
+    }
+
+    func testFetchChapterDropsBoilerplateLines() async throws {
+        let json = """
+        {
+          "chaptername": "第三章",
+          "txt": "正文段落一。\\r\\n请收藏本站！\\r\\n正文段落二。\\r\\n上一章 下一章\\r\\n正文段落三。"
+        }
+        """
+        let loader = StubLoader(responses: [
+            .success(.init(html: json, finalURL: URL(string: "https://apiqu.cc/")!))
+        ])
+        let source = BiqugeAPIBookSource(loader: loader)
+        let content = try await source.fetchChapter(
+            url: URL(string: "https://bqg99.cc/book/12345/3.html")!
+        )
+        XCTAssertEqual(content.paragraphs, ["正文段落一。", "正文段落二。", "正文段落三。"])
+    }
+
+    func testFetchChapterFallsBackToMirrorOnError() async throws {
+        let goodJSON = #"{"chaptername":"x","txt":"段一。\r\n段二。"}"#
+        let loader = StubLoader(responses: [
+            .failure(BookSourceError.loadFailed(reason: "apiqu down")),
+            .success(.init(html: goodJSON, finalURL: URL(string: "https://apige.cc/")!))
+        ])
+        let source = BiqugeAPIBookSource(loader: loader)
+        let content = try await source.fetchChapter(
+            url: URL(string: "https://bqg99.cc/book/12345/4.html")!
+        )
+        XCTAssertEqual(content.paragraphs.count, 2)
+        let requested = await loader.requestedURLs()
+        XCTAssertEqual(requested.map(\.host), ["apiqu.cc", "apige.cc"])
+    }
+
+    func testFetchChapterThrowsForUnsupportedHost() async {
         let source = BiqugeAPIBookSource(loader: StubLoader(responses: []))
         do {
-            _ = try await source.fetchChapter(url: URL(string: "https://bqg99.cc/book/12345/1.html")!)
-            XCTFail("Expected parseFailed")
-        } catch BookSourceError.parseFailed {
+            _ = try await source.fetchChapter(url: URL(string: "https://example.com/book/12345/1.html")!)
+            XCTFail("Expected unsupportedURL")
+        } catch BookSourceError.unsupportedURL {
             // expected
         } catch {
             XCTFail("Unexpected error: \(error)")
         }
+    }
+
+    func testFetchChapterThrowsWhenChapterIDMissing() async {
+        let source = BiqugeAPIBookSource(loader: StubLoader(responses: []))
+        do {
+            _ = try await source.fetchChapter(url: URL(string: "https://bqg99.cc/book/12345/")!)
+            XCTFail("Expected parseFailed")
+        } catch BookSourceError.parseFailed(let field) {
+            XCTAssertEqual(field, "biqugeAPI.chapterID")
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
+    func testFetchChapterThrowsEmptyChapterWhenBothHostsReturnNoText() async {
+        let emptyJSON = #"{"chaptername":"x","txt":""}"#
+        let loader = StubLoader(responses: [
+            .success(.init(html: emptyJSON, finalURL: URL(string: "https://apiqu.cc/")!)),
+            .success(.init(html: emptyJSON, finalURL: URL(string: "https://apige.cc/")!))
+        ])
+        let source = BiqugeAPIBookSource(loader: loader)
+        do {
+            _ = try await source.fetchChapter(url: URL(string: "https://bqg99.cc/book/12345/1.html")!)
+            XCTFail("Expected parseFailed")
+        } catch BookSourceError.parseFailed(let field) {
+            XCTAssertEqual(field, "biqugeAPI.empty-chapter")
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
+    func testFetchChapterFollowsSplitPaginatedURLsToSameChapterID() async throws {
+        let json = #"{"chaptername":"x","txt":"段一。\r\n段二。"}"#
+        let loader = StubLoader(responses: [
+            .success(.init(html: json, finalURL: URL(string: "https://apiqu.cc/")!))
+        ])
+        let source = BiqugeAPIBookSource(loader: loader)
+        _ = try await source.fetchChapter(
+            url: URL(string: "https://bqg99.cc/book/12345/7_2.html")!
+        )
+        let requested = await loader.requestedURLs()
+        // The `_2` page-2 suffix maps back to chapter 7 — same API call.
+        XCTAssertTrue(requested.first?.query?.contains("chapterid=7") ?? false)
+    }
+
+    func testDecodesNamedHTMLEntitiesInBody() async throws {
+        let json = #"""
+        {"chaptername":"x","txt":"&ldquo;你好&rdquo;\r\n&hellip;终章。"}
+        """#
+        let loader = StubLoader(responses: [
+            .success(.init(html: json, finalURL: URL(string: "https://apiqu.cc/")!))
+        ])
+        let source = BiqugeAPIBookSource(loader: loader)
+        let content = try await source.fetchChapter(
+            url: URL(string: "https://bqg99.cc/book/12345/1.html")!
+        )
+        XCTAssertEqual(content.paragraphs[0], "\u{201C}你好\u{201D}")
+        XCTAssertEqual(content.paragraphs[1], "\u{2026}终章。")
     }
 
     // MARK: - Identity / capability

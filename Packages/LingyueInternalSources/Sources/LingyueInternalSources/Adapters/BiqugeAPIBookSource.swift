@@ -9,10 +9,11 @@ import LingyueCore
 /// pattern. The rule schema can't express this — there is no per-row
 /// detail page to scrape, only an index in the response array.
 ///
-/// Scope: catalog only. Chapter content (`/api/chapter?id=<bookID>&chapterid=<chapID>`)
-/// follows a different JSON shape and lands in a later commit. The
-/// stubs throw narrow errors so the legacy `BookImportService` can
-/// keep covering chapter fetches until then.
+/// Catalog and chapter both go through the same `apiqu.cc` /
+/// `apige.cc` mirror set. `fetchDetail` is still a stub — there is
+/// no per-book detail endpoint in this API; the legacy
+/// `BookImportService` scrapes the user-facing HTML detail page,
+/// and a seeded rule will eventually own that step once one exists.
 public struct BiqugeAPIBookSource: BookSource {
     public let id: String = "internal:biquge-api"
     public let displayName: String = "笔趣阁 API"
@@ -52,7 +53,35 @@ public struct BiqugeAPIBookSource: BookSource {
     }
 
     public func fetchChapter(url: URL) async throws -> ChapterContent {
-        throw BookSourceError.parseFailed(field: "biqugeAPI.chapter-not-yet-implemented")
+        guard Self.recognizesURL(url) else {
+            throw BookSourceError.unsupportedURL(url)
+        }
+        guard let ids = Self.bookAndChapterID(from: url) else {
+            throw BookSourceError.parseFailed(field: "biqugeAPI.chapterID")
+        }
+
+        var lastError: Error?
+        for host in Self.apiHosts {
+            guard let endpoint = Self.chapterEndpointURL(
+                host: host,
+                bookID: ids.bookID,
+                chapterID: ids.chapterID
+            ) else { continue }
+            do {
+                let snapshot = try await loader.fetchHTML(SourceRequest(
+                    url: endpoint,
+                    headers: ["Accept": "application/json,text/plain,*/*"]
+                ))
+                let content = try Self.decodeChapter(json: snapshot.html)
+                if !content.paragraphs.isEmpty { return content }
+            } catch {
+                lastError = error
+                continue
+            }
+        }
+        if let lastError = lastError as? BookSourceError { throw lastError }
+        if let lastError { throw BookSourceError.loadFailed(reason: String(describing: lastError)) }
+        throw BookSourceError.parseFailed(field: "biqugeAPI.empty-chapter")
     }
 
     public func fetchCatalog(url: URL) async throws -> [ChapterLink] {
@@ -125,6 +154,38 @@ public struct BiqugeAPIBookSource: BookSource {
         return components.url
     }
 
+    /// Extracts `(bookID, chapterID)` from a `/book/<bookID>/<chap>.html`
+    /// or `/book/<bookID>/<chap>_<n>.html` path. The chapter ID is the
+    /// integer-only prefix before any underscore — split-paginated
+    /// chapter URLs (`123_2.html`) point at the same `chapterid` as
+    /// the canonical first page.
+    static func bookAndChapterID(from url: URL) -> (bookID: String, chapterID: String)? {
+        let path = url.path
+        guard let regex = try? NSRegularExpression(pattern: #"/book/(\d+)/(\d+)(?:_\d+)?\.html?$"#) else {
+            return nil
+        }
+        let range = NSRange(path.startIndex..<path.endIndex, in: path)
+        guard let match = regex.firstMatch(in: path, range: range),
+              match.numberOfRanges > 2,
+              let bookRange = Range(match.range(at: 1), in: path),
+              let chapterRange = Range(match.range(at: 2), in: path) else {
+            return nil
+        }
+        return (String(path[bookRange]), String(path[chapterRange]))
+    }
+
+    static func chapterEndpointURL(host: String, bookID: String, chapterID: String) -> URL? {
+        var components = URLComponents()
+        components.scheme = "https"
+        components.host = host
+        components.path = "/api/chapter"
+        components.queryItems = [
+            URLQueryItem(name: "id", value: bookID),
+            URLQueryItem(name: "chapterid", value: chapterID)
+        ]
+        return components.url
+    }
+
     // MARK: - Response decoding
 
     private struct CatalogResponse: Decodable {
@@ -153,6 +214,104 @@ public struct BiqugeAPIBookSource: BookSource {
             ) else { return nil }
             return ChapterLink(title: title, url: chapterURL, index: offset)
         }
+    }
+
+    private struct ChapterResponse: Decodable {
+        let chaptername: String?
+        let txt: String?
+    }
+
+    static func decodeChapter(json: String) throws -> ChapterContent {
+        guard let data = json.data(using: .utf8) else {
+            throw BookSourceError.parseFailed(field: "biqugeAPI.encoding")
+        }
+        let response: ChapterResponse
+        do {
+            response = try JSONDecoder().decode(ChapterResponse.self, from: data)
+        } catch {
+            throw BookSourceError.parseFailed(field: "biqugeAPI.json")
+        }
+        let title = cleanTitle(response.chaptername ?? "")
+        let paragraphs = splitChapterBody(response.txt ?? "")
+        return ChapterContent(title: title, paragraphs: paragraphs)
+    }
+
+    /// Splits the Biquge API's `txt` field into reader-ready paragraphs.
+    /// The field is *near*-plaintext: paragraphs are separated by
+    /// `\r\n` (sometimes doubled), with the occasional `<br>` or
+    /// `<br/>` left behind and named/numeric HTML entities sprinkled
+    /// in. We:
+    ///  1. Normalize line endings + `<br>` tags into `\n`.
+    ///  2. Strip residual HTML tags (rare but possible — ad spans).
+    ///  3. Decode the named entities we observe in practice.
+    ///  4. Drop common boilerplate ("请收藏本站…") and nav-only lines
+    ///     by exact match — the API serves these inline in `txt` on
+    ///     a handful of mirror hosts.
+    ///  5. Trim each remaining line and discard empties.
+    /// The result is consumed verbatim by the reader's pagination engine.
+    static func splitChapterBody(_ raw: String) -> [String] {
+        var text = raw
+        text = text.replacingOccurrences(of: "\r\n", with: "\n")
+        text = text.replacingOccurrences(of: "\r", with: "\n")
+        text = text.replacingOccurrences(
+            of: #"<\s*br\s*/?\s*>"#,
+            with: "\n",
+            options: [.regularExpression, .caseInsensitive]
+        )
+        text = text.replacingOccurrences(of: #"<[^>]+>"#, with: "", options: .regularExpression)
+        text = decodeNamedEntities(text)
+
+        let lines = text
+            .components(separatedBy: "\n")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .filter { !isBoilerplate($0) }
+        return lines
+    }
+
+    private static let boilerplateFragments: [String] = [
+        "请收藏本站", "請收藏本站", "加入书签", "加入書簽",
+        "返回目录", "返回目錄", "返回书架", "返回書架",
+        "上一章", "下一章", "上一頁", "下一頁",
+        "最新网址", "最新網址", "手机用户", "手機用戶",
+        "本章未完", "点击报错", "點擊報錯",
+        "天才一秒记住", "天才一秒鐘記住",
+        "无弹窗", "無彈窗", "看本书最新章节", "看本書最新章節",
+        "字体大小", "字體大小"
+    ]
+
+    private static func isBoilerplate(_ line: String) -> Bool {
+        // Boilerplate fragments are always at line scope and short —
+        // a paragraph that mentions "上一章" inside dialogue would be
+        // a false positive, but the API never serves dialogue in
+        // that form; the fragments only appear in standalone footer
+        // lines. Cheap upper-bound guard keeps us out of long paras.
+        guard line.count <= 80 else { return false }
+        return boilerplateFragments.contains { line.localizedCaseInsensitiveContains($0) }
+    }
+
+    private static func decodeNamedEntities(_ text: String) -> String {
+        var decoded = text
+        let map: [(String, String)] = [
+            ("&amp;", "&"),
+            ("&lt;", "<"),
+            ("&gt;", ">"),
+            ("&quot;", "\""),
+            ("&apos;", "'"),
+            ("&#39;", "'"),
+            ("&nbsp;", " "),
+            ("&ldquo;", "\u{201C}"),
+            ("&rdquo;", "\u{201D}"),
+            ("&lsquo;", "\u{2018}"),
+            ("&rsquo;", "\u{2019}"),
+            ("&hellip;", "\u{2026}"),
+            ("&mdash;", "\u{2014}"),
+            ("&ndash;", "\u{2013}")
+        ]
+        for (entity, value) in map {
+            decoded = decoded.replacingOccurrences(of: entity, with: value)
+        }
+        return decoded
     }
 
     private static func cleanTitle(_ raw: String) -> String {
