@@ -540,11 +540,11 @@ public release.
 | App name (zh-Hans) | `灵阅书屋` |
 | Subtitle (en) | `Your personal web-content reader` (or similar — no "novel", no "小说", no "fiction") |
 | Subtitle (zh-Hans) | `个人网页阅读工具` (no "小说", no "书源") |
-| Primary category | **News** or **Productivity** — not **Books**. Books is the category every Chinese novel reader lives in, and reviewers prime on it. |
-| Keywords | Generic: `reader, web, articles, RSS, longform, offline`. Avoid: `novel, 小说, 书源, fiction, web-novel`. |
-| Description | Lead with the "configurable reader for blogs, public-domain literature, RSS-style feeds" framing. Don't mention specific source types beyond "any website you have rights to read". |
+| Primary category | **Books.** The app *is* a reader — chapters, bookshelf, reading progress. Categorizing it as News/Productivity would risk Guideline 2.3 (Accurate Metadata). The defense lives in architecture, not category disguise. |
+| Keywords | Honest keyword optimization, not misrepresentation: `reader, web, articles, longform, offline, public domain`. Avoid `novel, 小说, 书源, web-novel` not because the app couldn't be used that way, but because those keywords attract the piracy-seeking audience we don't want surfacing in App Store reviews (see §6.5). |
+| Description | Truthful: a configurable reader for web content the user has the right to access — blogs, public-domain literature, RSS-style feeds, self-hosted writing. Don't invent capabilities the app doesn't have, don't disguise the ones it does. |
 | Languages | English **and** Simplified Chinese. Both first-class. Submitting Chinese-only invites the "Chinese piracy reader" prior. |
-| Age rating | 4+. Nothing in the App Store binary justifies higher. |
+| Age rating | Whatever the App Store Connect content questionnaire computes from honest answers. Don't predetermine. |
 
 ### 6.2 In-app affordances (Phase 3 deliverables)
 
@@ -555,14 +555,22 @@ public release.
   host.** Placeholder shows something like `https://example.com` or
   `https://en.wikisource.org/wiki/...`. Never 笔趣阁, hjwzw,
   novel-named hostnames, etc.
-- **One sample rule, optional, demonstrably-legal source.** Ship a
-  single read-only seeded rule pointing at **Chinese Wikisource**
-  (`zh.wikisource.org`) hosting public-domain classical literature
-  (三国演义, 红楼梦). Reviewer's first tap demos the app on a
-  Wikipedia-affiliated site — immediate legitimacy signal. The user can
-  delete the sample at any time. This is the **only** seeded rule the
-  App Store target ships; the CI scan adds `zh.wikisource.org` to an
-  **allowlist** rather than special-casing.
+- **Zero bundled rules.** The App Store target ships with an empty
+  rule library — no seeded sources, no "demo" rule, no exceptions. "No
+  bundled source list, period" is a cleaner defensible posture than
+  "no bundled list except this one legitimate exception" — the latter
+  invites a reviewer thread on "which exceptions count," and the
+  former is a single hard-line statement. Means the CI scan stays
+  simple too: any rule-shaped JSON in the App Store `.app` is a fail,
+  no allowlist needed.
+- **Wikisource as inline example, not as bundled data.** Onboarding's
+  "Add your first source" screen shows example URLs (Chinese
+  Wikisource, Project Gutenberg, a tech blog) as **localized
+  onboarding strings** with one-tap "use this URL" affordances that
+  pre-fill the Add Source flow. The user must complete the flow for a
+  rule to exist; nothing is persisted until they save. From a binary
+  perspective the URL strings live in `Localizable.strings`, not in any
+  rule JSON.
 - **IP attestation in onboarding.** Before the "Add Source" sheet
   appears for the first time, a one-screen explainer + a tap-to-confirm
   checkbox: "I will only add sources I have the right to access." User
@@ -582,10 +590,14 @@ public release.
 
 ### 6.3 Screenshots + visual identity
 
-- **Screenshots show only the Wikisource sample rule + a public-domain
-  work.** No screenshots of any other source, no screenshots of the
-  search bar finding novel-titled results, no screenshots of the rule
-  editor with a recognizable host in the URL field.
+- **Screenshots show only public-domain or clearly-legal content.** Use
+  Chinese Wikisource (三国演义, 红楼梦) or Project Gutenberg as the
+  user-added source in screenshots. The screenshots demonstrate the
+  user-adds-a-source flow — the rule didn't exist when the user
+  installed the app; they typed in the URL during onboarding. No
+  screenshots of any pirate-adjacent host. No screenshots of the search
+  bar finding novel-titled results. No screenshots of the rule editor
+  with a recognizable host in the URL field.
 - **App icon avoids 小说 / 武侠 / 仙侠 visual tropes.** No scroll-style
   manuscript, no traditional gold-on-red palette evoking a wuxia novel
   cover. A neutral book-and-bookmark mark in a modern flat palette is
@@ -601,14 +613,16 @@ re-use for every submission:
 - One paragraph on what the app is: configurable personal web reader.
 - One paragraph on the rule architecture: declarative `Codable` schema
   (`SourceRule`), closed transform enum, **no JavaScript or other code
-  execution from user-supplied rules**, no remote code loading, no
-  bundled source list (one sample rule pointing at Wikisource for
-  demonstration only).
+  execution from user-supplied rules**, no remote code loading, **no
+  bundled source list of any kind** — the app installs with an empty
+  rule library.
 - One paragraph on user responsibility: in-app IP attestation,
   onboarding language.
-- Optional: a 30-second screen recording demoing the app on the
-  Wikisource sample. Apple does not require demo videos but a clear
-  demo of "tap → read public-domain work" preempts the
+- Optional: a 30-second screen recording demoing the app — start from
+  a fresh install (empty rule library), tap a suggested example URL
+  (Chinese Wikisource) in onboarding, watch the Add Source flow
+  populate, then read a public-domain work. The "fresh install →
+  user-adds-source → reads-Wikipedia-content" arc preempts the
   "are-you-sure-this-isn't-piracy" thread.
 - **Do not** mention Lingyue Internal / TestFlight in the App Store
   notes. Those are separate App Store Connect records and bringing them
@@ -627,10 +641,20 @@ re-use for every submission:
   marketing can target them; App Store marketing should target
   general-purpose-reader audiences (Hacker News, ProductHunt, generic
   iOS/productivity blogs).
-- **If a feature request would visibly increase apparent intent, refuse
-  it in the App Store target.** Examples: "search across multiple
-  sources at once with a unified results page" — exactly what a piracy
-  aggregator does. Keep that feature Internal-only.
+- **Restrict curated content, not user-driven features.** Search across
+  the user's own added rules — including a unified result page that
+  fans out across every enabled source — is a **core App Store target
+  feature**. It's what makes a configurable reader useful and what the
+  original product brief calls for. The line to hold is on **curated /
+  preloaded content**, not on capability:
+  - App Store target: user-added rules only. Unified search across the
+    user's library is fine. The in-app browser detector is fine.
+  - Internal target additionally ships the seeded rule bundle and
+    fast-path adapters from `LingyueInternalSources`, plus any "browse
+    popular" or "recommended sources" affordance.
+  - A feature is App-Store-target-safe if it operates on rules the user
+    explicitly added; it's Internal-only if it surfaces sources the app
+    chose for them.
 
 ### 6.6 Realistic risk
 
