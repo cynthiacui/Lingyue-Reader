@@ -12,10 +12,13 @@ naming convention.
   multi-step search forms, custom decoders).
 - Seeded `SourceRule` bundles shipped pre-installed in the Internal /
   TestFlight builds.
-- `FixtureManifest.json` — neutral fixture IDs (`source-a`, `source-b`)
-  mapped back to real hostnames, kept out of `LingyueCore` and out of the
-  test fixture filenames so the App Store target's compile output cannot
-  reference real source names.
+- `FixtureManifest.json` at the **package root** (not in `Sources/`) —
+  neutral fixture IDs (`source-a`, `source-b`) mapped back to real
+  hostnames. Sits outside any SPM target so it is not bundled into the
+  Internal `.app` — it is dev/test bookkeeping, consumed by package
+  tests via filesystem path. Kept out of `LingyueCore` and out of test
+  fixture filenames so neither the App Store target nor LingyueCore
+  ever references real source names.
 - An `InternalSourceRegistry` that merges these internal sources with the
   user's rule-driven sources from `EditableSourceStore` and presents the
   union to the rest of the app via `BookSourceRegistry`.

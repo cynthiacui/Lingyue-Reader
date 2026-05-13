@@ -56,7 +56,10 @@ Deliverables now on `main`:
   - `BookSourceError` enum.
   - 3 passing smoke tests (`SourceRuleTests`).
 - `Packages/LingyueInternalSources/` SPM package, empty stub depending on
-  `LingyueCore`, with `FixtureManifest.json` placeholder.
+  `LingyueCore`, with `FixtureManifest.json` placeholder. The manifest
+  lives at the **package root** (outside any target's source path) so it
+  is dev/test bookkeeping only and never ships in the Internal `.app`
+  bundle.
 - `Tests/Fixtures/source-{a,b,c}/` placeholder HTML + `expected.json`.
 - `lingyue.xcodeproj` untouched. Still builds.
 
@@ -135,11 +138,17 @@ Phase 1 sign-off; b and c come in Phase 2):
 ### Exit criteria for Phase 1
 
 1. `swift test` in `LingyueCore` passes, including the new fixture tests
-   against `source-a`.
+   against `source-a`. Tests are **pure-disk**: a stub
+   `SourceHTMLLoading` returns canned bytes off the filesystem regardless
+   of the URL it is asked for. `source-a/rule.json` uses a synthetic
+   hostname like `source-a.invalid.test` so no real host string lands in
+   `LingyueCore` or its tests.
 2. `xcodebuild -scheme lingyue` succeeds with `LingyueCore` linked.
-3. A throwaway debug menu entry (in `#if DEBUG`) can load `source-a`'s
-   rule, run `search("漫游")` end-to-end via `HTTPSourceLoader`, and print
-   results. Verifies the loader adapter works against the live host.
+3. `HTTPSourceLoader` and `WebViewSourceLoader` each have at least one
+   unit test that exercises them against a local `URLProtocol` /
+   `WKWebView` fixture — no real network calls. Live-host validation is
+   deferred to Phase 2, where the `LingyueInternalSources` package owns
+   the manifest mapping fixture IDs to real hosts.
 
 ### Risks for Phase 1
 
@@ -162,11 +171,14 @@ match every source the existing app currently supports.
 - For each existing source the current `BookImportService` handles, author
   a `SourceRule` and check it in under
   `Packages/LingyueInternalSources/Sources/LingyueInternalSources/Resources/SeededRules/`.
-- One JSON file per source. The package's `Package.swift` already lists
-  the directory as a processed resource via `FixtureManifest.json` — add
-  a `.process("Resources")` line so the JSON ships in the bundle.
-- Update `FixtureManifest.json` to map `source-a` → real host, etc., so
-  the fixture-bound tests can find their real-world counterpart.
+- One JSON file per source. Add `.process("Resources")` to the target's
+  resources list in `Package.swift` so the JSON ships in the Internal
+  bundle.
+- Update the package-root `FixtureManifest.json` to map `source-a` → real
+  host, etc., so Internal-package tests can resolve a fixture ID back to
+  its live counterpart for the live-host validation tests. The manifest
+  stays **outside any target's source path** — read by tests via the
+  package directory's filesystem path, never bundled into the `.app`.
 
 ### 2.2 Fast-path adapters where rules can't reach
 
@@ -234,17 +246,56 @@ appear in Discovery search alongside seeded ones.
 
 ### 3.2 Add Source flow
 
-Two entry points, same destination:
+Three entry points, same destination:
 
 - **From scratch.** `Add Source` button → `SourceEditorView` with empty rule.
-- **From URL.** User pastes a source homepage; we pre-fill `homepage`,
-  `hostPatterns`, and run a heuristic that pre-fills common selectors
-  (`<title>`, `meta[name=description]`, the most chapter-list-like `<ul>`,
-  etc.). User refines from there.
+- **From URL.** User pastes a source homepage; the URL Analyzer (see
+  3.2.1) pre-fills as many fields as it can with confidence scores. User
+  refines from there.
+- **Import JSON rule file (Internal target only).** TestFlight users can
+  paste or open a rule JSON exported from another instance or shared by
+  the community. **Scope-change note:** the original brief envisioned
+  JSON import for both targets, comparable to Legado's source-file
+  workflow. App-Store-target review posture made me uncomfortable
+  shipping arbitrary-file-import there even though the content is pure
+  data, so this revision restricts JSON import to the Internal target
+  only. Both targets continue to support in-app authoring. If the
+  review-risk read is wrong, surface JSON import in the App Store target
+  too — the underlying schema is the same.
 
-No "import rule JSON file" affordance — App Store reviewers treat
-arbitrary-rule-file import as a code-injection vector, even though our
-rules can only declare data. Authoring stays in-app.
+#### 3.2.1 URL Analyzer (Auto-fill from homepage)
+
+The "From URL" path is non-trivial — a good autofill closes the gap
+between "type a URL" and "have a working source." Pipeline, each step
+emits a confidence score for the UI to display next to the field:
+
+- **P1 — Homepage fetch.** Resolve URL, follow redirects, snapshot final
+  URL + HTML. If the page only renders under JS, fall back to the
+  headless renderer.
+- **P2 — Host + path classification.** Derive `hostPatterns` from the
+  final URL host (with subdomain wildcarding heuristic). Pull `<title>`
+  and `<meta name="description">` for a default `name`.
+- **P3 — Search-form discovery.** Look for `<form>` elements with
+  `name`/`id` containing `search`, `query`, `q`. Build a candidate
+  `urlTemplate` from the form's `action` + input names. Confidence
+  drops sharply when there are multiple candidates.
+- **P4 — Catalog-shape detection.** Scan for the densest `<a>`-cluster
+  on any followable page (chapter lists are always large flat link
+  lists). Propose `chaptersSelector` + per-item `titleField` /
+  `urlField`. Honour `nofollow` / `aria-hidden` filters.
+- **P5 — Chapter-body detection.** Follow one of the proposed chapter
+  links; the body is the largest text-density `<div>` in the page.
+  Propose `bodyField` with `[.brToNewline, .stripHTML]` defaults.
+- **P6 — Confidence UI.** Every proposed selector lands in the editor
+  with a small badge: green ≥ 0.8, yellow 0.5–0.8, red < 0.5. User
+  sees at a glance what needs review. Save is blocked if any required
+  field is red.
+
+This deserves its own scope review before Phase 3 starts — depending on
+how robust we want P3–P5 to be, the analyzer can be anything from a
+weekend job to a two-week one. The skeleton above commits us to the
+pipeline shape and the confidence UX, not to any single heuristic's
+sophistication.
 
 ### 3.3 Discovery search bar fan-out
 
@@ -307,10 +358,24 @@ internal-only code.
 
 ### 5.1 Xcode target split
 
-- Rename existing `lingyue` target → `LingyueInternal` in the project
-  file. Keep the bundle ID the same for now (TestFlight continuity).
-- Create new `LingyueAppStore` target. Bundle ID `com.lingyue.appstore`,
-  new App Store Connect record.
+**Bundle ID strategy.** The canonical bundle ID (whatever the existing
+TestFlight build uses, expected `com.lingyue.reader` — verify against the
+project file before the phase starts) belongs on the **App Store**
+target long-term: the public-facing app should have the clean name, and
+the risky/changing build should have the qualified one. So:
+
+- Existing `lingyue` target is renamed → `LingyueInternal`, **and its
+  bundle ID changes** to `com.lingyue.reader.internal` (or
+  `.dev` — pick at phase start). This is a one-time TestFlight migration
+  cost: existing testers move to a new App Store Connect record. We pay
+  it once, before any external launch, while the user base is small.
+- New `LingyueAppStore` target keeps the canonical `com.lingyue.reader`
+  bundle ID, paired with a new App Store Connect record under the same
+  ID. From this point forward, App Store updates ship through that record.
+- Run a one-shot data-migration check on first launch of either build
+  that probes the legacy container path and copies `LibraryStore` +
+  `EditableSourceStore` JSON into the new container, so existing testers
+  don't lose their library when the bundle ID switches under them.
 - Both targets share most of `lingyue/` source files. The split is:
   - Files that import `LingyueInternalSources` → `Internal` target only.
     Add a tiny header comment listing the import for grep-friendliness,
@@ -338,19 +403,44 @@ Internal also gets the seeded bundle + fast-path adapters on top.
 
 ### 5.4 CI
 
-- Add a build job that builds `LingyueAppStore` and runs
-  `nm -gU $BINARY | grep -i <real source host>` against the output. Job
-  fails on any match. This is the structural guarantee teeth.
+Add a build job that builds `LingyueAppStore` and runs a multi-surface
+scan against the produced `.app` bundle. A symbol-only check via `nm` is
+not enough — hostnames almost never appear as symbols; they appear as
+string literals embedded in the binary, in bundled JSON/plist resources,
+or in compiled asset/string files. The scan covers:
+
+1. **Binary string literals.** `strings -a "$APP/LingyueAppStore"` piped
+   through `grep -i -F -f forbidden-hosts.txt`. `forbidden-hosts.txt` is
+   the line-delimited list of real source hosts; lives in the repo, only
+   readable by the `LingyueInternal` target's resource bundling and the
+   CI scan job.
+2. **Bundled resources.** `find "$APP" -type f \( -name '*.json' -o
+   -name '*.plist' -o -name '*.txt' -o -name '*.strings' \)` and grep
+   each against the same forbidden list. Plists get a `plutil -convert
+   xml1 -o -` pass first so binary plists are scanned readably.
+3. **Asset catalogs.** Decompile `Assets.car` via `assetutil
+   --info` and grep filenames / metadata. Belt-and-braces — covers the
+   case where a developer accidentally drops a source logo named
+   `52shuku.png` into the App Store asset catalog.
+
+Job fails on any match. This is the structural-guarantee teeth — combined
+with the compile-time fact that `LingyueAppStore` does not link
+`LingyueInternalSources`, no internal host should ever land in the App
+Store binary. The CI check catches the only realistic regression: a
+developer hard-codes a hostname directly in the App Store target's source.
 
 ### Exit criteria for Phase 5
 
 1. Both targets build green in CI.
-2. Symbol-grep check on `LingyueAppStore` binary returns zero matches
-   against the internal host list.
-3. TestFlight build of `LingyueInternal` ships unchanged from current
-   behaviour.
+2. The multi-surface scan (binary `strings`, bundled resources,
+   `Assets.car`) on the `LingyueAppStore` `.app` bundle returns zero
+   matches against `forbidden-hosts.txt`.
+3. `LingyueInternal` TestFlight ships with the new bundle ID; existing
+   testers complete the one-time install + data-migration without losing
+   their library or rules.
 4. App Store submission notes accurately describe the data-only rule
-   model.
+   model: closed selector/transform schema, no code execution from
+   rules, no remote code loading, no source list bundled.
 
 ---
 

@@ -19,10 +19,7 @@ let package = Package(
             dependencies: [
                 .product(name: "LingyueCore", package: "LingyueCore")
             ],
-            path: "Sources/LingyueInternalSources",
-            resources: [
-                .process("FixtureManifest.json")
-            ]
+            path: "Sources/LingyueInternalSources"
         ),
         .testTarget(
             name: "LingyueInternalSourcesTests",
