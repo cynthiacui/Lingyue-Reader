@@ -376,6 +376,23 @@ the risky/changing build should have the qualified one. So:
   that probes the legacy container path and copies `LibraryStore` +
   `EditableSourceStore` JSON into the new container, so existing testers
   don't lose their library when the bundle ID switches under them.
+
+**Display name + icon.** Two targets ship two Info.plists, so the
+home-screen label is set per target via `CFBundleDisplayName`:
+
+| Target | `CFBundleDisplayName` |
+|---|---|
+| `LingyueAppStore` | `灵阅` (canonical public-facing name) |
+| `LingyueInternal` | `灵阅 Dev` |
+
+Both apps can coexist on the same device (different bundle IDs = separate
+sandboxes), so the suffix is the only way a tester can tell them apart
+on the home screen. Pair this with a distinct app icon set for Internal
+— a small `DEV` / red-dot overlay on the existing icon is the lowest
+effort version. The two icon catalogs live under
+`lingyue/Assets.xcassets/AppIcon-AppStore.appiconset` and
+`AppIcon-Internal.appiconset`, each target's build settings point at the
+right one via `ASSETCATALOG_COMPILER_APPICON_NAME`.
 - Both targets share most of `lingyue/` source files. The split is:
   - Files that import `LingyueInternalSources` → `Internal` target only.
     Add a tiny header comment listing the import for grep-friendliness,
