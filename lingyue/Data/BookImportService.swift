@@ -1,5 +1,6 @@
 import Foundation
 import os
+import LingyueCore
 
 struct WebBookCandidate: Identifiable, Hashable, Sendable {
     let id: String
@@ -856,6 +857,20 @@ final class BookImportService: Sendable {
     }
 
     private func biqugeAPICatalogLinks(for sourceURL: URL, sourceBookID: String?) async -> [ChapterLink] {
+        // Phase 2.4 cut-over: when the registry-routing flag is on,
+        // try the rule-engine path first. Failures or empty results
+        // fall through to the legacy parser below — this is a
+        // shadow-route, never a hard cutover, so a regression in the
+        // adapter can never make catalog resolution *worse* than
+        // legacy. Only the Biquge path is gated for now; 5dxs and
+        // HJWZW remain on legacy until their adapters mature.
+        if Self.useSourceRegistryForCatalog {
+            let routed = await registryRoutedBiqugeAPICatalogLinks(for: sourceURL)
+            if !routed.isEmpty {
+                return routed
+            }
+        }
+
         guard isBiqugeAPISource(sourceURL),
               let bookID = sourceBookID ?? bookID(from: sourceURL),
               let data = try? await fetchBiqugeAPIData(
@@ -877,11 +892,86 @@ final class BookImportService: Sendable {
         }
     }
 
+    /// UserDefaults flag — flipped on in Settings → Lab when we're
+    /// ready to A/B the registry route against legacy in TestFlight.
+    /// Default OFF; the legacy path stays authoritative until the
+    /// flag flips at runtime. Read inline (no caching) so a flip
+    /// during a session takes effect on the next import.
+    static var useSourceRegistryForCatalog: Bool {
+        UserDefaults.standard.bool(forKey: "lingyue.useSourceRegistryForCatalog")
+    }
+
+    /// Phase 2.4 routed-Biquge path. Talks to the registry through
+    /// `SourceStack.live` instead of `fetchBiqugeAPIData` directly,
+    /// then maps `LingyueCore.ChapterLink` back to this file's
+    /// private struct (the latter only carries title + URL). Any
+    /// throw — host mismatch (`unsupportedURL`), decode failure,
+    /// transport error — is swallowed so the caller falls through
+    /// to legacy. We do NOT pre-check the URL host; that's the
+    /// adapter's job, and going through the throw path keeps the
+    /// dispatch layer ignorant of adapter internals.
+    private func registryRoutedBiqugeAPICatalogLinks(for sourceURL: URL) async -> [ChapterLink] {
+        do {
+            guard let source = try await SourceStack.live.registry.source(withID: "internal:biquge-api") else {
+                return []
+            }
+            let coreLinks = try await source.fetchCatalog(url: sourceURL)
+            await ReaderDiagnostics.shared.log(.info, "registry route → catalog", context: [
+                "adapter": "biquge-api",
+                "count": String(coreLinks.count)
+            ])
+            return coreLinks.map { ChapterLink(title: $0.title, url: $0.url) }
+        } catch BookSourceError.unsupportedURL {
+            // Host didn't match — this URL isn't the registry's
+            // problem, no diagnostic noise.
+            return []
+        } catch {
+            await ReaderDiagnostics.shared.log(.info, "registry route fell back → legacy", context: [
+                "adapter": "biquge-api",
+                "error": String(describing: error)
+            ])
+            return []
+        }
+    }
+
+    /// Phase 2.4 routed-5dxs path. Same shadow-route pattern as
+    /// `registryRoutedBiqugeAPICatalogLinks` — any throw falls back
+    /// to legacy, host-mismatch (`unsupportedURL`) is silent, every
+    /// other error logs once for the TestFlight ramp.
+    private func registryRoutedFivedxsCatalogLinks(for sourceURL: URL) async -> [ChapterLink] {
+        do {
+            guard let source = try await SourceStack.live.registry.source(withID: "internal:5dxs") else {
+                return []
+            }
+            let coreLinks = try await source.fetchCatalog(url: sourceURL)
+            await ReaderDiagnostics.shared.log(.info, "registry route → catalog", context: [
+                "adapter": "5dxs",
+                "count": String(coreLinks.count)
+            ])
+            return coreLinks.map { ChapterLink(title: $0.title, url: $0.url) }
+        } catch BookSourceError.unsupportedURL {
+            return []
+        } catch {
+            await ReaderDiagnostics.shared.log(.info, "registry route fell back → legacy", context: [
+                "adapter": "5dxs",
+                "error": String(describing: error)
+            ])
+            return []
+        }
+    }
+
     /// 就爱读小说 (5dxs.net / adxs.net) paginates the chapter catalog 10-per-page on the book
     /// detail page. The site's wap UI uses an /ajaxService endpoint that returns a JSON list
     /// — calling it once with size=2000 retrieves the entire catalog in a single request,
     /// avoiding the need to walk dozens of pages.
     private func fivedxsCatalogLinks(for sourceURL: URL, sourceBookID: String?) async -> [ChapterLink] {
+        if Self.useSourceRegistryForCatalog {
+            let routed = await registryRoutedFivedxsCatalogLinks(for: sourceURL)
+            if !routed.isEmpty {
+                return routed
+            }
+        }
+
         guard let host = sourceURL.host(percentEncoded: false)?.lowercased(),
               host.contains("5dxs.net") || host.contains("adxs.net") else {
             return []
@@ -1156,6 +1246,17 @@ final class BookImportService: Sendable {
     }
 
     private func fetchBiqugeAPIChapter(_ link: ChapterLink) async throws -> NovelChapter? {
+        // Phase 2.4 shadow-route. Same gate as catalog: only when the
+        // flag is on, and only as a *first try*. Empty/failed registry
+        // result falls through to the legacy `fetchBiqugeAPIData` path
+        // below — so legacy stays authoritative until TestFlight clears
+        // the new route.
+        if Self.useSourceRegistryForCatalog {
+            if let routed = try await registryRoutedBiqugeAPIChapter(link) {
+                return routed
+            }
+        }
+
         guard isBiqugeAPISource(link.url),
               let (bookID, chapterID) = biqugeBookAndChapterID(from: link.url) else {
             return nil
@@ -1178,6 +1279,40 @@ final class BookImportService: Sendable {
         guard !title.isEmpty, contentWithoutTitle.count >= 30 else { return nil }
         let chapterContent = contentLooksPrefixedByTitle(content, title: title) ? content : "\(title)\n\n\(content)"
         return NovelChapter(title: title, content: chapterContent)
+    }
+
+    /// Phase 2.4 routed-Biquge chapter path. Asks the registry adapter
+    /// for `fetchChapter`, maps `ChapterContent` to the legacy
+    /// `NovelChapter`. Host-mismatch is silent; other errors log once
+    /// and return nil so the caller falls through.
+    private func registryRoutedBiqugeAPIChapter(_ link: ChapterLink) async throws -> NovelChapter? {
+        do {
+            guard let source = try await SourceStack.live.registry.source(withID: "internal:biquge-api") else {
+                return nil
+            }
+            let chapter = try await source.fetchChapter(url: link.url)
+            let title = cleanText(chapter.title.isEmpty ? link.title : chapter.title)
+            let body = chapter.paragraphs.joined(separator: "\n\n")
+            let content = cleanChapterBody(body)
+            let contentWithoutTitle = content
+                .replacingOccurrences(of: title, with: "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !title.isEmpty, contentWithoutTitle.count >= 30 else { return nil }
+            await ReaderDiagnostics.shared.log(.info, "registry route → chapter", context: [
+                "adapter": "biquge-api",
+                "bytes": String(content.count)
+            ])
+            let chapterContent = contentLooksPrefixedByTitle(content, title: title) ? content : "\(title)\n\n\(content)"
+            return NovelChapter(title: title, content: chapterContent)
+        } catch BookSourceError.unsupportedURL {
+            return nil
+        } catch {
+            await ReaderDiagnostics.shared.log(.info, "registry chapter fell back → legacy", context: [
+                "adapter": "biquge-api",
+                "error": String(describing: error)
+            ])
+            return nil
+        }
     }
 
     private func isBiqugeAPISource(_ url: URL) -> Bool {
