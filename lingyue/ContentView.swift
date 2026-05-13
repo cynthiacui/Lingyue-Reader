@@ -73,6 +73,7 @@ struct ContentView: View {
         .environmentObject(downloadManager)
         .environmentObject(overlayManager)
         .environment(\.appTheme, effectiveTheme)
+        .environment(\.sourceStack, .live)
         .onChange(of: scenePhase) { _, newPhase in
             if newPhase == .background {
                 Task { await libraryStore.flush() }
@@ -82,8 +83,22 @@ struct ContentView: View {
         // session's `current.json` rotates to `previous.json` even when the
         // user never opens the reader this run — otherwise a previous
         // session's log could be silently overwritten on the next-next launch.
+        // Also probe the source registry so a misconfiguration (corrupt
+        // user-sources.json, missing seeded-rule resources) surfaces in
+        // diagnostics at launch instead of the first time the user opens
+        // Settings → Sources.
         .task {
             _ = ReaderDiagnostics.shared
+            do {
+                let count = try await SourceStack.live.registry.enabledSources().count
+                ReaderDiagnostics.shared.log(.lifecycle, "source registry ready", context: [
+                    "count": String(count)
+                ])
+            } catch {
+                ReaderDiagnostics.shared.log(.lifecycle, "source registry init failed", context: [
+                    "error": String(describing: error)
+                ])
+            }
         }
     }
 }

@@ -43,6 +43,7 @@
 		010000000000000000000705 /* LingyueInternalSources in Frameworks */ = {isa = PBXBuildFile; productRef = 010000000000000000000704 /* LingyueInternalSources */; };
 		010000000000000000000123 /* FileEditableSourceStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000025 /* FileEditableSourceStore.swift */; };
 		010000000000000000000124 /* AppStoreSourceRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000026 /* AppStoreSourceRegistry.swift */; };
+		010000000000000000000125 /* SourceStack.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000027 /* SourceStack.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -82,6 +83,7 @@
 		010000000000000000000024 /* CompositeSourceLoader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompositeSourceLoader.swift; sourceTree = "<group>"; };
 		010000000000000000000025 /* FileEditableSourceStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileEditableSourceStore.swift; sourceTree = "<group>"; };
 		010000000000000000000026 /* AppStoreSourceRegistry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppStoreSourceRegistry.swift; sourceTree = "<group>"; };
+		010000000000000000000027 /* SourceStack.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SourceStack.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -145,6 +147,7 @@
 				010000000000000000000024 /* CompositeSourceLoader.swift */,
 				010000000000000000000025 /* FileEditableSourceStore.swift */,
 				010000000000000000000026 /* AppStoreSourceRegistry.swift */,
+				010000000000000000000027 /* SourceStack.swift */,
 				010000000000000000000015 /* BookDownloadManager.swift */,
 				01000000000000000000001E /* DebugLog.swift */,
 				01000000000000000000001F /* ReaderDiagnostics.swift */,
@@ -296,6 +299,7 @@
 				010000000000000000000122 /* CompositeSourceLoader.swift in Sources */,
 				010000000000000000000123 /* FileEditableSourceStore.swift in Sources */,
 				010000000000000000000124 /* AppStoreSourceRegistry.swift in Sources */,
+				010000000000000000000125 /* SourceStack.swift in Sources */,
 				01000000000000000000010F /* CustomAlertView.swift in Sources */,
 				010000000000000000000110 /* ModalContainer.swift in Sources */,
 				010000000000000000000111 /* InputModalView.swift in Sources */,
