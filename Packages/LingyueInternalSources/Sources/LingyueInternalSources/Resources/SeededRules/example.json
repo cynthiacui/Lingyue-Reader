@@ -1,0 +1,81 @@
+{
+  "id": "00000000-0000-0000-0000-0000000000B1",
+  "schemaVersion": 1,
+  "name": "Seeded Example",
+  "homepage": "https://seeded-example.invalid.test/",
+  "capabilities": {
+    "supportsSearch": true,
+    "showInSearchBar": true,
+    "supportsBrowserImport": true,
+    "requiresWebRender": false,
+    "maxConcurrentRequests": 3,
+    "requestIntervalMillis": 0
+  },
+  "enginePerStep": {
+    "search": "http",
+    "detail": "http",
+    "catalog": "http",
+    "chapter": "http"
+  },
+  "encoding": "auto",
+  "defaultHeaders": {},
+  "detection": {
+    "hostPatterns": ["seeded-example.invalid.test"],
+    "pathPattern": "^/book/\\d+/?$",
+    "confirmSelector": "h1.book-title"
+  },
+  "search": {
+    "method": "get",
+    "urlTemplate": "https://seeded-example.invalid.test/search?q={query}",
+    "resultsSelector": "li.result",
+    "titleField": {
+      "selector": "a.title",
+      "transforms": [{ "trim": {} }]
+    },
+    "detailURLField": {
+      "selector": "a.title",
+      "attribute": "href",
+      "transforms": [{ "absoluteURL": {} }]
+    }
+  },
+  "detail": {
+    "titleField": {
+      "selector": "h1.book-title",
+      "transforms": [{ "trim": {} }]
+    },
+    "catalogURLField": {
+      "selector": "a.catalog-link",
+      "attribute": "href",
+      "transforms": [{ "absoluteURL": {} }]
+    }
+  },
+  "catalog": {
+    "chaptersSelector": "ul.chapter-list > li",
+    "titleField": {
+      "selector": "a.chapter",
+      "transforms": [{ "trim": {} }]
+    },
+    "urlField": {
+      "selector": "a.chapter",
+      "attribute": "href",
+      "transforms": [{ "absoluteURL": {} }]
+    },
+    "maxPages": 5
+  },
+  "chapter": {
+    "titleField": {
+      "selector": "h2.chapter-title",
+      "transforms": [{ "trim": {} }]
+    },
+    "bodyField": {
+      "selector": "div.chapter-body",
+      "attribute": "html",
+      "transforms": [
+        { "brToNewline": {} },
+        { "stripHTML": {} },
+        { "decodeHTMLEntities": {} }
+      ]
+    },
+    "maxBodyPages": 5
+  }
+}

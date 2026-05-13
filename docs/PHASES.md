@@ -185,9 +185,10 @@ match every source the existing app currently supports.
 - For each existing source the current `BookImportService` handles, author
   a `SourceRule` and check it in under
   `Packages/LingyueInternalSources/Sources/LingyueInternalSources/Resources/SeededRules/`.
-- One JSON file per source. Add `.process("Resources")` to the target's
-  resources list in `Package.swift` so the JSON ships in the Internal
-  bundle.
+- One JSON file per source. Add `.copy("Resources/SeededRules")` to the
+  target's resources list in `Package.swift` so the JSON ships in the
+  Internal bundle with its subdirectory preserved — `.process` would
+  flatten the directory structure, dropping the per-rule namespacing.
 - Update the package-root `FixtureManifest.json` to map `source-a` → real
   host, etc., so Internal-package tests can resolve a fixture ID back to
   its live counterpart for the live-host validation tests. The manifest

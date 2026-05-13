@@ -1,19 +1,23 @@
 import Foundation
 import LingyueCore
 
-/// Phase 0 stub. The real `InternalSourceRegistry`, fast-path adapters,
-/// and seeded rule bundles land in Phase 2 once the rule engine
-/// (`RuleBasedBookSource`) is in place.
+/// Entry point + diagnostics for the `LingyueInternalSources` package.
 ///
-/// This file exists so the package builds with an empty source list, and
-/// so anyone grepping for an entry point lands here first.
+/// Runtime consumers reach the seeded rule set and fast-path adapters
+/// through `InternalSourceRegistry` rather than this enum — that's
+/// where `BookSource` instances are constructed against a real loader.
+/// The helpers here are for diagnostics and for tests that want a
+/// rule-list snapshot without paying for HTML loading.
 public enum LingyueInternalSources {
-    /// Version of the seeded rule bundle this binary carries. Bumped when
+    /// Version of the seeded rule bundle this binary carries. Bump when
     /// the bundled rules ship a new schema or new entries. Surfaced in
     /// diagnostics, not user-visible.
-    public static let bundledRulesVersion: Int = 0
+    public static let bundledRulesVersion: Int = 1
 
-    /// Phase-0 placeholder. Returns an empty array until the seeded
-    /// bundle and fast-path adapters land.
-    public static func bundledSources() -> [any BookSource] { [] }
+    /// Decode every bundled `SourceRule` JSON. Convenience over
+    /// `SeededRuleLoader.loadAll().rules` for callers that just want
+    /// the rule list.
+    public static func bundledRules() -> [SourceRule] {
+        SeededRuleLoader.loadAll().rules
+    }
 }

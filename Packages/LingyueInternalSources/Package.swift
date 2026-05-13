@@ -19,7 +19,10 @@ let package = Package(
             dependencies: [
                 .product(name: "LingyueCore", package: "LingyueCore")
             ],
-            path: "Sources/LingyueInternalSources"
+            path: "Sources/LingyueInternalSources",
+            resources: [
+                .copy("Resources/SeededRules")
+            ]
         ),
         .testTarget(
             name: "LingyueInternalSourcesTests",
