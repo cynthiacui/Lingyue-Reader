@@ -53,6 +53,12 @@ final class ReaderDiagnostics: ObservableObject {
     private var backgroundObserver: NSObjectProtocol?
     private var willResignObserver: NSObjectProtocol?
 
+    /// File path the uncaught-exception handler appends to. The handler is a
+    /// plain C function pointer (no captured state) and runs synchronously
+    /// before `abort()`, so it can't reach the actor — it reads/writes this
+    /// URL directly on the crashing thread.
+    nonisolated(unsafe) fileprivate static var handlerURL: URL?
+
     private init() {
         let base = FileManager.default
             .urls(for: .applicationSupportDirectory, in: .userDomainMask)
@@ -66,6 +72,7 @@ final class ReaderDiagnostics: ObservableObject {
 
         rotateSessionFiles()
         observeLifecycleNotifications()
+        Self.installUncaughtExceptionHandler(currentURL: currentURL)
 
         log(.lifecycle, "session start", context: [
             "build": Self.buildString(),
@@ -165,13 +172,12 @@ final class ReaderDiagnostics: ObservableObject {
 
     /// Debounced atomic flush. We coalesce bursty logging (page-turn
     /// gestures fire 5–10 events in tight sequence) into one disk write
-    /// while still bounding the loss-window to ~1s — short enough that
-    /// "what was happening just before the crash" is preserved with at
-    /// most 1s of trailing edge missing.
+    /// while bounding the loss-window to ~250ms — tight enough that the
+    /// trailing entries before a crash are almost always on disk.
     private func scheduleFlush() {
         guard flushTask == nil else { return }
         flushTask = Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(1_000))
+            try? await Task.sleep(for: .milliseconds(250))
             guard let self, !Task.isCancelled else { return }
             let snapshot = self.current
             let url = self.currentURL
@@ -187,6 +193,42 @@ final class ReaderDiagnostics: ObservableObject {
         encoder.dateEncodingStrategy = .iso8601
         guard let data = try? encoder.encode(entries) else { return }
         try? data.write(to: url, options: .atomic)
+    }
+
+    /// Installs a process-wide ObjC uncaught-exception handler. The handler
+    /// runs synchronously on the throwing thread right before `abort()` —
+    /// no MainActor, no async — so it reads `current.json` from disk,
+    /// appends a `.uncaughtException` entry with the exception's
+    /// name/reason/stack, and writes back atomically. With 250 ms flush
+    /// debounce upstream, the file usually already contains everything the
+    /// reader logged up to the moment of the throw.
+    private nonisolated static func installUncaughtExceptionHandler(currentURL: URL) {
+        handlerURL = currentURL
+        NSSetUncaughtExceptionHandler { exception in
+            guard let url = ReaderDiagnostics.handlerURL else { return }
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+            var entries: [Entry] = []
+            if let data = try? Data(contentsOf: url),
+               let decoded = try? decoder.decode([Entry].self, from: data) {
+                entries = decoded
+            }
+            let stack = exception.callStackSymbols.prefix(20).joined(separator: " | ")
+            entries.append(Entry(
+                timestamp: Date(),
+                kind: .uncaughtException,
+                message: exception.name.rawValue,
+                context: [
+                    "reason": exception.reason ?? "",
+                    "stack": stack
+                ]
+            ))
+            let encoder = JSONEncoder()
+            encoder.dateEncodingStrategy = .iso8601
+            if let outData = try? encoder.encode(entries) {
+                try? outData.write(to: url, options: .atomic)
+            }
+        }
     }
 
     private func rotateSessionFiles() {
@@ -281,6 +323,7 @@ extension ReaderDiagnostics {
         case taskEnd
         case taskCancel
         case memoryWarning
+        case uncaughtException
         case lifecycle
         case state
         case info
@@ -296,6 +339,8 @@ extension ReaderDiagnostics {
                 return "circle.dashed"
             case .memoryWarning:
                 return "exclamationmark.triangle"
+            case .uncaughtException:
+                return "exclamationmark.octagon"
             case .lifecycle:
                 return "power"
             case .state:
