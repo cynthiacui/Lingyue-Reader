@@ -1,0 +1,86 @@
+{
+  "detection": {
+    "input": {
+      "page": "detail.html",
+      "url": "https://source-a.invalid.test/book/42"
+    },
+    "confidence": 1.0,
+    "title": "Lingyue Chronicles",
+    "detailURL": "https://source-a.invalid.test/book/42"
+  },
+  "search": {
+    "query": "ling",
+    "results": [
+      {
+        "title": "Lingyue Chronicles",
+        "author": "Author One",
+        "detailURL": "https://source-a.invalid.test/book/42",
+        "coverURL": "https://source-a.invalid.test/covers/42.jpg",
+        "snippet": "An epic tale of light and time."
+      },
+      {
+        "title": "Lingering Echo",
+        "author": "Author Two",
+        "detailURL": "https://source-a.invalid.test/book/43",
+        "coverURL": null,
+        "snippet": "A short novella."
+      }
+    ]
+  },
+  "detail": {
+    "url": "https://source-a.invalid.test/book/42",
+    "title": "Lingyue Chronicles",
+    "author": "Author One",
+    "coverURL": "https://source-a.invalid.test/covers/42.jpg",
+    "description": "An epic tale about light and time.",
+    "status": "Ongoing",
+    "statistics": "120,000 words",
+    "tags": ["Fantasy", "Adventure", "Cultivation"],
+    "catalogURL": "https://source-a.invalid.test/book/42/catalog"
+  },
+  "catalog": {
+    "url": "https://source-a.invalid.test/book/42/catalog",
+    "chapters": [
+      {
+        "title": "Chapter 1: Beginning",
+        "url": "https://source-a.invalid.test/book/42/chapter/1",
+        "volume": "Volume One: Dawn"
+      },
+      {
+        "title": "Chapter 2: Journey",
+        "url": "https://source-a.invalid.test/book/42/chapter/2",
+        "volume": "Volume One: Dawn"
+      },
+      {
+        "title": "Chapter 3: Return",
+        "url": "https://source-a.invalid.test/book/42/chapter/3",
+        "volume": "Volume Two: Dusk"
+      },
+      {
+        "title": "Chapter 4: Twilight",
+        "url": "https://source-a.invalid.test/book/42/chapter/4",
+        "volume": null
+      }
+    ]
+  },
+  "chapter1": {
+    "url": "https://source-a.invalid.test/book/42/chapter/1",
+    "title": "Chapter 1: Beginning",
+    "paragraphs": [
+      "The first paragraph opens the tale.",
+      "The second paragraph carries it forward.",
+      "The conclusion arrives on the second page."
+    ],
+    "nextChapterURL": "https://source-a.invalid.test/book/42/chapter/2",
+    "previousChapterURL": null
+  },
+  "chapter2": {
+    "url": "https://source-a.invalid.test/book/42/chapter/2",
+    "title": "Chapter 2: Journey",
+    "paragraphs": [
+      "Chapter two opens."
+    ],
+    "nextChapterURL": "https://source-a.invalid.test/book/42/chapter/3",
+    "previousChapterURL": "https://source-a.invalid.test/book/42/chapter/1"
+  }
+}

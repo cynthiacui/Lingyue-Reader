@@ -22,7 +22,10 @@ let package = Package(
         .testTarget(
             name: "LingyueCoreTests",
             dependencies: ["LingyueCore"],
-            path: "Tests/LingyueCoreTests"
+            path: "Tests/LingyueCoreTests",
+            resources: [
+                .copy("Fixtures")
+            ]
         )
     ]
 )

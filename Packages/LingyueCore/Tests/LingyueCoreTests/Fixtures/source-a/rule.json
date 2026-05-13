@@ -1,0 +1,148 @@
+{
+  "id": "00000000-0000-0000-0000-0000000000A1",
+  "schemaVersion": 1,
+  "name": "Source A",
+  "homepage": "https://source-a.invalid.test/",
+  "capabilities": {
+    "supportsSearch": true,
+    "showInSearchBar": true,
+    "supportsBrowserImport": true,
+    "requiresWebRender": false,
+    "maxConcurrentRequests": 3,
+    "requestIntervalMillis": 0
+  },
+  "enginePerStep": {
+    "search": "http",
+    "detail": "http",
+    "catalog": "http",
+    "chapter": "http"
+  },
+  "encoding": "auto",
+  "defaultHeaders": {},
+  "detection": {
+    "hostPatterns": ["source-a.invalid.test"],
+    "pathPattern": "^/book/\\d+/?$",
+    "confirmSelector": "h1.book-title",
+    "canonicalURL": {
+      "selector": "link[rel=canonical]",
+      "attribute": "href",
+      "transforms": [{ "absoluteURL": {} }]
+    }
+  },
+  "search": {
+    "method": "get",
+    "urlTemplate": "https://source-a.invalid.test/search?q={query}",
+    "resultsSelector": "li.result",
+    "titleField": {
+      "selector": "a.title",
+      "transforms": [{ "trim": {} }]
+    },
+    "detailURLField": {
+      "selector": "a.title",
+      "attribute": "href",
+      "transforms": [{ "absoluteURL": {} }]
+    },
+    "authorField": {
+      "selector": "span.author",
+      "transforms": [{ "trim": {} }]
+    },
+    "coverField": {
+      "selector": "img.cover",
+      "attribute": "src",
+      "transforms": [{ "absoluteURL": {} }]
+    },
+    "snippetField": {
+      "selector": "p.snippet",
+      "transforms": [{ "trim": {} }]
+    }
+  },
+  "detail": {
+    "titleField": {
+      "selector": "h1.book-title",
+      "transforms": [{ "trim": {} }]
+    },
+    "authorField": {
+      "selector": "span.book-author",
+      "transforms": [{ "trim": {} }]
+    },
+    "coverField": {
+      "selector": "img.book-cover",
+      "attribute": "src",
+      "transforms": [{ "absoluteURL": {} }]
+    },
+    "descriptionField": {
+      "selector": "div.book-desc",
+      "transforms": [{ "trim": {} }]
+    },
+    "statusField": {
+      "selector": "span.book-status",
+      "transforms": [{ "trim": {} }]
+    },
+    "statisticsField": {
+      "selector": "span.book-stats",
+      "transforms": [{ "trim": {} }]
+    },
+    "tagsField": {
+      "selector": "div.book-tags a.tag",
+      "transforms": [{ "trim": {} }]
+    },
+    "catalogURLField": {
+      "selector": "a.catalog-link",
+      "attribute": "href",
+      "transforms": [{ "absoluteURL": {} }]
+    }
+  },
+  "catalog": {
+    "chaptersSelector": "ul.chapter-list > li",
+    "titleField": {
+      "selector": "a.chapter",
+      "transforms": [{ "trim": {} }]
+    },
+    "urlField": {
+      "selector": "a.chapter",
+      "attribute": "href",
+      "transforms": [{ "absoluteURL": {} }]
+    },
+    "volumeField": {
+      "selector": "span.volume",
+      "transforms": [{ "trim": {} }]
+    },
+    "nextPageField": {
+      "selector": "a.next-page",
+      "attribute": "href",
+      "transforms": [{ "absoluteURL": {} }]
+    },
+    "maxPages": 5
+  },
+  "chapter": {
+    "titleField": {
+      "selector": "h2.chapter-title",
+      "transforms": [{ "trim": {} }]
+    },
+    "bodyField": {
+      "selector": "div.chapter-body",
+      "attribute": "html",
+      "transforms": [
+        { "brToNewline": {} },
+        { "stripHTML": {} },
+        { "decodeHTMLEntities": {} }
+      ]
+    },
+    "nextChapterField": {
+      "selector": "a.next-chapter",
+      "attribute": "href",
+      "transforms": [{ "absoluteURL": {} }]
+    },
+    "previousChapterField": {
+      "selector": "a.prev-chapter",
+      "attribute": "href",
+      "transforms": [{ "absoluteURL": {} }]
+    },
+    "nextBodyPageField": {
+      "selector": "a.next-page",
+      "attribute": "href",
+      "transforms": [{ "absoluteURL": {} }]
+    },
+    "maxBodyPages": 5
+  }
+}
