@@ -5,3 +5,7 @@ build/
 xcuserdata/
 *.moved-aside
 .claude/
+
+# Swift Package Manager
+Packages/*/.build/
+Packages/*/Package.resolved
