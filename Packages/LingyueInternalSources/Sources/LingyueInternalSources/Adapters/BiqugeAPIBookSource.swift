@@ -125,13 +125,18 @@ public struct BiqugeAPIBookSource: BookSource {
         return host.contains("bqg") && url.absoluteString.contains("/book/")
     }
 
-    /// Extracts the `<bookID>` from a `/book/<bookID>` or
-    /// `/book/<bookID>/<chap>.html` path.
+    /// Extracts the `<bookID>` from any of the Biquge family's detail
+    /// or chapter URL shapes — mirrors `BookImportService.bookID(from:)`
+    /// for the `/book/...` subset, so anything legacy accepts the
+    /// adapter accepts too. Path is lowercased to absorb the rare
+    /// `/Book/` casing seen on mirror hosts.
     static func bookID(from url: URL) -> String? {
-        let path = url.path
+        let path = url.path.lowercased()
         let patterns = [
-            #"/book/(\d+)/\d+(?:_\d+)?\.html?$"#,
-            #"/book/(\d+)/?$"#
+            #"/book/(\d+)/\d+(?:_\d+)?\.html?$"#,    // chapter: /book/<id>/<chap>.html
+            #"/book/(\d+)/index\.html?$"#,            // detail (index): /book/<id>/index.html
+            #"/book/(\d+)\.html?$"#,                  // detail (flat): /book/<id>.html
+            #"/book/(\d+)/?$"#                        // detail (bare): /book/<id> or /book/<id>/
         ]
         for pattern in patterns {
             guard let regex = try? NSRegularExpression(pattern: pattern) else { continue }

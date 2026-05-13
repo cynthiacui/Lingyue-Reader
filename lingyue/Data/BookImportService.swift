@@ -928,6 +928,7 @@ final class BookImportService: Sendable {
         } catch {
             await ReaderDiagnostics.shared.log(.info, "registry route fell back → legacy", context: [
                 "adapter": "biquge-api",
+                "url": sourceURL.absoluteString,
                 "error": String(describing: error)
             ])
             return []
@@ -954,6 +955,7 @@ final class BookImportService: Sendable {
         } catch {
             await ReaderDiagnostics.shared.log(.info, "registry route fell back → legacy", context: [
                 "adapter": "5dxs",
+                "url": sourceURL.absoluteString,
                 "error": String(describing: error)
             ])
             return []
@@ -1309,6 +1311,7 @@ final class BookImportService: Sendable {
         } catch {
             await ReaderDiagnostics.shared.log(.info, "registry chapter fell back → legacy", context: [
                 "adapter": "biquge-api",
+                "url": link.url.absoluteString,
                 "error": String(describing: error)
             ])
             return nil

@@ -32,6 +32,21 @@ final class BiqugeAPIBookSourceTests: XCTestCase {
             BiqugeAPIBookSource.bookID(from: URL(string: "https://bqg99.cc/book/12345/7_2.html")!),
             "12345"
         )
+        // Detail-page shapes the legacy regex accepts and the adapter
+        // missed in its first pass — caught by a real Lab-toggle import.
+        XCTAssertEqual(
+            BiqugeAPIBookSource.bookID(from: URL(string: "https://m.bqgl.cc/book/12345.html")!),
+            "12345"
+        )
+        XCTAssertEqual(
+            BiqugeAPIBookSource.bookID(from: URL(string: "https://m.bqgl.cc/book/12345/index.html")!),
+            "12345"
+        )
+        // Mixed-case path on mirror hosts.
+        XCTAssertEqual(
+            BiqugeAPIBookSource.bookID(from: URL(string: "https://m.bqgl.cc/Book/12345/")!),
+            "12345"
+        )
         XCTAssertNil(BiqugeAPIBookSource.bookID(from: URL(string: "https://bqg99.cc/category/scifi")!))
     }
 
