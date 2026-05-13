@@ -109,10 +109,19 @@ New files under `lingyue/Sources/` (Phase 5 reshuffles this):
   hand-rolled cookie sync.
 - `WebViewSourceLoader.swift` — `SourceHTMLLoading` over `WKWebView`.
   Wraps the existing `WebRenderingService`. Uses
-  `WKWebsiteDataStore.default()` for cookies; that store auto-shares
-  with `HTTPCookieStorage.shared` in the same process, so a Cloudflare
-  challenge cleared in the web view persists into subsequent
-  `URLSession` requests without any manual jar plumbing.
+  `WKWebsiteDataStore.default()` for the web view's cookie jar.
+  **Sharing with `HTTPCookieStorage.shared` is not actually automatic**
+  despite the public docs implying it is — in practice the two stores
+  diverge around HTTP-only cookies, the `Secure` flag, and per-site
+  partitioning rules that have shifted across iOS versions. To make
+  Cloudflare-style "clear-the-challenge-in-WebView-then-use-URLSession"
+  flows reliable, Phase 1 implements an explicit one-way sync:
+  after `renderHTML` returns, copy `WKHTTPCookieStore.getAllCookies()`
+  into `HTTPCookieStorage.shared` before the snapshot bubbles up. A
+  dedicated unit test asserts that a cookie set during a `renderHTML`
+  call is readable from a subsequent `URLSession` request to the same
+  host. If a future iOS release makes the sharing genuinely automatic,
+  drop the sync and rely on the test to keep us honest.
 - `CompositeSourceLoader.swift` — chooses HTTP vs. web per `SourceRequest`
   based on the rule's `enginePerStep`. The engine asks the composite, not
   the two flavours.
@@ -563,14 +572,16 @@ public release.
   former is a single hard-line statement. Means the CI scan stays
   simple too: any rule-shaped JSON in the App Store `.app` is a fail,
   no allowlist needed.
-- **Wikisource as inline example, not as bundled data.** Onboarding's
-  "Add your first source" screen shows example URLs (Chinese
-  Wikisource, Project Gutenberg, a tech blog) as **localized
-  onboarding strings** with one-tap "use this URL" affordances that
-  pre-fill the Add Source flow. The user must complete the flow for a
-  rule to exist; nothing is persisted until they save. From a binary
-  perspective the URL strings live in `Localizable.strings`, not in any
-  rule JSON.
+- **Wikisource as inline example, not as bundled data or a one-tap
+  recommendation.** Onboarding's "Add your first source" screen shows
+  example URLs (Chinese Wikisource, Project Gutenberg, a tech blog) as
+  **plain copyable text** in localized onboarding strings — no one-tap
+  "use this URL" button that auto-fills the Add Source flow. The
+  conservative read is that an auto-fill button flirts with "the app
+  is suggesting a source"; plain copyable text reads unambiguously as
+  help copy. The user long-presses to copy (or types manually), then
+  pastes into the URL field. From a binary perspective the URL strings
+  live in `Localizable.strings`, never in any rule JSON.
 - **IP attestation in onboarding.** Before the "Add Source" sheet
   appears for the first time, a one-screen explainer + a tap-to-confirm
   checkbox: "I will only add sources I have the right to access." User
