@@ -383,7 +383,7 @@ home-screen label is set per target via `CFBundleDisplayName`:
 | Target | `CFBundleDisplayName` |
 |---|---|
 | `LingyueAppStore` | `灵阅` (canonical public-facing name) |
-| `LingyueInternal` | `灵阅 Dev` |
+| `LingyueInternal` | `灵阅小书屋` |
 
 Both apps can coexist on the same device (different bundle IDs = separate
 sandboxes), so the suffix is the only way a tester can tell them apart
