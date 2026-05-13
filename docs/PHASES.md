@@ -104,10 +104,15 @@ New files under `Packages/LingyueCore/Sources/LingyueCore/Engine/`:
 New files under `lingyue/Sources/` (Phase 5 reshuffles this):
 
 - `HTTPSourceLoader.swift` — `SourceHTMLLoading` over `URLSession`.
-  Applies `SourceEncoding`, headers, referer, per-host throttle, cookie jar.
+  Applies `SourceEncoding`, headers, referer, per-host throttle. Cookies
+  live in `HTTPCookieStorage.shared` — no custom `cookies.bin` file, no
+  hand-rolled cookie sync.
 - `WebViewSourceLoader.swift` — `SourceHTMLLoading` over `WKWebView`.
-  Wraps the existing `WebRenderingService`. Uses `WKWebsiteDataStore.default()`
-  so Cloudflare cookies persist between calls.
+  Wraps the existing `WebRenderingService`. Uses
+  `WKWebsiteDataStore.default()` for cookies; that store auto-shares
+  with `HTTPCookieStorage.shared` in the same process, so a Cloudflare
+  challenge cleared in the web view persists into subsequent
+  `URLSession` requests without any manual jar plumbing.
 - `CompositeSourceLoader.swift` — chooses HTTP vs. web per `SourceRequest`
   based on the rule's `enginePerStep`. The engine asks the composite, not
   the two flavours.
@@ -372,17 +377,36 @@ the risky/changing build should have the qualified one. So:
 - New `LingyueAppStore` target keeps the canonical `com.lingyue.reader`
   bundle ID, paired with a new App Store Connect record under the same
   ID. From this point forward, App Store updates ship through that record.
-- Run a one-shot data-migration check on first launch of either build
-  that probes the legacy container path and copies `LibraryStore` +
-  `EditableSourceStore` JSON into the new container, so existing testers
-  don't lose their library when the bundle ID switches under them.
+**Migration cost is real.** iOS sandboxes by bundle ID — once `lingyue`
+becomes `LingyueInternal` with a new bundle ID, the new install cannot
+read the old install's `Application Support` directory. There is no
+"probe the legacy container" trick. The honest path is a two-cycle
+migration:
+
+1. **Last update under the current bundle ID.** Ship a "Backup library"
+   feature in the existing app: full export of `LibraryStore.json`,
+   `EditableSourceStore.json`, and reader bookmarks into a single
+   `.lingyue-backup` file via `UIDocumentPicker` / share sheet. Doubles
+   as a general-purpose backup feature.
+2. **First Internal build under the new bundle ID.** Onboarding step
+   "Import previous library" accepts the same `.lingyue-backup` file
+   from Files. Tester opens the file, the new build hydrates its
+   sandbox.
+3. **Existing testers** uninstall the old `com.lingyue.reader` install
+   after import. New testers (and all future App Store users) never see
+   this dance.
+
+Alternatives considered and rejected: App Group container — only helps
+if the old build was already using the group, which it wasn't; CloudKit
+— too large a lift for a one-time migration. Manual export/import wins
+on simplicity and lands a backup feature as a side effect.
 
 **Display name + icon.** Two targets ship two Info.plists, so the
 home-screen label is set per target via `CFBundleDisplayName`:
 
 | Target | `CFBundleDisplayName` |
 |---|---|
-| `LingyueAppStore` | `灵阅` (canonical public-facing name) |
+| `LingyueAppStore` | `灵阅书屋` (matches the current app name) |
 | `LingyueInternal` | `灵阅小书屋` |
 
 Both apps can coexist on the same device (different bundle IDs = separate
@@ -412,11 +436,19 @@ right one via `ASSETCATALOG_COMPILER_APPICON_NAME`.
   interprets a closed selector/transform schema; no code execution from
   rules; no remote code loading; no source list bundled.
 
-### 5.3 Internal target stays as-is
+### 5.3 Internal target stays as-is, modulo the rule library
 
-Reads the same `EditableSourceStore` file as the App Store target, so a
-user moving between TestFlight and App Store builds keeps their rules.
-Internal also gets the seeded bundle + fast-path adapters on top.
+Each target keeps its own `EditableSourceStore` JSON in its own per-app
+sandbox — they do **not** share files. A tester with both apps installed
+has two independent rule libraries. The Phase-5.1 `.lingyue-backup` file
+format lets the user manually carry rules across when they want, but
+there is no automatic sync. Adding cross-target sync (via App Group
+container, iCloud CloudKit, or a shared file in
+`UIDocumentInteractionController`-accessible storage) is intentionally
+deferred — possible future enhancement, not a Phase 5 requirement.
+
+Internal also gets the seeded bundle + fast-path adapters on top, which
+the App Store target by definition cannot see.
 
 ### 5.4 CI
 
@@ -427,10 +459,12 @@ string literals embedded in the binary, in bundled JSON/plist resources,
 or in compiled asset/string files. The scan covers:
 
 1. **Binary string literals.** `strings -a "$APP/LingyueAppStore"` piped
-   through `grep -i -F -f forbidden-hosts.txt`. `forbidden-hosts.txt` is
-   the line-delimited list of real source hosts; lives in the repo, only
-   readable by the `LingyueInternal` target's resource bundling and the
-   CI scan job.
+   through `grep -i -F -f forbidden-hosts.txt`. `forbidden-hosts.txt`
+   lives in the repo as **CI/test data**, alongside the scan script
+   (e.g. `Scripts/forbidden-hosts.txt`). It is outside every Xcode
+   target's file membership — not bundled into the App Store binary,
+   and not bundled into the Internal binary either. It exists only for
+   the build job to read.
 2. **Bundled resources.** `find "$APP" -type f \( -name '*.json' -o
    -name '*.plist' -o -name '*.txt' -o -name '*.strings' \)` and grep
    each against the same forbidden list. Plists get a `plutil -convert
