@@ -251,7 +251,10 @@ appear in Discovery search alongside seeded ones.
 
 ### 3.2 Add Source flow
 
-Three entry points, same destination:
+Three entry points, same destination. **All UI text, placeholder
+content, and demo screenshots must satisfy the Phase 6 invariants
+(§6.2–§6.3)** — URL field placeholders use Wikisource not a novel
+host; no "popular sources" picker; etc.
 
 - **From scratch.** `Add Source` button → `SourceEditorView` with empty rule.
 - **From URL.** User pastes a source homepage; the URL Analyzer (see
@@ -447,12 +450,13 @@ right one via `ASSETCATALOG_COMPILER_APPICON_NAME`.
 
 ### 5.2 App Store posture polish
 
-- Onboarding for `LingyueAppStore` explains the "bring your own rules"
-  model. No pre-seeded rules. No mention of specific source names.
-- "Add Source from URL" is the only entry path. The screen accepts any URL.
-- App Store review notes: rules are user-authored Codable data; the app
-  interprets a closed selector/transform schema; no code execution from
-  rules; no remote code loading; no source list bundled.
+This sub-section used to spell out the App Store positioning rules, but
+that material has grown enough to deserve its own phase. See **Phase 6
+— App Store launch posture** for the full cross-phase invariant
+checklist (metadata, in-app affordances, screenshots, review submission
+package, ongoing risk management). Phase 5.2 itself is now just: tick
+every Phase 6 item before the App Store-safe target's first upload to
+the existing `com.lingyue.reader` App Store Connect record.
 
 ### 5.3 Internal target stays as-is, modulo the rule library
 
@@ -510,6 +514,143 @@ developer hard-codes a hostname directly in the App Store target's source.
 4. App Store submission notes accurately describe the data-only rule
    model: closed selector/transform schema, no code execution from
    rules, no remote code loading, no source list bundled.
+
+---
+
+## Phase 6 — App Store launch posture (cross-phase invariants)
+
+Architecture alone is not enough to keep the App Store target safe. A
+reviewer who opens the app and pastes a known pirate URL gets a working
+novel reader — that's a 5.2 (IP) rejection regardless of how clean the
+rule schema is. The countermeasure is **positioning**: every surface the
+reviewer (and future App Store user) touches must look like a
+general-purpose web-content reader, not a Chinese-novel piracy tool.
+
+This section is a **checklist of invariants**, not implementation work
+— some items are delivered in Phase 3 (UI), some in Phase 5
+(metadata/binary), some live entirely in App Store Connect. Tick every
+box before submitting to the existing `com.lingyue.reader` record for
+public release.
+
+### 6.1 App Store Connect metadata
+
+| Field | App Store target value |
+|---|---|
+| App name (en) | `Lingyue Reader` |
+| App name (zh-Hans) | `灵阅书屋` |
+| Subtitle (en) | `Your personal web-content reader` (or similar — no "novel", no "小说", no "fiction") |
+| Subtitle (zh-Hans) | `个人网页阅读工具` (no "小说", no "书源") |
+| Primary category | **News** or **Productivity** — not **Books**. Books is the category every Chinese novel reader lives in, and reviewers prime on it. |
+| Keywords | Generic: `reader, web, articles, RSS, longform, offline`. Avoid: `novel, 小说, 书源, fiction, web-novel`. |
+| Description | Lead with the "configurable reader for blogs, public-domain literature, RSS-style feeds" framing. Don't mention specific source types beyond "any website you have rights to read". |
+| Languages | English **and** Simplified Chinese. Both first-class. Submitting Chinese-only invites the "Chinese piracy reader" prior. |
+| Age rating | 4+. Nothing in the App Store binary justifies higher. |
+
+### 6.2 In-app affordances (Phase 3 deliverables)
+
+- **Empty rule library on first launch.** No bundled rules except item 3
+  below. Onboarding shows "Add your first source" with an Add button —
+  not a pre-populated list.
+- **URL field placeholder text must not reference any pirate-adjacent
+  host.** Placeholder shows something like `https://example.com` or
+  `https://en.wikisource.org/wiki/...`. Never 笔趣阁, hjwzw,
+  novel-named hostnames, etc.
+- **One sample rule, optional, demonstrably-legal source.** Ship a
+  single read-only seeded rule pointing at **Chinese Wikisource**
+  (`zh.wikisource.org`) hosting public-domain classical literature
+  (三国演义, 红楼梦). Reviewer's first tap demos the app on a
+  Wikipedia-affiliated site — immediate legitimacy signal. The user can
+  delete the sample at any time. This is the **only** seeded rule the
+  App Store target ships; the CI scan adds `zh.wikisource.org` to an
+  **allowlist** rather than special-casing.
+- **IP attestation in onboarding.** Before the "Add Source" sheet
+  appears for the first time, a one-screen explainer + a tap-to-confirm
+  checkbox: "I will only add sources I have the right to access." User
+  acknowledgement is logged to `UserDefaults` for our records.
+- **No "popular sources" / "community rules" / "recommended" UI.** Not
+  in onboarding, not in Settings, not anywhere. Not even commented out
+  — `strings` will find it.
+- **No "import rule from URL".** Phase 3.2 already restricts JSON-file
+  import to Internal. The App Store target also must not have a "paste
+  a rule URL to import" affordance — same reviewer signal.
+- **Sharing extension scope.** If we add a Share Sheet extension for
+  importing pages from Safari, restrict it to extracting page URL +
+  title only — do **not** auto-fan-out across enabled sources from the
+  extension. Reviewers explore extensions; an extension that
+  immediately attempts source detection on a random Safari page is a
+  rejection vector.
+
+### 6.3 Screenshots + visual identity
+
+- **Screenshots show only the Wikisource sample rule + a public-domain
+  work.** No screenshots of any other source, no screenshots of the
+  search bar finding novel-titled results, no screenshots of the rule
+  editor with a recognizable host in the URL field.
+- **App icon avoids 小说 / 武侠 / 仙侠 visual tropes.** No scroll-style
+  manuscript, no traditional gold-on-red palette evoking a wuxia novel
+  cover. A neutral book-and-bookmark mark in a modern flat palette is
+  enough.
+- **Splash / launch screen** uses the same neutral palette. No demo
+  text on launch.
+
+### 6.4 App Store review submission package
+
+Write the review notes once, save in `Scripts/appstore-review-notes.md`,
+re-use for every submission:
+
+- One paragraph on what the app is: configurable personal web reader.
+- One paragraph on the rule architecture: declarative `Codable` schema
+  (`SourceRule`), closed transform enum, **no JavaScript or other code
+  execution from user-supplied rules**, no remote code loading, no
+  bundled source list (one sample rule pointing at Wikisource for
+  demonstration only).
+- One paragraph on user responsibility: in-app IP attestation,
+  onboarding language.
+- Optional: a 30-second screen recording demoing the app on the
+  Wikisource sample. Apple does not require demo videos but a clear
+  demo of "tap → read public-domain work" preempts the
+  "are-you-sure-this-isn't-piracy" thread.
+- **Do not** mention Lingyue Internal / TestFlight in the App Store
+  notes. Those are separate App Store Connect records and bringing them
+  up invites questions about the two-target strategy.
+
+### 6.5 Ongoing risk management (post-launch)
+
+- **Monitor App Store reviews for pirate-source mentions.** If a user
+  posts "笔趣阁 finally works!" as a review, that visible-to-Apple
+  endorsement of piracy use can trigger a takedown. We can't delete user
+  reviews, but we can respond as the developer to disclaim. Set up a
+  weekly check.
+- **No marketing on Chinese novel forums / 贴吧 / Weibo / 小红书 in
+  the App Store launch window.** Those audiences are exactly the
+  audience that produces the kind of reviews above. Internal/TestFlight
+  marketing can target them; App Store marketing should target
+  general-purpose-reader audiences (Hacker News, ProductHunt, generic
+  iOS/productivity blogs).
+- **If a feature request would visibly increase apparent intent, refuse
+  it in the App Store target.** Examples: "search across multiple
+  sources at once with a unified results page" — exactly what a piracy
+  aggregator does. Keep that feature Internal-only.
+
+### 6.6 Realistic risk
+
+- First submission: probably 50–70% pass rate if every item above is
+  ticked. Higher than a Legado port, lower than a slam dunk.
+- Most likely rejection: 5.2 (IP) or 4.3 (spam — "another novel
+  reader"). Both appealable with positioning revisions, not
+  architecture changes.
+- Long-term: Apple can pull the app post-launch if pirate use becomes
+  visible. Mitigated by §6.5, not eliminated.
+- **The decision is whether 50–70% is good enough to attempt.** It is —
+  the architecture work in Phases 0–5 is reusable on a worst-case
+  rejection-and-resubmit cycle, and the Internal target ships regardless
+  of App Store outcome.
+
+### Exit criteria for Phase 6
+
+A single pre-submission checklist PR that ticks every box above with a
+concrete commit/file reference. The PR description is what we paste
+into App Store Connect's review notes.
 
 ---
 
