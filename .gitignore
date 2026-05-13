@@ -9,3 +9,4 @@ xcuserdata/
 # Swift Package Manager
 Packages/*/.build/
 Packages/*/Package.resolved
+Packages/*/.swiftpm/
