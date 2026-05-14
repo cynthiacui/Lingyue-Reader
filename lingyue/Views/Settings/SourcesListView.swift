@@ -49,10 +49,18 @@ struct SourcesListView: View {
             } else {
                 List {
                     ForEach(entries) { entry in
-                        ruleCard(entry)
-                            .listRowSeparator(.hidden)
-                            .listRowBackground(Color.clear)
-                            .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+                        NavigationLink {
+                            SourceEditorView(
+                                rule: entry.rule,
+                                origin: entry.origin == .editable ? .editable : .seeded
+                            )
+                        } label: {
+                            ruleCard(entry)
+                        }
+                        .listRowSeparator(.hidden)
+                        .listRowBackground(Color.clear)
+                        .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+                        .buttonStyle(.plain)
                     }
                     .onMove(perform: handleMove)
                 }

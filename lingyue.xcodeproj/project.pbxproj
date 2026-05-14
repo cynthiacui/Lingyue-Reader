@@ -46,6 +46,8 @@
 		010000000000000000000125 /* SourceStack.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000027 /* SourceStack.swift */; };
 		010000000000000000000126 /* SourcesListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000028 /* SourcesListView.swift */; };
 		010000000000000000000127 /* FileSourcePreferenceStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000029 /* FileSourcePreferenceStore.swift */; };
+		010000000000000000000128 /* SourceEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01000000000000000000002A /* SourceEditorView.swift */; };
+		010000000000000000000129 /* SourceTestSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01000000000000000000002B /* SourceTestSheet.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -88,6 +90,8 @@
 		010000000000000000000027 /* SourceStack.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SourceStack.swift; sourceTree = "<group>"; };
 		010000000000000000000028 /* SourcesListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SourcesListView.swift; sourceTree = "<group>"; };
 		010000000000000000000029 /* FileSourcePreferenceStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileSourcePreferenceStore.swift; sourceTree = "<group>"; };
+		01000000000000000000002A /* SourceEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SourceEditorView.swift; sourceTree = "<group>"; };
+		01000000000000000000002B /* SourceTestSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SourceTestSheet.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -189,6 +193,8 @@
 			isa = PBXGroup;
 			children = (
 				010000000000000000000028 /* SourcesListView.swift */,
+				01000000000000000000002A /* SourceEditorView.swift */,
+				01000000000000000000002B /* SourceTestSheet.swift */,
 			);
 			path = Settings;
 			sourceTree = "<group>";
@@ -316,6 +322,8 @@
 				010000000000000000000124 /* AppStoreSourceRegistry.swift in Sources */,
 				010000000000000000000125 /* SourceStack.swift in Sources */,
 				010000000000000000000126 /* SourcesListView.swift in Sources */,
+				010000000000000000000128 /* SourceEditorView.swift in Sources */,
+				010000000000000000000129 /* SourceTestSheet.swift in Sources */,
 				01000000000000000000010F /* CustomAlertView.swift in Sources */,
 				010000000000000000000110 /* ModalContainer.swift in Sources */,
 				010000000000000000000111 /* InputModalView.swift in Sources */,

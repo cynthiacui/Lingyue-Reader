@@ -362,22 +362,41 @@ appear in Discovery search alongside seeded ones.
 
 - `lingyue/Views/Settings/SourcesListView.swift` — lists every editable
   rule from `EditableSourceStore`, with enable/disable toggle, priority
-  drag, "Test" button.
-  - **Status (in-progress):** state model + list UI shipped. The list
-    now shows both seeded and editable rules, each with an
-    enable/disable toggle and drag-to-reorder. Toggling/reordering
-    persists to `FileSourcePreferenceStore` and invalidates
-    `DiscoverySearchService`'s per-process registry cache so the next
-    search round picks up the change without a relaunch. Still owed:
-    "Test" button (gated on `SourceTestSheet`, task #20) and editor
-    entry points (gated on `SourceEditorView`, task #20).
+  drag, editor entry, "Test" entry.
+  - **Status (landed):** rows render both seeded and editable rules,
+    each with an enable/disable toggle and drag-to-reorder. Toggling
+    or reordering persists to `FileSourcePreferenceStore` and
+    invalidates `DiscoverySearchService`'s per-process registry cache
+    so the next search round picks up the change without a relaunch.
+    Tapping a row pushes `SourceEditorView`, which exposes a Test
+    toolbar button that opens `SourceTestSheet`. Saving a seeded rule
+    forks it into the editable store with the same UUID — the
+    registry's dedup-by-id then suppresses the bundled original so the
+    user's version wins.
 - `lingyue/Views/Settings/SourceEditorView.swift` — form-driven editor
   over the `SourceRule` schema. Every field has inline help.
   Encoding/transform pickers expose only the closed enum cases — no
   free-text code entry anywhere.
+  - **Status (landed):** sections cover identity, capabilities,
+    per-step engine, default headers, detection, search (gated on the
+    `supportsSearch` capability with auto-materialized blank step),
+    detail, catalog, and chapter. Each `FieldSelector` collapses to a
+    one-line summary and expands to selector / attribute / transform
+    list; optional selectors show an "add / remove" affordance.
+    Transforms are added from a Menu seeded by a hand-maintained
+    `TransformCatalog` keyed off the closed `SourceTransform` enum.
+    Editable rules expose a destructive "delete" row at the bottom.
 - `lingyue/Views/Settings/SourceTestSheet.swift` — runs the rule against
   a user-pasted URL, shows what each selector resolves to. The crucial
   authoring affordance.
+  - **Status (landed):** segmented picker for step (search / detail /
+    catalog / chapter / detection); single input field whose label and
+    keyboard switch with the step; `Run` builds a transient
+    `RuleBasedBookSource` from the editor's in-memory draft (no save
+    required) and renders the structured outcome — search hits with
+    title/author/snippet/URL, detail with every resolved field, the
+    first 30 catalog chapter rows, chapter title + paragraph preview,
+    or detection confidence + HTTP/HTML stats.
 
 ### 3.2 Add Source flow
 
