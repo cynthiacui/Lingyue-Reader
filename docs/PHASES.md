@@ -472,6 +472,24 @@ upfront speculation.
 - Browser-only rules (`supportsSearch = false`) never appear here. Their
   entry point is the in-app browser (Phase 4).
 
+**Phase 3.3 — landed behind lab flag.** First slice ships as
+`DiscoverySearchService.routeViaRegistry`: per-search, the service asks
+`InternalSourceRegistry.searchableSources()` for a `BookSource` whose
+`displayName` matches the legacy `DiscoverySource.name`, and when the
+flag `lingyue.useRegistryForDiscoverySearch` is on, the rule engine's
+`search()` result replaces the hand-written parser's output. Empty or
+thrown registry runs fall through to the legacy path, so flipping the
+flag is purely additive — no source loses search coverage. The flag is
+exposed under Settings → 实验. Once we have parity on live sites for
+the 9 seeded rules, the flag is removed and the registry path becomes
+the only path.
+
+What still ships in a later 3.3 commit, once Phase 3.1's editor lands:
+synthesizing a `DiscoverySource` for *user-created* rules whose
+`displayName` isn't in the hand-coded catalog. Until then, exit
+criterion #1 ("a user can create a new rule and see it light up in
+Discovery") is gated on 3.1.
+
 ### Exit criteria for Phase 3
 
 1. A user can create a new rule for a brand-new source through the editor

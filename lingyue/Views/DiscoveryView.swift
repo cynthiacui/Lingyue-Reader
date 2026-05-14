@@ -1,5 +1,7 @@
 import SwiftUI
 import Foundation
+import LingyueCore
+import LingyueInternalSources
 
 struct DiscoveryView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
@@ -925,6 +927,19 @@ actor DiscoverySearchService {
     // In-memory paywall cache keyed by probe chapter URL. Process-lifetime only — copyright
     // takedowns shift slowly, so a cold restart will simply re-probe and converge again.
     private var paywallProbeCache: [String: Bool] = [:]
+    // Phase 3.3 — lazily-resolved registry sources keyed by `displayName`. Built on first
+    // `routeViaRegistry` call and held for the actor's lifetime. Editor save flow (Phase 3.1)
+    // will call `invalidateRegistryCache()` when it lands; until then, EditableSourceStore
+    // changes require a relaunch to take effect on this path.
+    private var cachedRegistrySourcesByName: [String: any BookSource]?
+
+    /// Lab flag mirroring `lingyue.useSourceRegistryForCatalog`. Internal-only toggle that
+    /// routes the Discovery search bar through `InternalSourceRegistry` for sources backed by
+    /// a seeded/editable rule. Off by default — legacy hand-written parsers still own the
+    /// search path for everyone else until the rule engine has shown parity on live sites.
+    fileprivate static var useRegistryForDiscoverySearch: Bool {
+        UserDefaults.standard.bool(forKey: "lingyue.useRegistryForDiscoverySearch")
+    }
 
     private init() {
         let configuration = URLSessionConfiguration.ephemeral
@@ -1085,7 +1100,87 @@ actor DiscoverySearchService {
         }
     }
 
+    /// Resolve the registry's searchable sources keyed by `displayName`. Cached on first hit
+    /// (the registry call walks the editable store + seeded rule bundle, cheap but not free).
+    /// Call `invalidateRegistryCache` after rule edits — see Phase 3.1 follow-up.
+    private func registrySourcesByName() async -> [String: any BookSource] {
+        if let cachedRegistrySourcesByName {
+            return cachedRegistrySourcesByName
+        }
+        let sources: [any BookSource]
+        do {
+            sources = try await SourceStack.live.registry.searchableSources()
+        } catch {
+            sources = []
+        }
+        let mapped = sources.reduce(into: [String: any BookSource]()) { partial, source in
+            partial[source.displayName] = source
+        }
+        cachedRegistrySourcesByName = mapped
+        return mapped
+    }
+
+    /// Drop the cached registry source list. Phase 3.1's editor calls this after a save so the
+    /// next search round picks up the new/edited rule without an app relaunch.
+    func invalidateRegistryCache() {
+        cachedRegistrySourcesByName = nil
+    }
+
+    /// Try to satisfy the search through `InternalSourceRegistry`. Returns `nil` when no rule
+    /// matches this `DiscoverySource` by `displayName`, or when the matched rule's `search`
+    /// call threw. Either way the caller falls back to the legacy hand-written parser so a
+    /// transient engine error never blacks out a known-good legacy path. Returns an empty
+    /// array only when the rule engine ran successfully but produced no hits — the legacy
+    /// parser still gets a turn because zero results from one path doesn't disprove the
+    /// other. The `useRegistryForDiscoverySearch` gate is checked by the caller, not here,
+    /// so this helper stays unit-testable in isolation.
+    private func routeViaRegistry(_ source: DiscoverySource, query: String) async -> [ParsedSourceResult]? {
+        let map = await registrySourcesByName()
+        guard let bookSource = map[source.name] else { return nil }
+        do {
+            let results = try await bookSource.search(query)
+#if DEBUG
+            debugLog("[DiscoverySearch] registry route: \(source.name) → \(results.count) hits")
+#endif
+            return results.map { hit in
+                ParsedSourceResult(
+                    title: hit.title,
+                    author: hit.author ?? "",
+                    summary: hit.snippet ?? "",
+                    url: hit.detailURL,
+                    probeChapterURL: nil
+                )
+            }
+        } catch {
+#if DEBUG
+            debugLog("[DiscoverySearch] registry route failed: \(source.name) | \(error)")
+#endif
+            return nil
+        }
+    }
+
     private func searchSingleSource(_ source: DiscoverySource, query: String) async -> [DiscoveryRawSearchHit] {
+        // Phase 3.3 shadow route. When the lab flag is on and the registry has a `BookSource`
+        // matching this source's displayName, drive the search through the rule engine instead
+        // of the hand-written parser. Empty / failed registry runs fall through to the legacy
+        // path so a regression in the rule engine never blacks out a previously-working source.
+        if Self.useRegistryForDiscoverySearch,
+           let registryHits = await routeViaRegistry(source, query: query),
+           !registryHits.isEmpty {
+            let probed = await filterPaywalledHits(registryHits)
+            return probed.enumerated().compactMap { index, result in
+                makeDirectSourceHit(
+                    source: source,
+                    title: result.title,
+                    author: result.author,
+                    summary: result.summary,
+                    url: result.url,
+                    rank: index,
+                    query: query
+                )
+            }
+        }
+
         guard let request = source.makeSearchRequest(for: query) else {
 #if DEBUG
             debugLog("[DiscoverySearch] skipped (no direct route): \(source.name)")

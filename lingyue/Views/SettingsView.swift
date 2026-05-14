@@ -28,6 +28,14 @@ struct SettingsView: View {
     /// surfaces in internal builds — see `labSection`.
     @AppStorage("lingyue.useSourceRegistryForCatalog") private var useSourceRegistryForCatalog = false
 
+    /// Phase 3.3 lab toggle. When on, the Discovery search bar tries each source
+    /// through `InternalSourceRegistry.searchableSources()` before falling back to
+    /// the hand-written parser. Lets internal testers validate that seeded rules
+    /// match the legacy parsers' result quality on live sites before we flip the
+    /// default. Empty / failed registry runs still fall through, so this is purely
+    /// additive — toggling it off restores 100% legacy behaviour.
+    @AppStorage("lingyue.useRegistryForDiscoverySearch") private var useRegistryForDiscoverySearch = false
+
     @State private var cacheSizeText = "计算中"
     @State private var cacheNotice: String?
 
@@ -448,6 +456,20 @@ struct SettingsView: View {
                 .foregroundStyle(theme.primaryText)
 
                 Text("开启后，导入笔趣阁与就爱读小说时先走规则引擎；遇到错误自动回落旧路径。仅内测可见。")
+                    .font(.caption)
+                    .foregroundStyle(theme.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .readerCard()
+
+            VStack(alignment: .leading, spacing: 8) {
+                Toggle(isOn: $useRegistryForDiscoverySearch) {
+                    Label("发现搜索走规则引擎", systemImage: "magnifyingglass.circle")
+                }
+                .font(.subheadline)
+                .foregroundStyle(theme.primaryText)
+
+                Text("开启后，已迁移到规则引擎的书源在发现页搜索时先用规则结果；空结果或失败时自动回落旧解析。仅内测可见。")
                     .font(.caption)
                     .foregroundStyle(theme.secondaryText)
                     .fixedSize(horizontal: false, vertical: true)
