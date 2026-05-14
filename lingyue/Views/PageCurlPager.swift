@@ -152,6 +152,30 @@ struct PageCurlPager: UIViewControllerRepresentable {
                 ])
                 self.isAnimating = false
                 self.animationStartedAt = nil
+                // iOS 26 UIPageViewController quirk: an animated setViewControllers can
+                // fire the completion with finished=false and leave the displayed VC
+                // unchanged from the previous page — but shownIndex/currentIndex were
+                // already advanced optimistically before the call. The user sees the
+                // stale page while state says we've turned, so the next page looks blank.
+                // Recover by snapping the target into place non-animated, but only when
+                // shownIndex still matches what we asked for (a later gesture or
+                // requestTransition may have moved on, in which case we'd clobber it).
+                if !finished, !self.isDismantled, let livePvc = pvc,
+                   self.shownIndex == newIndex,
+                   livePvc.viewControllers?.first !== target {
+                    ReaderDiagnostics.shared.log(.info, "pager force-snap after cancel", context: [
+                        "to": String(newIndex)
+                    ])
+                    // Defer one runloop tick — nesting setViewControllers calls inside
+                    // another's completion has historically caused UIPageViewController
+                    // to drop or duplicate transitions on iOS.
+                    DispatchQueue.main.async { [weak self, weak livePvc] in
+                        guard let self = self, !self.isDismantled, let livePvc = livePvc,
+                              self.shownIndex == newIndex,
+                              livePvc.viewControllers?.first !== target else { return }
+                        livePvc.setViewControllers([target], direction: direction, animated: false, completion: nil)
+                    }
+                }
                 guard !self.isDismantled,
                       let pvc = pvc,
                       let pending = self.pendingIndex,
