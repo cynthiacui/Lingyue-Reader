@@ -398,39 +398,70 @@ host; no "popular sources" picker; etc.
   review-risk read is wrong, surface JSON import in the App Store target
   too — the underlying schema is the same.
 
-#### 3.2.1 URL Analyzer (Auto-fill from homepage)
+#### 3.2.1 URL Analyzer (Auto-fill from homepage) — v1
 
-The "From URL" path is non-trivial — a good autofill closes the gap
-between "type a URL" and "have a working source." Pipeline, each step
-emits a confidence score for the UI to display next to the field:
+**v1 is deliberately conservative.** Goals: close the typing gap between
+"paste a URL" and "have a draft rule worth editing," without pretending
+to be magic. URLSession-only, deterministic, no JS rendering. Each step
+emits a confidence score the UI surfaces as a badge in the editor.
+
+Pipeline:
 
 - **P1 — Homepage fetch.** Resolve URL, follow redirects, snapshot final
-  URL + HTML. If the page only renders under JS, fall back to the
-  headless renderer.
+  URL + HTML via `URLSession`. **No WebKit fallback in v1.** JS-only
+  pages return a low-confidence empty pass — analyzer flags the rule
+  as needing manual work rather than silently guessing. WebKit fallback
+  lands in v1.1+ when there's a real target that needs it.
 - **P2 — Host + path classification.** Derive `hostPatterns` from the
   final URL host (with subdomain wildcarding heuristic). Pull `<title>`
   and `<meta name="description">` for a default `name`.
-- **P3 — Search-form discovery.** Look for `<form>` elements with
-  `name`/`id` containing `search`, `query`, `q`. Build a candidate
-  `urlTemplate` from the form's `action` + input names. Confidence
-  drops sharply when there are multiple candidates.
-- **P4 — Catalog-shape detection.** Scan for the densest `<a>`-cluster
-  on any followable page (chapter lists are always large flat link
-  lists). Propose `chaptersSelector` + per-item `titleField` /
-  `urlField`. Honour `nofollow` / `aria-hidden` filters.
+- **P3 — Search-form discovery (simple GET/POST only).** Look for
+  `<form>` elements with `name`/`id`/`action` containing `search`,
+  `query`, `q`, `keyboard`, `searchkey`. Pick the first viable form;
+  derive `urlTemplate` + `bodyTemplate` from its `action` + input
+  names. Multiple candidate forms → yellow confidence. Non-form
+  AJAX/JS-driven search → red, no urlTemplate proposed. **Multi-step
+  forms, JSON-API search, and CAPTCHA-gated forms are out of scope —
+  v1.1+.**
+- **P4 — Catalog-shape detection (anchor via optional book URL).**
+  If the user supplies an *example book URL* alongside the homepage,
+  fetch that page and pick the densest `<a>`-cluster as the catalog
+  candidate. Propose `chaptersSelector` + per-item `titleField` /
+  `urlField`. Honour `nofollow` / `aria-hidden` filters. **Without
+  the example URL, P4 emits red and prompts the user to provide
+  one** — crawling from homepage to find a book is fragile and not
+  worth v1 complexity. **AJAX-paginated catalogs, multi-volume
+  layouts, and per-page chapter listings are explicit non-goals.**
 - **P5 — Chapter-body detection.** Follow one of the proposed chapter
-  links; the body is the largest text-density `<div>` in the page.
+  links; the body is the largest text-density block in the page.
   Propose `bodyField` with `[.brToNewline, .stripHTML]` defaults.
-- **P6 — Confidence UI.** Every proposed selector lands in the editor
-  with a small badge: green ≥ 0.8, yellow 0.5–0.8, red < 0.5. User
-  sees at a glance what needs review. Save is blocked if any required
-  field is red.
+  Paginated chapter bodies (`maxBodyPages > 1`) are not inferred in v1.
+- **P6 — Confidence UI + draft state.** Every proposed selector lands
+  in the editor with a badge: green ≥ 0.8, yellow 0.5–0.8, red < 0.5.
+  Incomplete drafts can be saved — the user is never forced to fill
+  every red field before leaving the editor. **A rule's `enabled`
+  flag flips true only when every required block (search,
+  catalog, chapter) satisfies either:**
+  1. analyzer confidence ≥ 0.8 for that block, **or**
+  2. a passing manual run in `SourceTestSheet` against a real URL
+     (the analyzer is autofill, not arbitration — a user who hand-fixes
+     a yellow field and proves it works in Test should ship it).
 
-This deserves its own scope review before Phase 3 starts — depending on
-how robust we want P3–P5 to be, the analyzer can be anything from a
-weekend job to a two-week one. The skeleton above commits us to the
-pipeline shape and the confidence UX, not to any single heuristic's
-sophistication.
+  Drafts stay editable but invisible to Discovery search until they
+  enable. The Sources list shows their draft state with a clear badge.
+
+**Out of scope for v1 (tracked for v1.1+):**
+
+- WebKit/headless render fallback for JS-only pages.
+- AJAX search/catalog inference.
+- Catalog pagination + multi-volume detection.
+- Multi-step / token-protected search forms.
+- Encoding sniffing beyond what `URLSession`/`HTMLString` already give us.
+
+This split keeps v1 a roughly week-sized job — fewer heuristics, clear
+failure modes, no silent miscalibration. v1.1 picks up the next set
+of common cases driven by what real user reports surface, not by
+upfront speculation.
 
 ### 3.3 Discovery search bar fan-out
 
