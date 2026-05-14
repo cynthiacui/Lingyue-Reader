@@ -363,11 +363,14 @@ appear in Discovery search alongside seeded ones.
 - `lingyue/Views/Settings/SourcesListView.swift` — lists every editable
   rule from `EditableSourceStore`, with enable/disable toggle, priority
   drag, "Test" button.
-  - **Status (in-progress):** read-only list with empty/loading/error
-    states + capability badges ships first. Enable/disable, priority
-    drag, and "Test" require a per-install state model (rule JSON
-    doesn't carry user preference) — landing in a separate commit
-    once the model shape is settled.
+  - **Status (in-progress):** state model + list UI shipped. The list
+    now shows both seeded and editable rules, each with an
+    enable/disable toggle and drag-to-reorder. Toggling/reordering
+    persists to `FileSourcePreferenceStore` and invalidates
+    `DiscoverySearchService`'s per-process registry cache so the next
+    search round picks up the change without a relaunch. Still owed:
+    "Test" button (gated on `SourceTestSheet`, task #20) and editor
+    entry points (gated on `SourceEditorView`, task #20).
 - `lingyue/Views/Settings/SourceEditorView.swift` — form-driven editor
   over the `SourceRule` schema. Every field has inline help.
   Encoding/transform pickers expose only the closed enum cases — no
