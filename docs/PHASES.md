@@ -230,10 +230,47 @@ express. Move those adapters here as direct `BookSource` conformers:
 
 ### Exit criteria for Phase 2
 
-1. Every fixture set (`source-a`, `source-b`, `source-c`) has captured
-   HTML + rule + `expected.json` and passes fixture tests.
+1. Every fixture set has captured HTML + rule + parse assertions and
+   passes fixture tests.
+   - **Status (done):** 9 seeded rules ship under
+     `LingyueInternalSources/Resources/SeededRules/` —
+     `sto9.json`, `tongrenquan.json` (Phase 2.5 prototypes), plus
+     `trxs.json`, `powanjuan.json`, `52shuku.json`, `zhswx.json`,
+     `xbanxia.json`, `nunu.json`, `xsw.json` (Phase 2 batch). Each has
+     paired fixture HTML under
+     `LingyueCore/Tests/.../Fixtures/phase-2.5/<slug>/search.html` and
+     is exercised by `Phase2SeededRuleTests` /
+     `Phase25PrototypeTests` end-to-end against `RuleBasedBookSource`.
+     All 28 LingyueCore tests + 51 LingyueInternalSources tests pass.
+   - **Deferred to fast-path adapters (2.2):**
+     - `笔趣阁小说` (`m.bqgl.cc`) — search endpoint returns JSON
+       (`articlename` / `url_list` / `author` / `intro`), not HTML; the
+       rule schema only speaks SwiftSoup selectors. Needs either a
+       schema extension (`jsonPath` field type) or an adapter.
+     - `大尾笔趣阁` (`daweixs.com`) — returns 403 to the standard
+       browser-shaped curl request used by `RuleBasedBookSource`.
+       Production iOS hits it through a different code path; needs
+       investigation (likely cookie/header tightening) and possibly an
+       adapter.
+     - `无忧书城` (`51shucheng.net`) — same 403 symptom as `daweixs`.
+     - `黄金屋中文` (`tw.hjwzw.com`) — `BookImportService` already flags
+       HJWZW catalog/chapter as needing an adapter (cookie-stitched
+       navigation, partial in-page chapter lists). Search via curl
+       returns the homepage layout despite a documented `/List/{query}`
+       contract — production app gets real results, so this is a
+       header/session quirk rather than a dead source. Defer to 2.2.
+     - `就爱读小说` (`5dxs.net`) and `ESJ轻小说` (`esjzone.cc`) — not
+       captured in this batch; rules can be authored from the legacy
+       parser's selectors but were skipped for scope.
 2. `InternalSourceRegistry.enabledSources()` returns a non-empty list at
    app launch.
+   - **Status (done):** `SeededRuleLoader.testBundledRulesDecodeCleanly`
+     confirms all 10 bundled rules (9 sources + 1 example) decode.
+     Registry composition test in
+     `InternalSourceRegistryTests` verifies user rules + bundled rules
+     + fast-path adapters merge correctly with UUID dedup. Bumped
+     `LingyueInternalSources.bundledRulesVersion` from 1 → 2 to mark
+     the Phase 2 batch.
 3. The current `BookImportService` is migrated to call
    `InternalSourceRegistry.source(withID:)` internally — same UX, new
    plumbing. Behind a `UserDefaults` flag for one TestFlight cycle so we

@@ -1,0 +1,97 @@
+{
+  "id": "00000000-0000-0000-0000-000000005207",
+  "schemaVersion": 1,
+  "name": "台灣小說網",
+  "homepage": "https://www.xsw.tw/",
+  "capabilities": {
+    "supportsSearch": true,
+    "showInSearchBar": true,
+    "supportsBrowserImport": true,
+    "requiresWebRender": false,
+    "maxConcurrentRequests": 3,
+    "requestIntervalMillis": 0
+  },
+  "enginePerStep": {
+    "search": "http",
+    "detail": "http",
+    "catalog": "http",
+    "chapter": "http"
+  },
+  "encoding": "auto",
+  "defaultHeaders": {},
+  "detection": {
+    "hostPatterns": ["xsw.tw", "www.xsw.tw", "m.xsw.tw"],
+    "pathPattern": "^/(?:book/)?\\d+(?:/|\\.html)?$",
+    "confirmSelector": "h1, div.title h2"
+  },
+  "search": {
+    "method": "get",
+    "urlTemplate": "https://www.xsw.tw/modules/article/search.php?searchtype=articlename&searchkey={query}",
+    "resultsSelector": "div#alistbox",
+    "titleField": {
+      "selector": "div.title h2 a",
+      "transforms": [{ "trim": {} }]
+    },
+    "detailURLField": {
+      "selector": "div.title h2 a",
+      "attribute": "href",
+      "transforms": [
+        { "regexReplace": { "pattern": "^/book/(\\d+)\\.html$", "replacement": "/$1/" } },
+        { "absoluteURL": {} }
+      ]
+    },
+    "authorField": {
+      "selector": "div.title span",
+      "transforms": [
+        { "regexCapture": { "pattern": "作者[：:]\\s*(\\S+)" } },
+        { "trim": {} }
+      ]
+    },
+    "snippetField": {
+      "selector": "div.intro",
+      "transforms": [
+        { "stripHTML": {} },
+        { "collapseWhitespace": {} },
+        { "trim": {} }
+      ]
+    }
+  },
+  "detail": {
+    "titleField": {
+      "selector": "h1, div.title h2",
+      "transforms": [{ "trim": {} }]
+    },
+    "catalogURLField": {
+      "selector": "link[rel=canonical]",
+      "attribute": "href",
+      "transforms": [{ "absoluteURL": {} }]
+    }
+  },
+  "catalog": {
+    "chaptersSelector": "ul.read li a, div.chapter-list a",
+    "titleField": {
+      "transforms": [{ "trim": {} }]
+    },
+    "urlField": {
+      "attribute": "href",
+      "transforms": [{ "absoluteURL": {} }]
+    },
+    "maxPages": 1
+  },
+  "chapter": {
+    "titleField": {
+      "selector": "h1",
+      "transforms": [{ "trim": {} }]
+    },
+    "bodyField": {
+      "selector": "div#content, div.content",
+      "attribute": "html",
+      "transforms": [
+        { "brToNewline": {} },
+        { "stripHTML": {} },
+        { "decodeHTMLEntities": {} }
+      ]
+    },
+    "maxBodyPages": 1
+  }
+}

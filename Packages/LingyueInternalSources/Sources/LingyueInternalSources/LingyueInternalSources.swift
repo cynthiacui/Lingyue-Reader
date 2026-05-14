@@ -12,7 +12,7 @@ public enum LingyueInternalSources {
     /// Version of the seeded rule bundle this binary carries. Bump when
     /// the bundled rules ship a new schema or new entries. Surfaced in
     /// diagnostics, not user-visible.
-    public static let bundledRulesVersion: Int = 1
+    public static let bundledRulesVersion: Int = 2
 
     /// Decode every bundled `SourceRule` JSON. Convenience over
     /// `SeededRuleLoader.loadAll().rules` for callers that just want

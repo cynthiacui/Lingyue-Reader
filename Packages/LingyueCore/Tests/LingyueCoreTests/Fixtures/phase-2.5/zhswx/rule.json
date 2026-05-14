@@ -1,0 +1,95 @@
+{
+  "id": "00000000-0000-0000-0000-000000005204",
+  "schemaVersion": 1,
+  "name": "宙斯小说",
+  "homepage": "https://www.zhswx.com/",
+  "capabilities": {
+    "supportsSearch": true,
+    "showInSearchBar": true,
+    "supportsBrowserImport": true,
+    "requiresWebRender": false,
+    "maxConcurrentRequests": 3,
+    "requestIntervalMillis": 0
+  },
+  "enginePerStep": {
+    "search": "http",
+    "detail": "http",
+    "catalog": "http",
+    "chapter": "http"
+  },
+  "encoding": "auto",
+  "defaultHeaders": {},
+  "detection": {
+    "hostPatterns": ["zhswx.com", "www.zhswx.com"],
+    "pathPattern": "^/book/\\d+\\.html$",
+    "confirmSelector": "h1, div.book-info"
+  },
+  "search": {
+    "method": "get",
+    "urlTemplate": "https://www.zhswx.com/list/{query}.html",
+    "resultsSelector": "tr.odd, tr.even",
+    "titleField": {
+      "selector": "td.td2 a",
+      "transforms": [{ "trim": {} }]
+    },
+    "detailURLField": {
+      "selector": "td.td2 a",
+      "attribute": "href",
+      "transforms": [{ "absoluteURL": {} }]
+    },
+    "authorField": {
+      "selector": "td.td4",
+      "transforms": [
+        { "stripHTML": {} },
+        { "collapseWhitespace": {} },
+        { "trim": {} }
+      ]
+    },
+    "snippetField": {
+      "selector": "td.td3",
+      "transforms": [
+        { "stripHTML": {} },
+        { "collapseWhitespace": {} },
+        { "trim": {} }
+      ]
+    }
+  },
+  "detail": {
+    "titleField": {
+      "selector": "h1",
+      "transforms": [{ "trim": {} }]
+    },
+    "catalogURLField": {
+      "selector": "link[rel=canonical]",
+      "attribute": "href",
+      "transforms": [{ "absoluteURL": {} }]
+    }
+  },
+  "catalog": {
+    "chaptersSelector": "ul.chapter li a, div.chapter-list a",
+    "titleField": {
+      "transforms": [{ "trim": {} }]
+    },
+    "urlField": {
+      "attribute": "href",
+      "transforms": [{ "absoluteURL": {} }]
+    },
+    "maxPages": 1
+  },
+  "chapter": {
+    "titleField": {
+      "selector": "h1",
+      "transforms": [{ "trim": {} }]
+    },
+    "bodyField": {
+      "selector": "div#content, div.content",
+      "attribute": "html",
+      "transforms": [
+        { "brToNewline": {} },
+        { "stripHTML": {} },
+        { "decodeHTMLEntities": {} }
+      ]
+    },
+    "maxBodyPages": 1
+  }
+}

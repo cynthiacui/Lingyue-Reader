@@ -1,0 +1,104 @@
+{
+  "id": "00000000-0000-0000-0000-000000005400",
+  "schemaVersion": 1,
+  "name": "同人圈",
+  "homepage": "https://tongrenquan.org/",
+  "capabilities": {
+    "supportsSearch": true,
+    "showInSearchBar": true,
+    "supportsBrowserImport": true,
+    "requiresWebRender": false,
+    "maxConcurrentRequests": 3,
+    "requestIntervalMillis": 0
+  },
+  "enginePerStep": {
+    "search": "http",
+    "detail": "http",
+    "catalog": "http",
+    "chapter": "http"
+  },
+  "encoding": "gb18030",
+  "defaultHeaders": {},
+  "detection": {
+    "hostPatterns": ["tongrenquan.org"],
+    "pathPattern": "^/tongren/\\d+\\.html$",
+    "confirmSelector": "div.detail h1"
+  },
+  "search": {
+    "method": "post",
+    "urlTemplate": "https://tongrenquan.org/e/search/indexstart.php",
+    "bodyTemplate": "show=title&classid=0&keyboard={query}",
+    "queryEncoding": "gb18030",
+    "resultsSelector": "div.books > div.bk",
+    "titleField": {
+      "selector": "h3 a",
+      "transforms": [{ "trim": {} }]
+    },
+    "detailURLField": {
+      "selector": "h3 a",
+      "attribute": "href",
+      "transforms": [{ "absoluteURL": {} }]
+    },
+    "authorField": {
+      "selector": "div.booknews",
+      "transforms": [
+        { "regexCapture": { "pattern": "作者：\\s*(\\S+)" } },
+        { "trim": {} }
+      ]
+    },
+    "coverField": {
+      "selector": "div.pic img",
+      "attribute": "src",
+      "transforms": [{ "absoluteURL": {} }]
+    },
+    "snippetField": {
+      "selector": "p",
+      "transforms": [
+        { "brToNewline": {} },
+        { "stripHTML": {} },
+        { "collapseWhitespace": {} },
+        { "trim": {} }
+      ]
+    }
+  },
+  "detail": {
+    "titleField": {
+      "selector": "div.detail h1",
+      "transforms": [{ "trim": {} }]
+    },
+    "catalogURLField": {
+      "selector": "link[rel=canonical]",
+      "attribute": "href",
+      "transforms": [{ "absoluteURL": {} }]
+    }
+  },
+  "catalog": {
+    "chaptersSelector": "ul.book_list > li",
+    "titleField": {
+      "selector": "a",
+      "transforms": [{ "trim": {} }]
+    },
+    "urlField": {
+      "selector": "a",
+      "attribute": "href",
+      "transforms": [{ "absoluteURL": {} }]
+    },
+    "maxPages": 1
+  },
+  "chapter": {
+    "titleField": {
+      "selector": "h1",
+      "transforms": [{ "trim": {} }]
+    },
+    "bodyField": {
+      "selector": "div.content",
+      "attribute": "html",
+      "transforms": [
+        { "brToNewline": {} },
+        { "stripHTML": {} },
+        { "decodeHTMLEntities": {} }
+      ]
+    },
+    "maxBodyPages": 1
+  }
+}

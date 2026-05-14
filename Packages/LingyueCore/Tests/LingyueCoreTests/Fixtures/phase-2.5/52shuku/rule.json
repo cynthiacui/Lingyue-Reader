@@ -1,0 +1,90 @@
+{
+  "id": "00000000-0000-0000-0000-000000005203",
+  "schemaVersion": 1,
+  "name": "52书库",
+  "homepage": "https://www.52shuku.net/",
+  "capabilities": {
+    "supportsSearch": true,
+    "showInSearchBar": true,
+    "supportsBrowserImport": true,
+    "requiresWebRender": false,
+    "maxConcurrentRequests": 3,
+    "requestIntervalMillis": 0
+  },
+  "enginePerStep": {
+    "search": "http",
+    "detail": "http",
+    "catalog": "http",
+    "chapter": "http"
+  },
+  "encoding": "auto",
+  "defaultHeaders": {},
+  "detection": {
+    "hostPatterns": ["52shuku.net", "www.52shuku.net"],
+    "pathPattern": "^/.+/.+\\.html$",
+    "confirmSelector": "h1, h2.title"
+  },
+  "search": {
+    "method": "get",
+    "urlTemplate": "https://www.52shuku.net/so/search.php?q={query}",
+    "resultsSelector": "article.excerpt",
+    "titleField": {
+      "selector": "a h4",
+      "transforms": [
+        { "regexReplace": { "pattern": "^\\s*\\d+\\.\\s*", "replacement": "" } },
+        { "trim": {} }
+      ]
+    },
+    "detailURLField": {
+      "selector": "a",
+      "attribute": "href",
+      "transforms": [{ "absoluteURL": {} }]
+    },
+    "snippetField": {
+      "selector": "span.note",
+      "transforms": [
+        { "stripHTML": {} },
+        { "collapseWhitespace": {} },
+        { "trim": {} }
+      ]
+    }
+  },
+  "detail": {
+    "titleField": {
+      "selector": "h1, h2.title",
+      "transforms": [{ "trim": {} }]
+    },
+    "catalogURLField": {
+      "selector": "link[rel=canonical]",
+      "attribute": "href",
+      "transforms": [{ "absoluteURL": {} }]
+    }
+  },
+  "catalog": {
+    "chaptersSelector": "div.book-list a, ul.chapter-list li a",
+    "titleField": {
+      "transforms": [{ "trim": {} }]
+    },
+    "urlField": {
+      "attribute": "href",
+      "transforms": [{ "absoluteURL": {} }]
+    },
+    "maxPages": 1
+  },
+  "chapter": {
+    "titleField": {
+      "selector": "h1",
+      "transforms": [{ "trim": {} }]
+    },
+    "bodyField": {
+      "selector": "div#content, div.content",
+      "attribute": "html",
+      "transforms": [
+        { "brToNewline": {} },
+        { "stripHTML": {} },
+        { "decodeHTMLEntities": {} }
+      ]
+    },
+    "maxBodyPages": 1
+  }
+}
