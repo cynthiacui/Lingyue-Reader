@@ -22,27 +22,58 @@ public struct InternalSourceRegistry: BookSourceRegistry {
     private let loader: any SourceHTMLLoading
     private let fastPathAdapters: [any BookSource]
     private let seededRules: [SourceRule]
+    private let preferenceStore: (any SourcePreferenceStore)?
 
     public init(
         editableStore: any EditableSourceStore,
         loader: any SourceHTMLLoading,
         fastPathAdapters: [any BookSource] = [],
-        seededRules: [SourceRule]? = nil
+        seededRules: [SourceRule]? = nil,
+        preferenceStore: (any SourcePreferenceStore)? = nil
     ) {
         self.editableStore = editableStore
         self.loader = loader
         self.fastPathAdapters = fastPathAdapters
         self.seededRules = seededRules ?? SeededRuleLoader.loadAll().rules
+        self.preferenceStore = preferenceStore
     }
 
     public func enabledSources() async throws -> [any BookSource] {
         let userRules = try await editableStore.loadEditableSources()
         let userIDs = Set(userRules.map(\.id))
         let bundled = seededRules.filter { !userIDs.contains($0.id) }
-        let userSources: [any BookSource] = userRules.map {
+
+        // Resolve the user's per-rule preferences once up front. nil store ==
+        // "no opinion anywhere" — keeps tests and the App Store target's
+        // bootstrap path working without a preference file.
+        let preferences: [UUID: SourcePreference]
+        if let preferenceStore {
+            preferences = (try? await preferenceStore.loadAll()) ?? [:]
+        } else {
+            preferences = [:]
+        }
+
+        // Drop rules the user explicitly disabled. Fast-path adapters carry
+        // no UUID, so the preference layer is rule-only — adapters always
+        // pass through (their enable/disable, when we need it, will live on
+        // their own settings surface).
+        let enabledUserRules = userRules.filter { preferences[$0.id]?.isEnabled ?? true }
+        let enabledBundled = bundled.filter { preferences[$0.id]?.isEnabled ?? true }
+
+        // Stable sort within each rule bucket: priority asc, then name asc.
+        // `Int.max` is the default for unknown keys, so freshly-seeded rules
+        // sink to the bottom until the user reorders them — but they stay
+        // visible, never hidden by missing preference state.
+        func key(_ rule: SourceRule) -> (Int, String) {
+            (preferences[rule.id]?.priority ?? .max, rule.name)
+        }
+        let sortedUser = enabledUserRules.sorted { key($0) < key($1) }
+        let sortedBundled = enabledBundled.sorted { key($0) < key($1) }
+
+        let userSources: [any BookSource] = sortedUser.map {
             RuleBasedBookSource(rule: $0, loader: loader)
         }
-        let bundledSources: [any BookSource] = bundled.map {
+        let bundledSources: [any BookSource] = sortedBundled.map {
             RuleBasedBookSource(rule: $0, loader: loader)
         }
         return userSources + bundledSources + fastPathAdapters

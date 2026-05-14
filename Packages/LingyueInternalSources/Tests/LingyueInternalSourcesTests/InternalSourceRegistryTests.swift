@@ -53,6 +53,49 @@ final class InternalSourceRegistryTests: XCTestCase {
         XCTAssertEqual(names, ["Searchable"])
     }
 
+    func testDisabledPreferenceDropsRuleFromEnabledSources() async throws {
+        let keep = makeRule(name: "Keep", host: "k.invalid.test")
+        let hide = makeRule(name: "Hide", host: "h.invalid.test")
+        let preferences = InMemorySourcePreferenceStore(
+            preferences: [
+                hide.id: SourcePreference(ruleID: hide.id, isEnabled: false)
+            ]
+        )
+
+        let registry = InternalSourceRegistry(
+            editableStore: InMemoryEditableSourceStore(rules: []),
+            loader: NoopLoader(),
+            seededRules: [keep, hide],
+            preferenceStore: preferences
+        )
+
+        let names = try await registry.enabledSources().map(\.displayName)
+        XCTAssertEqual(names, ["Keep"])
+    }
+
+    func testPriorityPreferenceReordersEnabledSources() async throws {
+        // Bundled rules are otherwise sorted by name; assert that an explicit
+        // priority value flips that default so the user's manual reorder wins.
+        let alpha = makeRule(name: "Alpha", host: "a.invalid.test")
+        let zulu = makeRule(name: "Zulu", host: "z.invalid.test")
+        let preferences = InMemorySourcePreferenceStore(
+            preferences: [
+                zulu.id: SourcePreference(ruleID: zulu.id, priority: 1),
+                alpha.id: SourcePreference(ruleID: alpha.id, priority: 2)
+            ]
+        )
+
+        let registry = InternalSourceRegistry(
+            editableStore: InMemoryEditableSourceStore(rules: []),
+            loader: NoopLoader(),
+            seededRules: [alpha, zulu],
+            preferenceStore: preferences
+        )
+
+        let names = try await registry.enabledSources().map(\.displayName)
+        XCTAssertEqual(names, ["Zulu", "Alpha"])
+    }
+
     func testSourceByIDFindsRuleAndAdapter() async throws {
         let rule = makeRule(name: "R", host: "r.invalid.test")
         let adapter = StubAdapter(id: "internal:adapter", supportsSearch: true)
@@ -124,6 +167,19 @@ private struct NoopLoader: SourceHTMLLoading {
     }
     func renderHTML(_ request: SourceRequest) async throws -> WebPageSnapshot {
         throw BookSourceError.loadFailed(reason: "noop")
+    }
+}
+
+private actor InMemorySourcePreferenceStore: SourcePreferenceStore {
+    private var storage: [UUID: SourcePreference]
+    init(preferences: [UUID: SourcePreference]) { self.storage = preferences }
+    func loadAll() async throws -> [UUID: SourcePreference] { storage }
+    func save(_ preference: SourcePreference) async throws {
+        storage[preference.ruleID] = preference
+    }
+    func delete(ruleID: UUID) async throws { storage.removeValue(forKey: ruleID) }
+    func replaceAll(_ preferences: [SourcePreference]) async throws {
+        storage = Dictionary(uniqueKeysWithValues: preferences.map { ($0.ruleID, $0) })
     }
 }
 

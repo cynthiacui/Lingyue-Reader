@@ -22,6 +22,7 @@ import LingyueInternalSources
 struct SourceStack: Sendable {
     let loader: any SourceHTMLLoading
     let editableStore: any EditableSourceStore
+    let preferenceStore: any SourcePreferenceStore
     // Module-qualified: the legacy `enum BookSourceRegistry` in
     // Models/Novel.swift shadows the LingyueCore protocol of the same
     // name. Phase 2.4 removes the enum once `BookImportService` migrates
@@ -40,17 +41,20 @@ struct SourceStack: Sendable {
     static let live: SourceStack = {
         let loader = CompositeSourceLoader()
         let store = FileEditableSourceStore()
+        let preferenceStore = FileSourcePreferenceStore()
         let registry = InternalSourceRegistry(
             editableStore: store,
             loader: loader,
             fastPathAdapters: [
                 FivedxsBookSource(loader: loader),
                 BiqugeAPIBookSource(loader: loader)
-            ]
+            ],
+            preferenceStore: preferenceStore
         )
         return SourceStack(
             loader: loader,
             editableStore: store,
+            preferenceStore: preferenceStore,
             registry: registry
         )
     }()

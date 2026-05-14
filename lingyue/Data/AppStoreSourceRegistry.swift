@@ -21,18 +21,33 @@ import LingyueCore
 public struct AppStoreSourceRegistry: LingyueCore.BookSourceRegistry {
     private let editableStore: any EditableSourceStore
     private let loader: any SourceHTMLLoading
+    private let preferenceStore: (any SourcePreferenceStore)?
 
     public init(
         editableStore: any EditableSourceStore,
-        loader: any SourceHTMLLoading
+        loader: any SourceHTMLLoading,
+        preferenceStore: (any SourcePreferenceStore)? = nil
     ) {
         self.editableStore = editableStore
         self.loader = loader
+        self.preferenceStore = preferenceStore
     }
 
     public func enabledSources() async throws -> [any BookSource] {
         let rules = try await editableStore.loadEditableSources()
-        return rules.map { RuleBasedBookSource(rule: $0, loader: loader) }
+        let preferences: [UUID: SourcePreference]
+        if let preferenceStore {
+            preferences = (try? await preferenceStore.loadAll()) ?? [:]
+        } else {
+            preferences = [:]
+        }
+        let visible = rules.filter { preferences[$0.id]?.isEnabled ?? true }
+        let sorted = visible.sorted { lhs, rhs in
+            let lp = preferences[lhs.id]?.priority ?? .max
+            let rp = preferences[rhs.id]?.priority ?? .max
+            return lp != rp ? lp < rp : lhs.name < rhs.name
+        }
+        return sorted.map { RuleBasedBookSource(rule: $0, loader: loader) }
     }
 
     public func searchableSources() async throws -> [any BookSource] {

@@ -45,6 +45,7 @@
 		010000000000000000000124 /* AppStoreSourceRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000026 /* AppStoreSourceRegistry.swift */; };
 		010000000000000000000125 /* SourceStack.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000027 /* SourceStack.swift */; };
 		010000000000000000000126 /* SourcesListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000028 /* SourcesListView.swift */; };
+		010000000000000000000127 /* FileSourcePreferenceStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000029 /* FileSourcePreferenceStore.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -86,6 +87,7 @@
 		010000000000000000000026 /* AppStoreSourceRegistry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppStoreSourceRegistry.swift; sourceTree = "<group>"; };
 		010000000000000000000027 /* SourceStack.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SourceStack.swift; sourceTree = "<group>"; };
 		010000000000000000000028 /* SourcesListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SourcesListView.swift; sourceTree = "<group>"; };
+		010000000000000000000029 /* FileSourcePreferenceStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileSourcePreferenceStore.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -148,6 +150,7 @@
 				010000000000000000000023 /* WebViewSourceLoader.swift */,
 				010000000000000000000024 /* CompositeSourceLoader.swift */,
 				010000000000000000000025 /* FileEditableSourceStore.swift */,
+				010000000000000000000029 /* FileSourcePreferenceStore.swift */,
 				010000000000000000000026 /* AppStoreSourceRegistry.swift */,
 				010000000000000000000027 /* SourceStack.swift */,
 				010000000000000000000015 /* BookDownloadManager.swift */,
@@ -309,6 +312,7 @@
 				010000000000000000000121 /* WebViewSourceLoader.swift in Sources */,
 				010000000000000000000122 /* CompositeSourceLoader.swift in Sources */,
 				010000000000000000000123 /* FileEditableSourceStore.swift in Sources */,
+				010000000000000000000127 /* FileSourcePreferenceStore.swift in Sources */,
 				010000000000000000000124 /* AppStoreSourceRegistry.swift in Sources */,
 				010000000000000000000125 /* SourceStack.swift in Sources */,
 				010000000000000000000126 /* SourcesListView.swift in Sources */,
