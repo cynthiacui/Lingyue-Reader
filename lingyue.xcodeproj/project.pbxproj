@@ -44,6 +44,7 @@
 		010000000000000000000123 /* FileEditableSourceStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000025 /* FileEditableSourceStore.swift */; };
 		010000000000000000000124 /* AppStoreSourceRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000026 /* AppStoreSourceRegistry.swift */; };
 		010000000000000000000125 /* SourceStack.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000027 /* SourceStack.swift */; };
+		010000000000000000000126 /* SourcesListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000028 /* SourcesListView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -84,6 +85,7 @@
 		010000000000000000000025 /* FileEditableSourceStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileEditableSourceStore.swift; sourceTree = "<group>"; };
 		010000000000000000000026 /* AppStoreSourceRegistry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppStoreSourceRegistry.swift; sourceTree = "<group>"; };
 		010000000000000000000027 /* SourceStack.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SourceStack.swift; sourceTree = "<group>"; };
+		010000000000000000000028 /* SourcesListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SourcesListView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -164,6 +166,7 @@
 				01000000000000000000001C /* ReadingHistoryView.swift */,
 				010000000000000000000007 /* DiscoveryView.swift */,
 				010000000000000000000008 /* SettingsView.swift */,
+				010000000000000000000309 /* Settings */,
 				01000000000000000000000C /* ReaderView.swift */,
 				010000000000000000000018 /* PageCurlPager.swift */,
 				01000000000000000000001A /* TabBarVisibility.swift */,
@@ -177,6 +180,14 @@
 				010000000000000000000020 /* ReaderDiagnosticsView.swift */,
 			);
 			path = Views;
+			sourceTree = "<group>";
+		};
+		010000000000000000000309 /* Settings */ = {
+			isa = PBXGroup;
+			children = (
+				010000000000000000000028 /* SourcesListView.swift */,
+			);
+			path = Settings;
 			sourceTree = "<group>";
 		};
 		010000000000000000000307 /* SupportingFiles */ = {
@@ -300,6 +311,7 @@
 				010000000000000000000123 /* FileEditableSourceStore.swift in Sources */,
 				010000000000000000000124 /* AppStoreSourceRegistry.swift in Sources */,
 				010000000000000000000125 /* SourceStack.swift in Sources */,
+				010000000000000000000126 /* SourcesListView.swift in Sources */,
 				01000000000000000000010F /* CustomAlertView.swift in Sources */,
 				010000000000000000000110 /* ModalContainer.swift in Sources */,
 				010000000000000000000111 /* InputModalView.swift in Sources */,

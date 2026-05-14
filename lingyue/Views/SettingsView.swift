@@ -105,6 +105,7 @@ struct SettingsView: View {
                     readingControlsSection
                     appThemeSection
                     storageSection
+                    sourcesSection
                     if ReaderDiagnostics.isInternalBuild {
                         diagnosticsSection
                         labSection
@@ -374,6 +375,31 @@ struct SettingsView: View {
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.large)
+            }
+            .foregroundStyle(theme.primaryText)
+            .readerCard()
+        }
+    }
+
+    private var sourcesSection: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            SectionHeader(title: "书源")
+
+            VStack(spacing: 12) {
+                NavigationLink {
+                    SourcesListView()
+                } label: {
+                    HStack {
+                        Label("我的书源", systemImage: "books.vertical")
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(theme.secondaryText)
+                    }
+                    .frame(minHeight: 36)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
             }
             .foregroundStyle(theme.primaryText)
             .readerCard()
