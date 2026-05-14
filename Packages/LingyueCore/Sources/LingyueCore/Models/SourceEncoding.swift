@@ -26,4 +26,24 @@ public enum SourceEncoding: String, Codable, Sendable, Hashable, CaseIterable {
         case .big5: return "big5"
         }
     }
+
+    /// Concrete `String.Encoding` for this case. `.auto` returns `nil` —
+    /// callers that need a real encoding must resolve `.auto` against a
+    /// response's `Content-Type` first. GB/Big5 cases route through
+    /// `CFStringConvertEncodingToNSStringEncoding` because `String.Encoding`
+    /// has no first-class constants for them.
+    public var stringEncoding: String.Encoding? {
+        switch self {
+        case .auto: return nil
+        case .utf8: return .utf8
+        case .gb18030: return Self.cfEncoding(.GB_18030_2000)
+        case .gbk: return Self.cfEncoding(.GBK_95)
+        case .big5: return Self.cfEncoding(.big5)
+        }
+    }
+
+    private static func cfEncoding(_ cf: CFStringEncodings) -> String.Encoding {
+        let raw = CFStringConvertEncodingToNSStringEncoding(CFStringEncoding(cf.rawValue))
+        return String.Encoding(rawValue: raw)
+    }
 }

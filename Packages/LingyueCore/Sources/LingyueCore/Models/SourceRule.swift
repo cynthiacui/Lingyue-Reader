@@ -179,6 +179,16 @@ public struct SearchStep: Codable, Sendable, Hashable {
     /// Body template for `POST`. `nil` for `GET`. Same `{query}` rule.
     public var bodyTemplate: String?
 
+    /// Encoding applied to the user's query before it is substituted into
+    /// `urlTemplate` / `bodyTemplate`. `nil` ⇒ UTF-8.
+    /// Why: legacy mainland CMS deployments (Empire CMS clones especially)
+    /// still percent-decode form fields as GB18030 server-side. A UTF-8
+    /// query reaches the search handler as garbled bytes and silently
+    /// returns zero results, which looks like a working source until you
+    /// try a real query. Optional for backward compatibility with seeded
+    /// rules written before the field existed.
+    public var queryEncoding: SourceEncoding?
+
     /// Selector matching each search result row.
     public var resultsSelector: String
 
@@ -193,6 +203,7 @@ public struct SearchStep: Codable, Sendable, Hashable {
         method: Method = .get,
         urlTemplate: String,
         bodyTemplate: String? = nil,
+        queryEncoding: SourceEncoding? = nil,
         resultsSelector: String,
         titleField: FieldSelector,
         detailURLField: FieldSelector,
@@ -203,6 +214,7 @@ public struct SearchStep: Codable, Sendable, Hashable {
         self.method = method
         self.urlTemplate = urlTemplate
         self.bodyTemplate = bodyTemplate
+        self.queryEncoding = queryEncoding
         self.resultsSelector = resultsSelector
         self.titleField = titleField
         self.detailURLField = detailURLField

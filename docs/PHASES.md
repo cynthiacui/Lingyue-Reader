@@ -248,6 +248,74 @@ express. Move those adapters here as direct `BookSource` conformers:
 
 ---
 
+## Phase 2.5 — Rule-schema fitness check (interlude)
+
+**Goal:** before authoring rules for all 14 remaining legacy sources,
+prove the schema is expressive enough for the messy real-world shapes —
+and let the actual gaps drive the schema, not speculation.
+
+### What shipped
+
+- **`SearchStep.queryEncoding: SourceEncoding?`** — optional, `nil`
+  defaults to UTF-8 so existing rules round-trip unchanged. Why: legacy
+  mainland CMS deployments (Empire CMS clones, mainly) decode form bodies
+  as GB18030 server-side, so a UTF-8 query reaches the search handler as
+  garbled bytes and silently returns zero results.
+
+- **`URLTemplate.expand(_:query:encoding:)`** — UTF-8 fast path is
+  unchanged. The non-UTF-8 path round-trips the query through
+  `String.data(using:)` then percent-escapes each byte outside
+  `.urlQueryAllowed`, so `斗破` in GB18030 becomes `%B6%B7%C6%C6` not
+  `%E6%96%97%E7%A0%B4`.
+
+- **`RuleBasedBookSource.runSearchRequest`** — passes `step.queryEncoding
+  ?? .utf8` to `URLTemplate.expand` for both the URL and (when present)
+  the POST body. On POST + non-UTF-8 it also sets `Content-Type:
+  application/x-www-form-urlencoded; charset=<iana>` so legacy backends
+  know how to interpret the percent-decoded bytes.
+
+- **Two prototype rules** under
+  `Packages/LingyueCore/Tests/LingyueCoreTests/Fixtures/phase-2.5/`:
+  - `sto9/` — 思兔閱讀. Validates POST-then-302-redirect-to-GET (handled
+    transparently by URLSession) and the AJAX-loaded catalog trick (the
+    detail rule reaches the AJAX endpoint via `regexReplace` on the
+    detail page's catalog-link URL).
+  - `tongrenquan/` — 同人圈. Validates GB18030 query encoding end-to-end
+    against real captured HTML.
+
+- **Tests:** `Phase25PrototypeTests` and `URLTemplateTests` — 10 new
+  tests, all green. Both rules decode, both search parsers produce the
+  expected hits from captured HTML, and the GB18030 percent-encoded body
+  bytes match `%B6%B7%C6%C6%B2%D4%F1%B7` (verified independently via
+  Python).
+
+### What we learned (informs Phase 2 ETAs)
+
+- **Per-rule authoring time, captured-HTML-in-hand:** ~20 min for a
+  Empire-CMS-shaped site (tongrenquan), ~30 min for a site with an AJAX
+  catalog (sto9). Most of the time goes to inspecting the result DOM and
+  picking stable selectors; the schema itself rarely needs extending.
+
+- **One outstanding schema sharp edge:** there is no first-class way to
+  reference the page's own URL from `detail.catalogURLField`. Workaround:
+  pick a self-link selector (canonical, breadcrumb, or an existing
+  catalog button) and run `regexReplace` on it. Acceptable for the
+  current 14 sources; revisit only if a site forces it.
+
+- **Catalog-fetch shape varies wildly:** static full page (5dxs, Biquge),
+  static partial + AJAX full (sto9), pagination (HJWZW). The current
+  `CatalogStep` (chaptersSelector + nextPageField) handles the first
+  two cleanly via different URL strategies; the third already worked in
+  Phase 1.
+
+### Exit criteria for Phase 2.5
+
+1. New `queryEncoding` field merged with tests. ✓
+2. Two prototype rules pass fixture-based search tests. ✓
+3. Per-site authoring time estimates updated in this doc. ✓
+
+---
+
 ## Phase 3 — Rule editor UI + Discovery search integration
 
 **Goal:** users can author and edit rules in-app, and rule-driven sources

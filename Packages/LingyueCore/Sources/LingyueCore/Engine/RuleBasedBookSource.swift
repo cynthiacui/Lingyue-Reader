@@ -70,21 +70,40 @@ public struct RuleBasedBookSource: BookSource {
         step: SearchStep,
         query: String
     ) async throws -> WebPageSnapshot {
-        let expandedURL = try URLTemplate.expand(step.urlTemplate, query: query)
+        let queryEncoding = step.queryEncoding ?? .utf8
+        let expandedURL = try URLTemplate.expand(
+            step.urlTemplate, query: query, encoding: queryEncoding
+        )
         guard let url = URL(string: expandedURL) else {
             throw BookSourceError.ruleIncomplete(field: "search.urlTemplate")
         }
         let body: Data?
+        var headers = rule.defaultHeaders
         if let bodyTemplate = step.bodyTemplate {
-            let expanded = try URLTemplate.expand(bodyTemplate, query: query)
+            let expanded = try URLTemplate.expand(
+                bodyTemplate, query: query, encoding: queryEncoding
+            )
+            // The body is already percent-encoded ASCII (form-urlencoded
+            // bytes), so UTF-8 vs the rule's charset doesn't matter for the
+            // wire bytes themselves — but legacy backends still inspect the
+            // Content-Type charset to know how to interpret the
+            // percent-decoded bytes. Set it explicitly when the rule asked
+            // for a non-UTF-8 query encoding.
             body = expanded.data(using: .utf8)
+            if step.method == .post,
+               let iana = step.queryEncoding?.ianaName,
+               headers["Content-Type"] == nil,
+               headers["content-type"] == nil {
+                headers["Content-Type"] =
+                    "application/x-www-form-urlencoded; charset=\(iana)"
+            }
         } else {
             body = nil
         }
         let request = SourceRequest(
             url: url,
             method: step.method == .post ? .post : .get,
-            headers: rule.defaultHeaders,
+            headers: headers,
             body: body,
             encoding: rule.encoding,
             referer: rule.homepage
