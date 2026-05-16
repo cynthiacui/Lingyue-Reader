@@ -109,7 +109,11 @@ final class BookImportService: Sendable {
     /// should import all chapters below this high ceiling; hitting it means the extractor likely
     /// matched navigation/archive links as chapters.
     private let runawayChapterLimit = 20_000
+#if LINGYUE_INTERNAL
     private let biqugeAPIHosts = ["apiqu.cc", "apige.cc"]
+#else
+    private let biqugeAPIHosts: [String] = []
+#endif
     private let catalogRepairCache = OSAllocatedUnfairLock<[UUID: Bool]>(initialState: [:])
     private let httpSession: URLSession
 
@@ -624,6 +628,9 @@ final class BookImportService: Sendable {
     }
 
     private func sourceSpecificBookTitle(in html: String, url: URL) -> String? {
+#if !LINGYUE_INTERNAL
+        return nil
+#else
         let host = url.host(percentEncoded: false)?.lowercased() ?? ""
         let isCatalogSource = host.contains("bqg")
             || host.contains("biqu")
@@ -662,6 +669,7 @@ final class BookImportService: Sendable {
         }
 
         return nil
+#endif
     }
 
     private func isSpecificBookTitle(_ title: String) -> Bool {
@@ -744,8 +752,12 @@ final class BookImportService: Sendable {
     }
 
     private func isHJWZWHost(_ url: URL) -> Bool {
+#if !LINGYUE_INTERNAL
+        return false
+#else
         guard let host = url.host(percentEncoded: false)?.lowercased() else { return false }
         return host == "hjwzw.com" || host.hasSuffix(".hjwzw.com")
+#endif
     }
 
     private func isHJWZWImportableBookPath(_ path: String) -> Bool {
@@ -937,6 +949,9 @@ final class BookImportService: Sendable {
     }
 
     private func biqugeAPICatalogLinks(for sourceURL: URL, sourceBookID: String?) async -> [ChapterLink] {
+#if !LINGYUE_INTERNAL
+        return []
+#else
         // Phase 2.4 cut-over: when the registry-routing flag is on,
         // try the rule-engine path first. Failures or empty results
         // fall through to the legacy parser below — this is a
@@ -970,6 +985,7 @@ final class BookImportService: Sendable {
             }
             return ChapterLink(title: title, url: url)
         }
+#endif
     }
 
     /// UserDefaults flag — flipped on in Settings → Lab when we're
@@ -991,6 +1007,9 @@ final class BookImportService: Sendable {
     /// adapter's job, and going through the throw path keeps the
     /// dispatch layer ignorant of adapter internals.
     private func registryRoutedBiqugeAPICatalogLinks(for sourceURL: URL) async -> [ChapterLink] {
+#if !LINGYUE_INTERNAL
+        return []
+#else
         do {
             guard let source = try await SourceStack.live.registry.source(withID: "internal:biquge-api") else {
                 return []
@@ -1013,6 +1032,7 @@ final class BookImportService: Sendable {
             ])
             return []
         }
+#endif
     }
 
     /// Phase 2.4 routed-5dxs path. Same shadow-route pattern as
@@ -1020,6 +1040,9 @@ final class BookImportService: Sendable {
     /// to legacy, host-mismatch (`unsupportedURL`) is silent, every
     /// other error logs once for the TestFlight ramp.
     private func registryRoutedFivedxsCatalogLinks(for sourceURL: URL) async -> [ChapterLink] {
+#if !LINGYUE_INTERNAL
+        return []
+#else
         do {
             guard let source = try await SourceStack.live.registry.source(withID: "internal:5dxs") else {
                 return []
@@ -1040,6 +1063,7 @@ final class BookImportService: Sendable {
             ])
             return []
         }
+#endif
     }
 
     /// 就爱读小说 (5dxs.net / adxs.net) paginates the chapter catalog 10-per-page on the book
@@ -1047,6 +1071,9 @@ final class BookImportService: Sendable {
     /// — calling it once with size=2000 retrieves the entire catalog in a single request,
     /// avoiding the need to walk dozens of pages.
     private func fivedxsCatalogLinks(for sourceURL: URL, sourceBookID: String?) async -> [ChapterLink] {
+#if !LINGYUE_INTERNAL
+        return []
+#else
         if Self.useSourceRegistryForCatalog {
             let routed = await registryRoutedFivedxsCatalogLinks(for: sourceURL)
             if !routed.isEmpty {
@@ -1090,12 +1117,16 @@ final class BookImportService: Sendable {
             }
         }
         return []
+#endif
     }
 
     /// 黄金屋 reader pages only expose the nearby previous/next-ish chapter region in-page.
     /// Its full catalog is a stable `/Book/Chapter/<book id>` page, so fetch that directly
     /// whenever we can identify the book id from either the detail, catalog, or reader URL.
     private func hjwzwCatalogLinks(for sourceURL: URL, sourceBookID: String?) async -> [ChapterLink] {
+#if !LINGYUE_INTERNAL
+        return []
+#else
         guard isHJWZWHost(sourceURL),
               let bookID = sourceBookID ?? bookID(from: sourceURL),
               let catalogURL = absoluteURL(from: "/Book/Chapter/\(bookID)", baseURL: sourceURL),
@@ -1113,6 +1144,7 @@ final class BookImportService: Sendable {
         } catch {
             return []
         }
+#endif
     }
 
     private func chapterListScore(_ links: [ChapterLink]) -> Int {
@@ -1178,10 +1210,12 @@ final class BookImportService: Sendable {
         if let ajaxURL = absoluteURL(from: "/ajax_novels/chapterlist/\(articleID).html", baseURL: baseURL) {
             urls.append(ajaxURL)
         }
+#if LINGYUE_INTERNAL
         if isHJWZWHost(baseURL),
            let hjwzwCatalogURL = absoluteURL(from: "/Book/Chapter/\(articleID)", baseURL: baseURL) {
             urls.append(hjwzwCatalogURL)
         }
+#endif
 
         return urls
     }
@@ -1368,6 +1402,9 @@ final class BookImportService: Sendable {
     /// `NovelChapter`. Host-mismatch is silent; other errors log once
     /// and return nil so the caller falls through.
     private func registryRoutedBiqugeAPIChapter(_ link: ChapterLink) async throws -> NovelChapter? {
+#if !LINGYUE_INTERNAL
+        return nil
+#else
         do {
             guard let source = try await SourceStack.live.registry.source(withID: "internal:biquge-api") else {
                 return nil
@@ -1396,11 +1433,16 @@ final class BookImportService: Sendable {
             ])
             return nil
         }
+#endif
     }
 
     private func isBiqugeAPISource(_ url: URL) -> Bool {
+#if !LINGYUE_INTERNAL
+        return false
+#else
         let host = url.host(percentEncoded: false)?.lowercased() ?? ""
         return host.contains("bqg") && url.absoluteString.contains("/book/")
+#endif
     }
 
     private func biqugeBookAndChapterID(from url: URL) -> (bookID: String, chapterID: String)? {

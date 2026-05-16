@@ -16,8 +16,8 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "010000000000000000000401"
-               BuildableName = "lingyue.app"
-               BlueprintName = "lingyue"
+               BuildableName = "LingyueInternal.app"
+               BlueprintName = "LingyueInternal"
                ReferencedContainer = "container:lingyue.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
@@ -46,8 +46,8 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "010000000000000000000401"
-            BuildableName = "lingyue.app"
-            BlueprintName = "lingyue"
+            BuildableName = "LingyueInternal.app"
+            BlueprintName = "LingyueInternal"
             ReferencedContainer = "container:lingyue.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
@@ -63,8 +63,8 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "010000000000000000000401"
-            BuildableName = "lingyue.app"
-            BlueprintName = "lingyue"
+            BuildableName = "LingyueInternal.app"
+            BlueprintName = "LingyueInternal"
             ReferencedContainer = "container:lingyue.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>

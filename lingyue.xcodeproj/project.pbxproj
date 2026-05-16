@@ -3,7 +3,7 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 56;
+	objectVersion = 60;
 	objects = {
 
 /* Begin PBXBuildFile section */
@@ -26,8 +26,6 @@
 		010000000000000000000112 /* AppTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000014 /* AppTheme.swift */; };
 		010000000000000000000113 /* BookDownloadManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000015 /* BookDownloadManager.swift */; };
 		010000000000000000000114 /* DownloadsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000016 /* DownloadsView.swift */; };
-		01000000000000000000011F /* SourceHanSerifSC-Regular.otf in Resources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000021 /* SourceHanSerifSC-Regular.otf */; };
-		010000000000000000000120 /* MiSans-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000022 /* MiSans-Regular.ttf */; };
 		010000000000000000000116 /* PageCurlPager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000018 /* PageCurlPager.swift */; };
 		010000000000000000000117 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000019 /* PrivacyInfo.xcprivacy */; };
 		010000000000000000000118 /* TabBarVisibility.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01000000000000000000001A /* TabBarVisibility.swift */; };
@@ -37,10 +35,10 @@
 		01000000000000000000011C /* DebugLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01000000000000000000001E /* DebugLog.swift */; };
 		01000000000000000000011D /* ReaderDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01000000000000000000001F /* ReaderDiagnostics.swift */; };
 		01000000000000000000011E /* ReaderDiagnosticsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000020 /* ReaderDiagnosticsView.swift */; };
-		010000000000000000000703 /* LingyueCore in Frameworks */ = {isa = PBXBuildFile; productRef = 010000000000000000000702 /* LingyueCore */; };
+		01000000000000000000011F /* SourceHanSerifSC-Regular.otf in Resources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000021 /* SourceHanSerifSC-Regular.otf */; };
+		010000000000000000000120 /* MiSans-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000022 /* MiSans-Regular.ttf */; };
 		010000000000000000000121 /* WebViewSourceLoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000023 /* WebViewSourceLoader.swift */; };
 		010000000000000000000122 /* CompositeSourceLoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000024 /* CompositeSourceLoader.swift */; };
-		010000000000000000000705 /* LingyueInternalSources in Frameworks */ = {isa = PBXBuildFile; productRef = 010000000000000000000704 /* LingyueInternalSources */; };
 		010000000000000000000123 /* FileEditableSourceStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000025 /* FileEditableSourceStore.swift */; };
 		010000000000000000000124 /* AppStoreSourceRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000026 /* AppStoreSourceRegistry.swift */; };
 		010000000000000000000125 /* SourceStack.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000027 /* SourceStack.swift */; };
@@ -48,6 +46,54 @@
 		010000000000000000000127 /* FileSourcePreferenceStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000029 /* FileSourcePreferenceStore.swift */; };
 		010000000000000000000128 /* SourceEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01000000000000000000002A /* SourceEditorView.swift */; };
 		010000000000000000000129 /* SourceTestSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01000000000000000000002B /* SourceTestSheet.swift */; };
+		01000000000000000000012B /* AddSourceURLView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01000000000000000000002D /* AddSourceURLView.swift */; };
+		01000000000000000000012C /* SourceReviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01000000000000000000002E /* SourceReviewView.swift */; };
+		01000000000000000000012D /* FileSourceValidationStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01000000000000000000002F /* FileSourceValidationStore.swift */; };
+		010000000000000000000703 /* LingyueCore in Frameworks */ = {isa = PBXBuildFile; productRef = 010000000000000000000702 /* LingyueCore */; };
+		010000000000000000000705 /* LingyueInternalSources in Frameworks */ = {isa = PBXBuildFile; productRef = 010000000000000000000704 /* LingyueInternalSources */; };
+		64AE67FC2FB6C76D004058EE /* LingyueApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000001 /* LingyueApp.swift */; };
+		64AE67FD2FB6C76D004058EE /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000002 /* ContentView.swift */; };
+		64AE67FE2FB6C76D004058EE /* Novel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000003 /* Novel.swift */; };
+		64AE67FF2FB6C76D004058EE /* ReaderStyle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000005 /* ReaderStyle.swift */; };
+		64AE68002FB6C76D004058EE /* LibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000006 /* LibraryView.swift */; };
+		64AE68012FB6C76D004058EE /* ReadingStatsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01000000000000000000001B /* ReadingStatsView.swift */; };
+		64AE68022FB6C76D004058EE /* ReadingHistoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01000000000000000000001C /* ReadingHistoryView.swift */; };
+		64AE68032FB6C76D004058EE /* DiscoveryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000007 /* DiscoveryView.swift */; };
+		64AE68042FB6C76D004058EE /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000008 /* SettingsView.swift */; };
+		64AE68052FB6C76D004058EE /* ReaderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01000000000000000000000C /* ReaderView.swift */; };
+		64AE68062FB6C76D004058EE /* PageCurlPager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000018 /* PageCurlPager.swift */; };
+		64AE68072FB6C76D004058EE /* TabBarVisibility.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01000000000000000000001A /* TabBarVisibility.swift */; };
+		64AE68082FB6C76D004058EE /* InAppBrowserView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01000000000000000000000D /* InAppBrowserView.swift */; };
+		64AE68092FB6C76D004058EE /* LibraryStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01000000000000000000000E /* LibraryStore.swift */; };
+		64AE680A2FB6C76D004058EE /* BookImportService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01000000000000000000000F /* BookImportService.swift */; };
+		64AE680B2FB6C76D004058EE /* WebRenderingService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000010 /* WebRenderingService.swift */; };
+		64AE680C2FB6C76D004058EE /* WebViewSourceLoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000023 /* WebViewSourceLoader.swift */; };
+		64AE680D2FB6C76D004058EE /* CompositeSourceLoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000024 /* CompositeSourceLoader.swift */; };
+		64AE680E2FB6C76D004058EE /* FileEditableSourceStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000025 /* FileEditableSourceStore.swift */; };
+		64AE680F2FB6C76D004058EE /* FileSourcePreferenceStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000029 /* FileSourcePreferenceStore.swift */; };
+		64AE68102FB6C76D004058EE /* AppStoreSourceRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000026 /* AppStoreSourceRegistry.swift */; };
+		64AE68112FB6C76D004058EE /* SourceStack.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000027 /* SourceStack.swift */; };
+		64AE68122FB6C76D004058EE /* SourcesListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000028 /* SourcesListView.swift */; };
+		64AE68132FB6C76D004058EE /* SourceEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01000000000000000000002A /* SourceEditorView.swift */; };
+		64AE68142FB6C76D004058EE /* SourceTestSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01000000000000000000002B /* SourceTestSheet.swift */; };
+		64AE68152FB6C76D004058EE /* AddSourceURLView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01000000000000000000002D /* AddSourceURLView.swift */; };
+		64AE68162FB6C76D004058EE /* SourceReviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01000000000000000000002E /* SourceReviewView.swift */; };
+		64AE68172FB6C76D004058EE /* FileSourceValidationStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01000000000000000000002F /* FileSourceValidationStore.swift */; };
+		64AE68182FB6C76D004058EE /* CustomAlertView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000011 /* CustomAlertView.swift */; };
+		64AE68192FB6C76D004058EE /* ModalContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000012 /* ModalContainer.swift */; };
+		64AE681A2FB6C76D004058EE /* InputModalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000013 /* InputModalView.swift */; };
+		64AE681B2FB6C76D004058EE /* OverlayManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01000000000000000000001D /* OverlayManager.swift */; };
+		64AE681C2FB6C76D004058EE /* AppTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000014 /* AppTheme.swift */; };
+		64AE681D2FB6C76D004058EE /* BookDownloadManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000015 /* BookDownloadManager.swift */; };
+		64AE681E2FB6C76D004058EE /* DownloadsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000016 /* DownloadsView.swift */; };
+		64AE681F2FB6C76D004058EE /* DebugLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01000000000000000000001E /* DebugLog.swift */; };
+		64AE68202FB6C76D004058EE /* ReaderDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01000000000000000000001F /* ReaderDiagnostics.swift */; };
+		64AE68212FB6C76D004058EE /* ReaderDiagnosticsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000020 /* ReaderDiagnosticsView.swift */; };
+		64AE68232FB6C76D004058EE /* LingyueCore in Frameworks */ = {isa = PBXBuildFile; productRef = 64AE67F92FB6C76D004058EE /* LingyueCore */; };
+		64AE68262FB6C76D004058EE /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000009 /* Assets.xcassets */; };
+		64AE68272FB6C76D004058EE /* SourceHanSerifSC-Regular.otf in Resources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000021 /* SourceHanSerifSC-Regular.otf */; };
+		64AE68282FB6C76D004058EE /* MiSans-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000022 /* MiSans-Regular.ttf */; };
+		64AE68292FB6C76D004058EE /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000019 /* PrivacyInfo.xcprivacy */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -60,7 +106,7 @@
 		010000000000000000000008 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		010000000000000000000009 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		01000000000000000000000A /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
-		01000000000000000000000B /* lingyue.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = lingyue.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		01000000000000000000000B /* LingyueInternal.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = LingyueInternal.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		01000000000000000000000C /* ReaderView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReaderView.swift; sourceTree = "<group>"; };
 		01000000000000000000000D /* InAppBrowserView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InAppBrowserView.swift; sourceTree = "<group>"; };
 		01000000000000000000000E /* LibraryStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryStore.swift; sourceTree = "<group>"; };
@@ -72,8 +118,6 @@
 		010000000000000000000014 /* AppTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppTheme.swift; sourceTree = "<group>"; };
 		010000000000000000000015 /* BookDownloadManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookDownloadManager.swift; sourceTree = "<group>"; };
 		010000000000000000000016 /* DownloadsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadsView.swift; sourceTree = "<group>"; };
-		010000000000000000000021 /* SourceHanSerifSC-Regular.otf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "SourceHanSerifSC-Regular.otf"; sourceTree = "<group>"; };
-		010000000000000000000022 /* MiSans-Regular.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "MiSans-Regular.ttf"; sourceTree = "<group>"; };
 		010000000000000000000018 /* PageCurlPager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PageCurlPager.swift; sourceTree = "<group>"; };
 		010000000000000000000019 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		01000000000000000000001A /* TabBarVisibility.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabBarVisibility.swift; sourceTree = "<group>"; };
@@ -83,6 +127,8 @@
 		01000000000000000000001E /* DebugLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugLog.swift; sourceTree = "<group>"; };
 		01000000000000000000001F /* ReaderDiagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReaderDiagnostics.swift; sourceTree = "<group>"; };
 		010000000000000000000020 /* ReaderDiagnosticsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReaderDiagnosticsView.swift; sourceTree = "<group>"; };
+		010000000000000000000021 /* SourceHanSerifSC-Regular.otf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "SourceHanSerifSC-Regular.otf"; sourceTree = "<group>"; };
+		010000000000000000000022 /* MiSans-Regular.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "MiSans-Regular.ttf"; sourceTree = "<group>"; };
 		010000000000000000000023 /* WebViewSourceLoader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebViewSourceLoader.swift; sourceTree = "<group>"; };
 		010000000000000000000024 /* CompositeSourceLoader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompositeSourceLoader.swift; sourceTree = "<group>"; };
 		010000000000000000000025 /* FileEditableSourceStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileEditableSourceStore.swift; sourceTree = "<group>"; };
@@ -92,6 +138,11 @@
 		010000000000000000000029 /* FileSourcePreferenceStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileSourcePreferenceStore.swift; sourceTree = "<group>"; };
 		01000000000000000000002A /* SourceEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SourceEditorView.swift; sourceTree = "<group>"; };
 		01000000000000000000002B /* SourceTestSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SourceTestSheet.swift; sourceTree = "<group>"; };
+		01000000000000000000002D /* AddSourceURLView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddSourceURLView.swift; sourceTree = "<group>"; };
+		01000000000000000000002E /* SourceReviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SourceReviewView.swift; sourceTree = "<group>"; };
+		01000000000000000000002F /* FileSourceValidationStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileSourceValidationStore.swift; sourceTree = "<group>"; };
+		64AE682D2FB6C76D004058EE /* LingyueAppStore.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = LingyueAppStore.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		64AE682E2FB6C76D004058EE /* Info-AppStore.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "Info-AppStore.plist"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -101,6 +152,14 @@
 			files = (
 				010000000000000000000703 /* LingyueCore in Frameworks */,
 				010000000000000000000705 /* LingyueInternalSources in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		64AE68222FB6C76D004058EE /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				64AE68232FB6C76D004058EE /* LingyueCore in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -132,7 +191,8 @@
 		010000000000000000000303 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				01000000000000000000000B /* lingyue.app */,
+				01000000000000000000000B /* LingyueInternal.app */,
+				64AE682D2FB6C76D004058EE /* LingyueAppStore.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -155,6 +215,7 @@
 				010000000000000000000024 /* CompositeSourceLoader.swift */,
 				010000000000000000000025 /* FileEditableSourceStore.swift */,
 				010000000000000000000029 /* FileSourcePreferenceStore.swift */,
+				01000000000000000000002F /* FileSourceValidationStore.swift */,
 				010000000000000000000026 /* AppStoreSourceRegistry.swift */,
 				010000000000000000000027 /* SourceStack.swift */,
 				010000000000000000000015 /* BookDownloadManager.swift */,
@@ -189,20 +250,11 @@
 			path = Views;
 			sourceTree = "<group>";
 		};
-		010000000000000000000309 /* Settings */ = {
-			isa = PBXGroup;
-			children = (
-				010000000000000000000028 /* SourcesListView.swift */,
-				01000000000000000000002A /* SourceEditorView.swift */,
-				01000000000000000000002B /* SourceTestSheet.swift */,
-			);
-			path = Settings;
-			sourceTree = "<group>";
-		};
 		010000000000000000000307 /* SupportingFiles */ = {
 			isa = PBXGroup;
 			children = (
 				01000000000000000000000A /* Info.plist */,
+				64AE682E2FB6C76D004058EE /* Info-AppStore.plist */,
 				010000000000000000000019 /* PrivacyInfo.xcprivacy */,
 				010000000000000000000308 /* Fonts */,
 			);
@@ -218,12 +270,24 @@
 			path = Fonts;
 			sourceTree = "<group>";
 		};
+		010000000000000000000309 /* Settings */ = {
+			isa = PBXGroup;
+			children = (
+				010000000000000000000028 /* SourcesListView.swift */,
+				01000000000000000000002D /* AddSourceURLView.swift */,
+				01000000000000000000002E /* SourceReviewView.swift */,
+				01000000000000000000002A /* SourceEditorView.swift */,
+				01000000000000000000002B /* SourceTestSheet.swift */,
+			);
+			path = Settings;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		010000000000000000000401 /* lingyue */ = {
+		010000000000000000000401 /* LingyueInternal */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = 010000000000000000000501 /* Build configuration list for PBXNativeTarget "lingyue" */;
+			buildConfigurationList = 010000000000000000000501 /* Build configuration list for PBXNativeTarget "LingyueInternal" */;
 			buildPhases = (
 				010000000000000000000202 /* Sources */,
 				010000000000000000000201 /* Frameworks */,
@@ -233,13 +297,33 @@
 			);
 			dependencies = (
 			);
-			name = lingyue;
+			name = LingyueInternal;
 			packageProductDependencies = (
 				010000000000000000000702 /* LingyueCore */,
 				010000000000000000000704 /* LingyueInternalSources */,
 			);
 			productName = lingyue;
-			productReference = 01000000000000000000000B /* lingyue.app */;
+			productReference = 01000000000000000000000B /* LingyueInternal.app */;
+			productType = "com.apple.product-type.application";
+		};
+		64AE67F82FB6C76D004058EE /* LingyueAppStore */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 64AE682A2FB6C76D004058EE /* Build configuration list for PBXNativeTarget "LingyueAppStore" */;
+			buildPhases = (
+				64AE67FB2FB6C76D004058EE /* Sources */,
+				64AE68222FB6C76D004058EE /* Frameworks */,
+				64AE68252FB6C76D004058EE /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = LingyueAppStore;
+			packageProductDependencies = (
+				64AE67F92FB6C76D004058EE /* LingyueCore */,
+			);
+			productName = lingyue;
+			productReference = 64AE682D2FB6C76D004058EE /* LingyueAppStore.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -275,7 +359,8 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				010000000000000000000401 /* lingyue */,
+				010000000000000000000401 /* LingyueInternal */,
+				64AE67F82FB6C76D004058EE /* LingyueAppStore */,
 			);
 		};
 /* End PBXProject section */
@@ -289,6 +374,17 @@
 				01000000000000000000011F /* SourceHanSerifSC-Regular.otf in Resources */,
 				010000000000000000000120 /* MiSans-Regular.ttf in Resources */,
 				010000000000000000000117 /* PrivacyInfo.xcprivacy in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		64AE68252FB6C76D004058EE /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				64AE68262FB6C76D004058EE /* Assets.xcassets in Resources */,
+				64AE68272FB6C76D004058EE /* SourceHanSerifSC-Regular.otf in Resources */,
+				64AE68282FB6C76D004058EE /* MiSans-Regular.ttf in Resources */,
+				64AE68292FB6C76D004058EE /* PrivacyInfo.xcprivacy in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -324,6 +420,9 @@
 				010000000000000000000126 /* SourcesListView.swift in Sources */,
 				010000000000000000000128 /* SourceEditorView.swift in Sources */,
 				010000000000000000000129 /* SourceTestSheet.swift in Sources */,
+				01000000000000000000012B /* AddSourceURLView.swift in Sources */,
+				01000000000000000000012C /* SourceReviewView.swift in Sources */,
+				01000000000000000000012D /* FileSourceValidationStore.swift in Sources */,
 				01000000000000000000010F /* CustomAlertView.swift in Sources */,
 				010000000000000000000110 /* ModalContainer.swift in Sources */,
 				010000000000000000000111 /* InputModalView.swift in Sources */,
@@ -334,6 +433,51 @@
 				01000000000000000000011C /* DebugLog.swift in Sources */,
 				01000000000000000000011D /* ReaderDiagnostics.swift in Sources */,
 				01000000000000000000011E /* ReaderDiagnosticsView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		64AE67FB2FB6C76D004058EE /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				64AE67FC2FB6C76D004058EE /* LingyueApp.swift in Sources */,
+				64AE67FD2FB6C76D004058EE /* ContentView.swift in Sources */,
+				64AE67FE2FB6C76D004058EE /* Novel.swift in Sources */,
+				64AE67FF2FB6C76D004058EE /* ReaderStyle.swift in Sources */,
+				64AE68002FB6C76D004058EE /* LibraryView.swift in Sources */,
+				64AE68012FB6C76D004058EE /* ReadingStatsView.swift in Sources */,
+				64AE68022FB6C76D004058EE /* ReadingHistoryView.swift in Sources */,
+				64AE68032FB6C76D004058EE /* DiscoveryView.swift in Sources */,
+				64AE68042FB6C76D004058EE /* SettingsView.swift in Sources */,
+				64AE68052FB6C76D004058EE /* ReaderView.swift in Sources */,
+				64AE68062FB6C76D004058EE /* PageCurlPager.swift in Sources */,
+				64AE68072FB6C76D004058EE /* TabBarVisibility.swift in Sources */,
+				64AE68082FB6C76D004058EE /* InAppBrowserView.swift in Sources */,
+				64AE68092FB6C76D004058EE /* LibraryStore.swift in Sources */,
+				64AE680A2FB6C76D004058EE /* BookImportService.swift in Sources */,
+				64AE680B2FB6C76D004058EE /* WebRenderingService.swift in Sources */,
+				64AE680C2FB6C76D004058EE /* WebViewSourceLoader.swift in Sources */,
+				64AE680D2FB6C76D004058EE /* CompositeSourceLoader.swift in Sources */,
+				64AE680E2FB6C76D004058EE /* FileEditableSourceStore.swift in Sources */,
+				64AE680F2FB6C76D004058EE /* FileSourcePreferenceStore.swift in Sources */,
+				64AE68102FB6C76D004058EE /* AppStoreSourceRegistry.swift in Sources */,
+				64AE68112FB6C76D004058EE /* SourceStack.swift in Sources */,
+				64AE68122FB6C76D004058EE /* SourcesListView.swift in Sources */,
+				64AE68132FB6C76D004058EE /* SourceEditorView.swift in Sources */,
+				64AE68142FB6C76D004058EE /* SourceTestSheet.swift in Sources */,
+				64AE68152FB6C76D004058EE /* AddSourceURLView.swift in Sources */,
+				64AE68162FB6C76D004058EE /* SourceReviewView.swift in Sources */,
+				64AE68172FB6C76D004058EE /* FileSourceValidationStore.swift in Sources */,
+				64AE68182FB6C76D004058EE /* CustomAlertView.swift in Sources */,
+				64AE68192FB6C76D004058EE /* ModalContainer.swift in Sources */,
+				64AE681A2FB6C76D004058EE /* InputModalView.swift in Sources */,
+				64AE681B2FB6C76D004058EE /* OverlayManager.swift in Sources */,
+				64AE681C2FB6C76D004058EE /* AppTheme.swift in Sources */,
+				64AE681D2FB6C76D004058EE /* BookDownloadManager.swift in Sources */,
+				64AE681E2FB6C76D004058EE /* DownloadsView.swift in Sources */,
+				64AE681F2FB6C76D004058EE /* DebugLog.swift in Sources */,
+				64AE68202FB6C76D004058EE /* ReaderDiagnostics.swift in Sources */,
+				64AE68212FB6C76D004058EE /* ReaderDiagnosticsView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -470,11 +614,12 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.lingyue.reader;
+				PRODUCT_BUNDLE_IDENTIFIER = com.lingyue.reader.internal;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
 				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG LINGYUE_INTERNAL";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -498,11 +643,70 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.lingyue.reader.internal;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = LINGYUE_INTERNAL;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		64AE682B2FB6C76D004058EE /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 8;
+				DEVELOPMENT_ASSET_PATHS = "";
+				DEVELOPMENT_TEAM = 749JX9NLVL;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = lingyue/SupportingFiles/Info-AppStore.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.lingyue.reader;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
 				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		64AE682C2FB6C76D004058EE /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 8;
+				DEVELOPMENT_ASSET_PATHS = "";
+				DEVELOPMENT_TEAM = 749JX9NLVL;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = lingyue/SupportingFiles/Info-AppStore.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.lingyue.reader;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -512,7 +716,7 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		010000000000000000000501 /* Build configuration list for PBXNativeTarget "lingyue" */ = {
+		010000000000000000000501 /* Build configuration list for PBXNativeTarget "LingyueInternal" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				010000000000000000000603 /* Debug */,
@@ -526,6 +730,15 @@
 			buildConfigurations = (
 				010000000000000000000601 /* Debug */,
 				010000000000000000000602 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		64AE682A2FB6C76D004058EE /* Build configuration list for PBXNativeTarget "LingyueAppStore" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				64AE682B2FB6C76D004058EE /* Debug */,
+				64AE682C2FB6C76D004058EE /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
@@ -551,6 +764,10 @@
 		010000000000000000000704 /* LingyueInternalSources */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = LingyueInternalSources;
+		};
+		64AE67F92FB6C76D004058EE /* LingyueCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = LingyueCore;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

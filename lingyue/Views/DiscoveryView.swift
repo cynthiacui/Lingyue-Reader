@@ -1,7 +1,6 @@
 import SwiftUI
 import Foundation
 import LingyueCore
-import LingyueInternalSources
 
 struct DiscoveryView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
@@ -630,7 +629,7 @@ private struct DiscoverySource: Identifiable, Hashable {
         if let homepageURL {
             return homepageURL
         }
-        return URL(string: "https://www.52shuku.net/")!
+        return URL(string: "about:blank")!
     }
 
     func makeSearchRequest(for query: String) -> URLRequest? {
@@ -755,7 +754,9 @@ private struct DiscoverySourceSearchRoute: Hashable {
 }
 
 private enum DiscoverySourceCatalog {
-    static let searchRoutes: Set<DiscoverySourceSearchRoute> = [
+    static let searchRoutes: Set<DiscoverySourceSearchRoute> = {
+#if LINGYUE_INTERNAL
+        return [
         DiscoverySourceSearchRoute(
             sourceID: "ESJ轻小说",
             endpoint: "https://www.esjzone.cc/tags/{query}/",
@@ -869,7 +870,11 @@ private enum DiscoverySourceCatalog {
             method: .get,
             queryKey: "q"
         )
-    ]
+        ]
+#else
+        return []
+#endif
+    }()
 
     private static let routeBySourceID: [String: DiscoverySourceSearchRoute] = {
         Dictionary(uniqueKeysWithValues: searchRoutes.map { ($0.sourceID, $0) })
@@ -883,7 +888,9 @@ private enum DiscoverySourceCatalog {
         sources.filter { $0.isSearchable }
     }
 
-    static let sources: [DiscoverySource] = [
+    static let sources: [DiscoverySource] = {
+#if LINGYUE_INTERNAL
+        return [
         DiscoverySource(name: "破万卷小说", tagline: "各類小說作品齊全", homepageURLString: "https://www.powanjuan.cc/", searchRoute: route(for: "破万卷小说")),
         DiscoverySource(name: "大尾笔趣阁", tagline: "笔趣阁热门书库", homepageURLString: "https://www.daweixs.com/", searchRoute: route(for: "大尾笔趣阁")),
         DiscoverySource(name: "ESJ轻小说", tagline: "日韩轻小说在线阅读", homepageURLString: "https://www.esjzone.cc/", searchRoute: route(for: "ESJ轻小说")),
@@ -900,7 +907,11 @@ private enum DiscoverySourceCatalog {
         DiscoverySource(name: "半夏小说", tagline: "優質在線小說閱讀", homepageURLString: "https://www.xbanxia.cc/", searchRoute: route(for: "半夏小说")),
         DiscoverySource(name: "52书库2", tagline: "热门网络小说齐全速度快", searchRoute: route(for: "52书库2")),
         DiscoverySource(name: "无忧书城", tagline: "古典名著與經典在線閱讀", homepageURLString: "https://www.51shucheng.net/", searchRoute: route(for: "无忧书城"))
-    ]
+        ]
+#else
+        return []
+#endif
+    }()
 }
 
 private struct DiscoveryRawSearchHit: Hashable {
@@ -1680,6 +1691,9 @@ actor DiscoverySearchService {
     }
 
     private func parseDirectResults(source: DiscoverySource, html: String) -> [ParsedSourceResult] {
+#if !LINGYUE_INTERNAL
+        return parseGenericLinkResults(html: html, source: source)
+#else
         switch source.id {
         case "ESJ轻小说":
             return parseESJResults(html: html)
@@ -1712,8 +1726,10 @@ actor DiscoverySearchService {
         default:
             return parseGenericLinkResults(html: html, source: source)
         }
+#endif
     }
 
+#if LINGYUE_INTERNAL
     /// daweixs.com search returns a `<ul class="txt-list txt-list-row5">` whose `<li>`s carry
     /// the columns `s1` (category) … `s5` (date). The first `<li>` is a header with `<b>`
     /// labels and no `<a>`, so we filter it by requiring a real link inside the `s2` cell.
@@ -2183,6 +2199,7 @@ actor DiscoverySearchService {
 
         return results
     }
+#endif
 
     private func parseGenericLinkResults(html: String, source: DiscoverySource) -> [ParsedSourceResult] {
         let blocks = regexMatches(pattern: #"<a[^>]+href=\"([^\"]+)\"[^>]*>([\s\S]*?)</a>"#, in: html, captureGroup: 0)
@@ -2210,6 +2227,7 @@ actor DiscoverySearchService {
         return results
     }
 
+#if LINGYUE_INTERNAL
     private func parsePowanjuanResults(html: String) -> [ParsedSourceResult] {
         let blocks = regexMatches(pattern: #"<li>\s*<div class=\"cover\">[\s\S]*?</li>"#, in: html)
         guard !blocks.isEmpty else { return [] }
@@ -2239,6 +2257,7 @@ actor DiscoverySearchService {
 
         return results
     }
+#endif
 
     private func regexFirstMatch(pattern: String, in text: String, captureGroup: Int = 1) -> String? {
         guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else { return nil }

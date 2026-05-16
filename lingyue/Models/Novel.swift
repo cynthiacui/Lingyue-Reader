@@ -160,7 +160,9 @@ enum BookSourceRegistry {
         }
     }
 
-    private static let sources: [SourcePattern] = [
+    private static let sources: [SourcePattern] = {
+#if LINGYUE_INTERNAL
+        return [
         SourcePattern(name: "笔趣阁小说", hosts: ["bqgl.cc"]),
         SourcePattern(name: "大尾笔趣阁", hosts: ["daweixs.com"]),
         SourcePattern(
@@ -185,7 +187,11 @@ enum BookSourceRegistry {
         SourcePattern(name: "69书吧", hosts: ["69shuba.com"]),
         SourcePattern(name: "52书库", hosts: ["52shuku.net"]),
         SourcePattern(name: "无忧书城", hosts: ["51shucheng.net"])
-    ]
+        ]
+#else
+        return []
+#endif
+    }()
 
     /// Custom URL scheme used to mark books imported from a local `.txt` file. We don't store
     /// the original file URL (which would leak sandbox paths and be tied to a single device),
