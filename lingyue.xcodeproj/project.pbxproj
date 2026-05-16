@@ -49,6 +49,8 @@
 		01000000000000000000012B /* AddSourceURLView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01000000000000000000002D /* AddSourceURLView.swift */; };
 		01000000000000000000012C /* SourceReviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01000000000000000000002E /* SourceReviewView.swift */; };
 		01000000000000000000012D /* FileSourceValidationStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01000000000000000000002F /* FileSourceValidationStore.swift */; };
+		01000000000000000000012E /* BackupService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000030 /* BackupService.swift */; };
+		01000000000000000000012F /* BackupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000031 /* BackupView.swift */; };
 		010000000000000000000703 /* LingyueCore in Frameworks */ = {isa = PBXBuildFile; productRef = 010000000000000000000702 /* LingyueCore */; };
 		010000000000000000000705 /* LingyueInternalSources in Frameworks */ = {isa = PBXBuildFile; productRef = 010000000000000000000704 /* LingyueInternalSources */; };
 		64AE67FC2FB6C76D004058EE /* LingyueApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000001 /* LingyueApp.swift */; };
@@ -79,6 +81,8 @@
 		64AE68152FB6C76D004058EE /* AddSourceURLView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01000000000000000000002D /* AddSourceURLView.swift */; };
 		64AE68162FB6C76D004058EE /* SourceReviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01000000000000000000002E /* SourceReviewView.swift */; };
 		64AE68172FB6C76D004058EE /* FileSourceValidationStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01000000000000000000002F /* FileSourceValidationStore.swift */; };
+		64AE68F02FB6C76D004058EE /* BackupService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000030 /* BackupService.swift */; };
+		64AE68F12FB6C76D004058EE /* BackupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000031 /* BackupView.swift */; };
 		64AE68182FB6C76D004058EE /* CustomAlertView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000011 /* CustomAlertView.swift */; };
 		64AE68192FB6C76D004058EE /* ModalContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000012 /* ModalContainer.swift */; };
 		64AE681A2FB6C76D004058EE /* InputModalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000013 /* InputModalView.swift */; };
@@ -141,6 +145,8 @@
 		01000000000000000000002D /* AddSourceURLView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddSourceURLView.swift; sourceTree = "<group>"; };
 		01000000000000000000002E /* SourceReviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SourceReviewView.swift; sourceTree = "<group>"; };
 		01000000000000000000002F /* FileSourceValidationStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileSourceValidationStore.swift; sourceTree = "<group>"; };
+		010000000000000000000030 /* BackupService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackupService.swift; sourceTree = "<group>"; };
+		010000000000000000000031 /* BackupView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackupView.swift; sourceTree = "<group>"; };
 		64AE682D2FB6C76D004058EE /* LingyueAppStore.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = LingyueAppStore.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		64AE682E2FB6C76D004058EE /* Info-AppStore.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "Info-AppStore.plist"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -216,6 +222,7 @@
 				010000000000000000000025 /* FileEditableSourceStore.swift */,
 				010000000000000000000029 /* FileSourcePreferenceStore.swift */,
 				01000000000000000000002F /* FileSourceValidationStore.swift */,
+				010000000000000000000030 /* BackupService.swift */,
 				010000000000000000000026 /* AppStoreSourceRegistry.swift */,
 				010000000000000000000027 /* SourceStack.swift */,
 				010000000000000000000015 /* BookDownloadManager.swift */,
@@ -278,6 +285,7 @@
 				01000000000000000000002E /* SourceReviewView.swift */,
 				01000000000000000000002A /* SourceEditorView.swift */,
 				01000000000000000000002B /* SourceTestSheet.swift */,
+				010000000000000000000031 /* BackupView.swift */,
 			);
 			path = Settings;
 			sourceTree = "<group>";
@@ -423,6 +431,8 @@
 				01000000000000000000012B /* AddSourceURLView.swift in Sources */,
 				01000000000000000000012C /* SourceReviewView.swift in Sources */,
 				01000000000000000000012D /* FileSourceValidationStore.swift in Sources */,
+				01000000000000000000012E /* BackupService.swift in Sources */,
+				01000000000000000000012F /* BackupView.swift in Sources */,
 				01000000000000000000010F /* CustomAlertView.swift in Sources */,
 				010000000000000000000110 /* ModalContainer.swift in Sources */,
 				010000000000000000000111 /* InputModalView.swift in Sources */,
@@ -468,6 +478,8 @@
 				64AE68152FB6C76D004058EE /* AddSourceURLView.swift in Sources */,
 				64AE68162FB6C76D004058EE /* SourceReviewView.swift in Sources */,
 				64AE68172FB6C76D004058EE /* FileSourceValidationStore.swift in Sources */,
+				64AE68F02FB6C76D004058EE /* BackupService.swift in Sources */,
+				64AE68F12FB6C76D004058EE /* BackupView.swift in Sources */,
 				64AE68182FB6C76D004058EE /* CustomAlertView.swift in Sources */,
 				64AE68192FB6C76D004058EE /* ModalContainer.swift in Sources */,
 				64AE681A2FB6C76D004058EE /* InputModalView.swift in Sources */,

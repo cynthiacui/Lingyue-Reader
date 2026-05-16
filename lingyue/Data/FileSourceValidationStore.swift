@@ -66,6 +66,16 @@ public actor FileSourceValidationStore: SourceValidationStore {
         try persist(current)
     }
 
+    /// Phase 5.3 restore hook. Destructive: drops any existing records
+    /// and replaces with `validations`. Not in the `SourceValidationStore`
+    /// protocol because the store is device-local by design — only the
+    /// backup-restore path on the *same* device legitimately blows the
+    /// file away.
+    public func replaceAll(_ validations: [SourceValidation]) async throws {
+        let map = Dictionary(uniqueKeysWithValues: validations.map { ($0.ruleID, $0) })
+        try persist(map)
+    }
+
     // MARK: - Persistence
 
     private func persist(_ map: [UUID: SourceValidation]) throws {

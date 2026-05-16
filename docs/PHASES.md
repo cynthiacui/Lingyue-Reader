@@ -1433,14 +1433,20 @@ developer hard-codes a hostname directly in the App Store target's source.
    `strings -a … | grep -F <host>` against all 22 forbidden hosts
    returns zero matches on the LingyueAppStore Release `.app` main
    binary and the Debug `.app` (main + `.debug.dylib`).
-3. ⏳ §5.1 backup feature. Ship `.lingyue-backup` export + import
-   (LibraryStore, EditableSourceStore, reader bookmarks) in the
-   renamed `LingyueInternal` target so existing TestFlight testers
-   can carry their library across to the new `LingyueAppStore`
-   bundle ID install. (Originally planned to ship from the old
-   `lingyue` target before the rename, but the rename happened
-   first; the migration now flows from Internal → AppStore via
-   the file rather than from old `lingyue` → both new targets.)
+3. ✅ §5.1 backup feature. Settings → 备份与恢复 routes to a
+   `BackupView` that exports a `BackupArchive` JSON envelope
+   (versioned, ISO-8601-dated) via SwiftUI `.fileExporter` →
+   UIDocumentPicker, and imports via `.fileImporter` with a
+   destructive-confirm sheet before the restore lands. The archive
+   covers `LibraryStore.categories` + `readingStats`, plus
+   `EditableSourceStore`, `SourcePreferenceStore`, and the
+   device-local `SourceValidationStore`. Both targets ship the
+   same UI; the `buildVariant` field on the archive records which
+   target produced it so cross-variant restores (Internal →
+   AppStore) are at least diagnosable. Suggested filename is
+   `lingyue-backup-YYYY-MM-DD.json` — the `.lingyue-backup` UTI
+   was deferred to avoid the Info.plist round-trip; the file is
+   plain JSON so Files.app previews it honestly.
 4. ⏳ §5.1 ASC operations (out of code). Create the new
    `com.lingyue.reader.internal` App Store Connect record, invite
    testers to its new TestFlight group. Existing

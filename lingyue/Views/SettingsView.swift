@@ -116,6 +116,7 @@ struct SettingsView: View {
                     appThemeSection
                     storageSection
                     sourcesSection
+                    backupSection
 #if LINGYUE_INTERNAL
                     diagnosticsSection
                     labSection
@@ -401,6 +402,31 @@ struct SettingsView: View {
                 } label: {
                     HStack {
                         Label("我的书源", systemImage: "books.vertical")
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(theme.secondaryText)
+                    }
+                    .frame(minHeight: 36)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+            .foregroundStyle(theme.primaryText)
+            .readerCard()
+        }
+    }
+
+    private var backupSection: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            SectionHeader(title: "备份与恢复")
+
+            VStack(spacing: 12) {
+                NavigationLink {
+                    BackupView()
+                } label: {
+                    HStack {
+                        Label("导出与导入数据", systemImage: "externaldrive.badge.timemachine")
                         Spacer()
                         Image(systemName: "chevron.right")
                             .font(.footnote.weight(.semibold))
