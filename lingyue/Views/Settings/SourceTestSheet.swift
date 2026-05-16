@@ -31,11 +31,29 @@ struct SourceTestSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     let rule: SourceRule
+    /// Fires when `run()` finishes with a *successful* outcome for the
+    /// currently-selected step. The Review screen reads this to flip the
+    /// block status to 已识别 without forcing the user to interpret raw
+    /// results themselves. The closure is also invoked on failure (with
+    /// `passed: false`) so callers can mark a block 测试失败.
+    var onResult: ((Step, _ passed: Bool) -> Void)?
 
-    @State private var step: Step = .search
-    @State private var input: String = ""
+    @State private var step: Step
+    @State private var input: String
     @State private var isRunning = false
     @State private var outcome: Outcome?
+
+    init(
+        rule: SourceRule,
+        initialStep: Step? = nil,
+        initialInput: String? = nil,
+        onResult: ((Step, _ passed: Bool) -> Void)? = nil
+    ) {
+        self.rule = rule
+        self.onResult = onResult
+        self._step = State(initialValue: initialStep ?? .search)
+        self._input = State(initialValue: initialInput ?? "")
+    }
 
     var body: some View {
         Form {
@@ -163,6 +181,23 @@ struct SourceTestSheet: View {
         }
         outcome = result
         isRunning = false
+        onResult?(step, Self.didPass(result))
+    }
+
+    /// "Did this outcome demonstrate the step actually works?" — used by
+    /// the Review screen to flip per-block status. Non-empty results
+    /// count as a pass; empty hits / no detection / parse failure all
+    /// count as test failures. The Test sheet itself still shows the
+    /// raw result so a power user can disagree with the heuristic.
+    private static func didPass(_ outcome: Outcome) -> Bool {
+        switch outcome {
+        case .search(let hits): return !hits.isEmpty
+        case .detail(let detail): return !detail.title.isEmpty
+        case .catalog(let chapters): return !chapters.isEmpty
+        case .chapter(let content): return !content.paragraphs.isEmpty
+        case .detection(let detection, _): return detection != nil
+        case .failure: return false
+        }
     }
 
     // MARK: - Results

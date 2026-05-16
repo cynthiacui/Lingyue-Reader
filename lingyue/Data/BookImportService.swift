@@ -57,6 +57,7 @@ enum WebBookImportError: LocalizedError {
     case noChaptersFound
     case emptyChapterContent
     case sourceBlockedContent
+    case rateLimited
     case badStatus(Int)
     case unsupportedEncoding
     case unreadableFile
@@ -71,7 +72,9 @@ enum WebBookImportError: LocalizedError {
         case .emptyChapterContent:
             return "章节页面可以打开，但没有解析到正文内容。"
         case .sourceBlockedContent:
-            return "该来源限制章节正文显示，请尝试其他来源。"
+            return "该来源已将章节正文移至 APP 内，网页版无法显示。请在「发现」重新搜索本书并从其他来源导入。"
+        case .rateLimited:
+            return "该来源短时间内请求过多，请稍后再试。"
         case .badStatus(let statusCode):
             return "网页请求失败，状态码 \(statusCode)。"
         case .unsupportedEncoding:
@@ -88,11 +91,14 @@ final class BookImportService: Sendable {
     static let shared = BookImportService()
 
     /// Sentinel content stored in the chapter cache for chapters whose source permanently
-    /// refuses to serve the body (e.g. 努努书坊 paywalls its newest chapters with a
-    /// "请下载努努书坊APP" gate). Distinct from a transient network error: retrying these
-    /// against the same source won't help, so we persist the marker and treat the chapter
-    /// as "accounted for" in download progress while still surfacing the original
-    /// `sourceBlockedContent` error to the reader.
+    /// refuses to serve the body. 努努书坊 now gates every chapter site-wide behind a
+    /// "请下载努努书坊APP" / "由于版权问题不能显示" wall (verified 2026-05-14 — first chapter
+    /// of any book returns the same gate). Discovery's `filterPaywalledHits` keeps new
+    /// imports off nunu, but books imported before that filter landed still carry nunu
+    /// chapter URLs, so the reader path needs this sentinel to short-circuit reattempts.
+    /// Distinct from a transient network error: retrying against the same source won't
+    /// help, so we persist the marker and treat the chapter as "accounted for" in
+    /// download progress while still surfacing `sourceBlockedContent` to the reader.
     static let sourceBlockedContentSentinel = "__lingyue.source_blocked__\n"
 
     static func isSourceBlockedSentinelContent(_ content: String) -> Bool {
@@ -103,7 +109,11 @@ final class BookImportService: Sendable {
     /// should import all chapters below this high ceiling; hitting it means the extractor likely
     /// matched navigation/archive links as chapters.
     private let runawayChapterLimit = 20_000
+#if LINGYUE_INTERNAL
     private let biqugeAPIHosts = ["apiqu.cc", "apige.cc"]
+#else
+    private let biqugeAPIHosts: [String] = []
+#endif
     private let catalogRepairCache = OSAllocatedUnfairLock<[UUID: Bool]>(initialState: [:])
     private let httpSession: URLSession
 
@@ -141,6 +151,80 @@ final class BookImportService: Sendable {
             sourceURL: url,
             detectedChapterCount: chapterLinks.count,
             htmlSnapshot: html
+        )
+    }
+
+    /// Phase 4 §4.4 — rule-routed import. Resolves the source by ID and
+    /// drives its `fetchDetail` + `fetchCatalog` pipeline (which already
+    /// respects `enginePerStep`, so `.webView` rules use the headless
+    /// renderer and cookies sync from the visible browser). Skips the
+    /// heuristic metadata re-parse: the rule already produced an
+    /// authoritative `BookDetail`.
+    ///
+    /// `BookSourceError` cases map to user-readable `WebBookImportError`
+    /// cases the existing failure overlay knows how to render. The
+    /// browser stays open on failure so the user can retry or pick a
+    /// different source.
+    func importBook(
+        detection: DetectionResult,
+        registry: any LingyueCore.BookSourceRegistry
+    ) async throws -> Novel {
+        guard let source = try await registry.source(withID: detection.sourceID) else {
+            // Source disabled or deleted between the detection landing
+            // and the user tapping Import. Treat as "nothing here" rather
+            // than a hard error — the prompt was speculative.
+            throw WebBookImportError.noBookDetected
+        }
+
+        let detail: BookDetail
+        let chapterLinks: [LingyueCore.ChapterLink]
+        do {
+            detail = try await source.fetchDetail(url: detection.detection.detailURL)
+            chapterLinks = try await source.fetchCatalog(url: detail.catalogURL)
+        } catch BookSourceError.rateLimited {
+            throw WebBookImportError.rateLimited
+        } catch BookSourceError.sourceBlocked {
+            throw WebBookImportError.sourceBlockedContent
+        } catch BookSourceError.parseFailed, BookSourceError.ruleIncomplete, BookSourceError.unsupportedURL {
+            throw WebBookImportError.noBookDetected
+        } catch BookSourceError.loadFailed {
+            throw WebBookImportError.badStatus(-1)
+        }
+
+        guard !chapterLinks.isEmpty else {
+            throw WebBookImportError.noChaptersFound
+        }
+        // Same runaway-catalog fuse the heuristic path uses — defends
+        // against a rule whose `chaptersSelector` accidentally matches
+        // navigation/archive links.
+        guard chapterLinks.count <= runawayChapterLimit else {
+            throw WebBookImportError.suspiciousChapterCatalog(
+                count: chapterLinks.count,
+                limit: runawayChapterLimit
+            )
+        }
+
+        let chapters = chapterLinks.map {
+            NovelChapter(
+                title: $0.title,
+                content: "",
+                sourceURLString: $0.url.absoluteString
+            )
+        }
+        let title = detail.title.isEmpty ? (detection.detection.title ?? detection.sourceName) : detail.title
+        return Novel(
+            title: title,
+            author: detail.author?.isEmpty == false ? detail.author! : "未知作者",
+            genre: detail.tags.first ?? "",
+            summary: detail.description ?? "",
+            lastChapter: "",
+            progress: 0,
+            readMinutes: 0,
+            coverPalette: NovelCoverPalette.deterministic(for: title),
+            coverImageURLString: detail.coverURL?.absoluteString,
+            isFeatured: false,
+            sourceURLString: detail.detailURL.absoluteString,
+            chapters: chapters
         )
     }
 
@@ -544,6 +628,9 @@ final class BookImportService: Sendable {
     }
 
     private func sourceSpecificBookTitle(in html: String, url: URL) -> String? {
+#if !LINGYUE_INTERNAL
+        return nil
+#else
         let host = url.host(percentEncoded: false)?.lowercased() ?? ""
         let isCatalogSource = host.contains("bqg")
             || host.contains("biqu")
@@ -582,6 +669,7 @@ final class BookImportService: Sendable {
         }
 
         return nil
+#endif
     }
 
     private func isSpecificBookTitle(_ title: String) -> Bool {
@@ -664,8 +752,12 @@ final class BookImportService: Sendable {
     }
 
     private func isHJWZWHost(_ url: URL) -> Bool {
+#if !LINGYUE_INTERNAL
+        return false
+#else
         guard let host = url.host(percentEncoded: false)?.lowercased() else { return false }
         return host == "hjwzw.com" || host.hasSuffix(".hjwzw.com")
+#endif
     }
 
     private func isHJWZWImportableBookPath(_ path: String) -> Bool {
@@ -857,6 +949,9 @@ final class BookImportService: Sendable {
     }
 
     private func biqugeAPICatalogLinks(for sourceURL: URL, sourceBookID: String?) async -> [ChapterLink] {
+#if !LINGYUE_INTERNAL
+        return []
+#else
         // Phase 2.4 cut-over: when the registry-routing flag is on,
         // try the rule-engine path first. Failures or empty results
         // fall through to the legacy parser below — this is a
@@ -890,6 +985,7 @@ final class BookImportService: Sendable {
             }
             return ChapterLink(title: title, url: url)
         }
+#endif
     }
 
     /// UserDefaults flag — flipped on in Settings → Lab when we're
@@ -911,6 +1007,9 @@ final class BookImportService: Sendable {
     /// adapter's job, and going through the throw path keeps the
     /// dispatch layer ignorant of adapter internals.
     private func registryRoutedBiqugeAPICatalogLinks(for sourceURL: URL) async -> [ChapterLink] {
+#if !LINGYUE_INTERNAL
+        return []
+#else
         do {
             guard let source = try await SourceStack.live.registry.source(withID: "internal:biquge-api") else {
                 return []
@@ -933,6 +1032,7 @@ final class BookImportService: Sendable {
             ])
             return []
         }
+#endif
     }
 
     /// Phase 2.4 routed-5dxs path. Same shadow-route pattern as
@@ -940,6 +1040,9 @@ final class BookImportService: Sendable {
     /// to legacy, host-mismatch (`unsupportedURL`) is silent, every
     /// other error logs once for the TestFlight ramp.
     private func registryRoutedFivedxsCatalogLinks(for sourceURL: URL) async -> [ChapterLink] {
+#if !LINGYUE_INTERNAL
+        return []
+#else
         do {
             guard let source = try await SourceStack.live.registry.source(withID: "internal:5dxs") else {
                 return []
@@ -960,6 +1063,7 @@ final class BookImportService: Sendable {
             ])
             return []
         }
+#endif
     }
 
     /// 就爱读小说 (5dxs.net / adxs.net) paginates the chapter catalog 10-per-page on the book
@@ -967,6 +1071,9 @@ final class BookImportService: Sendable {
     /// — calling it once with size=2000 retrieves the entire catalog in a single request,
     /// avoiding the need to walk dozens of pages.
     private func fivedxsCatalogLinks(for sourceURL: URL, sourceBookID: String?) async -> [ChapterLink] {
+#if !LINGYUE_INTERNAL
+        return []
+#else
         if Self.useSourceRegistryForCatalog {
             let routed = await registryRoutedFivedxsCatalogLinks(for: sourceURL)
             if !routed.isEmpty {
@@ -1010,12 +1117,16 @@ final class BookImportService: Sendable {
             }
         }
         return []
+#endif
     }
 
     /// 黄金屋 reader pages only expose the nearby previous/next-ish chapter region in-page.
     /// Its full catalog is a stable `/Book/Chapter/<book id>` page, so fetch that directly
     /// whenever we can identify the book id from either the detail, catalog, or reader URL.
     private func hjwzwCatalogLinks(for sourceURL: URL, sourceBookID: String?) async -> [ChapterLink] {
+#if !LINGYUE_INTERNAL
+        return []
+#else
         guard isHJWZWHost(sourceURL),
               let bookID = sourceBookID ?? bookID(from: sourceURL),
               let catalogURL = absoluteURL(from: "/Book/Chapter/\(bookID)", baseURL: sourceURL),
@@ -1033,6 +1144,7 @@ final class BookImportService: Sendable {
         } catch {
             return []
         }
+#endif
     }
 
     private func chapterListScore(_ links: [ChapterLink]) -> Int {
@@ -1098,10 +1210,12 @@ final class BookImportService: Sendable {
         if let ajaxURL = absoluteURL(from: "/ajax_novels/chapterlist/\(articleID).html", baseURL: baseURL) {
             urls.append(ajaxURL)
         }
+#if LINGYUE_INTERNAL
         if isHJWZWHost(baseURL),
            let hjwzwCatalogURL = absoluteURL(from: "/Book/Chapter/\(articleID)", baseURL: baseURL) {
             urls.append(hjwzwCatalogURL)
         }
+#endif
 
         return urls
     }
@@ -1288,6 +1402,9 @@ final class BookImportService: Sendable {
     /// `NovelChapter`. Host-mismatch is silent; other errors log once
     /// and return nil so the caller falls through.
     private func registryRoutedBiqugeAPIChapter(_ link: ChapterLink) async throws -> NovelChapter? {
+#if !LINGYUE_INTERNAL
+        return nil
+#else
         do {
             guard let source = try await SourceStack.live.registry.source(withID: "internal:biquge-api") else {
                 return nil
@@ -1316,11 +1433,16 @@ final class BookImportService: Sendable {
             ])
             return nil
         }
+#endif
     }
 
     private func isBiqugeAPISource(_ url: URL) -> Bool {
+#if !LINGYUE_INTERNAL
+        return false
+#else
         let host = url.host(percentEncoded: false)?.lowercased() ?? ""
         return host.contains("bqg") && url.absoluteString.contains("/book/")
+#endif
     }
 
     private func biqugeBookAndChapterID(from url: URL) -> (bookID: String, chapterID: String)? {
@@ -1951,6 +2073,28 @@ final class BookImportService: Sendable {
         guard title.count >= 2, title.count <= 80 else { return false }
         if isNonChapterButtonLabel(title) { return false }
         let path = url.path.lowercased()
+        let navPrefixes = [
+            "/list/", "/lists/",
+            "/sort/", "/sorts/",
+            "/category/", "/categories/",
+            "/cat/", "/cats/",
+            "/class/", "/classes/",
+            "/tag/", "/tags/",
+            "/author/", "/authors/",
+            "/topic/", "/topics/",
+            "/search/", "/searches/",
+            "/rank/", "/ranks/", "/ranking/", "/rankings/",
+            "/page/", "/pages/",
+            "/sitemap/",
+            "/recommend/", "/recommends/", "/recommendation/", "/recommendations/",
+            "/hot/", "/new/", "/full/", "/finish/", "/finished/",
+            "/about/", "/help/", "/contact/", "/login/", "/register/", "/user/", "/users/"
+        ]
+        for prefix in navPrefixes {
+            if path.hasPrefix(prefix) || path.contains(prefix) {
+                return false
+            }
+        }
         return path.range(of: #"/txt/\d+/\d+\.html$"#, options: .regularExpression) != nil
             || path.range(of: #"/read/\d+[_/]\d+\.html?$"#, options: .regularExpression) != nil
             || path.range(of: #"/book/read/\d+,\d+/?$"#, options: .regularExpression) != nil

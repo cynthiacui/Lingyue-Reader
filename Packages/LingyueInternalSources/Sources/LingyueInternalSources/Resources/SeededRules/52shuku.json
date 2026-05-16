@@ -61,7 +61,7 @@
     }
   },
   "catalog": {
-    "chaptersSelector": "div.book-list a, ul.chapter-list li a",
+    "chaptersSelector": "ul.list li.mulu a",
     "titleField": {
       "transforms": [{ "trim": {} }]
     },
@@ -77,7 +77,7 @@
       "transforms": [{ "trim": {} }]
     },
     "bodyField": {
-      "selector": "div#content, div.content",
+      "selector": "div#text, div.book_con",
       "attribute": "html",
       "transforms": [
         { "brToNewline": {} },

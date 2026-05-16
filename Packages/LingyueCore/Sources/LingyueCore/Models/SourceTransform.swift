@@ -47,4 +47,11 @@ public enum SourceTransform: Codable, Sendable, Hashable {
     /// SwiftSoup does this on `text()`, so this transform is mainly for
     /// values pulled from attributes via `attr(…)`.
     case decodeHTMLEntities
+
+    /// Discard the extracted value and emit the page's base URL string.
+    /// Used by fields like `catalogURLField` when the catalog lives on
+    /// the detail page itself: the rule wants the request URL, not
+    /// whatever text the selector dredges up. Without this transform a
+    /// `selector: nil` field returns the document's body text.
+    case useBaseURL
 }

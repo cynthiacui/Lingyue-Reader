@@ -57,7 +57,7 @@
   },
   "detail": {
     "titleField": {
-      "selector": "h1",
+      "selector": "div.info h1, h1:not(.logo)",
       "transforms": [{ "trim": {} }]
     },
     "catalogURLField": {
@@ -67,7 +67,7 @@
     }
   },
   "catalog": {
-    "chaptersSelector": "ul.chapter li a, div.book-list a",
+    "chaptersSelector": "h2.layout-tit:contains(正文) ~ div.section-box ul.section-list li a",
     "titleField": {
       "transforms": [{ "trim": {} }]
     },

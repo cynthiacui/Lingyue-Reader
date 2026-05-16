@@ -22,17 +22,15 @@ import UIKit
 final class ReaderDiagnostics: ObservableObject {
     static let shared = ReaderDiagnostics()
 
-    /// True for Debug builds and TestFlight installs; false on App Store
-    /// releases. App Store builds use a production `receipt`, while
-    /// TestFlight uses `sandboxReceipt` — checking the receipt URL is the
-    /// canonical Apple-blessed way to distinguish the two without
-    /// hard-coding bundle versions or relying on private API.
+    /// Compile-time gate for diagnostics + lab surfaces. True in the
+    /// `LingyueInternal` target (which sets `LINGYUE_INTERNAL`); false in
+    /// the App Store target so neither section, nor its strings, ships in
+    /// the public binary.
     static var isInternalBuild: Bool {
-        #if DEBUG
+        #if LINGYUE_INTERNAL
         return true
         #else
-        guard let url = Bundle.main.appStoreReceiptURL else { return false }
-        return url.lastPathComponent == "sandboxReceipt"
+        return false
         #endif
     }
 

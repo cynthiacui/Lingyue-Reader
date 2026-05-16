@@ -2,7 +2,7 @@ import Foundation
 import LingyueCore
 
 /// On-disk `SourcePreferenceStore` backed by a single JSON file at
-/// `Application Support/Lingyue/source-preferences.json`. Mirrors
+/// `Application Support/lingyue/source-preferences.json`. Mirrors
 /// `FileEditableSourceStore` in storage layout and atomic-write
 /// strategy so the two files behave consistently — a crash mid-write
 /// leaves the previous JSON intact.
@@ -88,6 +88,12 @@ public actor FileSourcePreferenceStore: SourcePreferenceStore {
         )
     }
 
+    /// Default location: `Application Support/lingyue/source-preferences.json`.
+    /// Lowercase `lingyue/` matches `LibraryStore` and
+    /// `FileEditableSourceStore` so all three stores share one directory
+    /// entry. The capital-L variant could collide case-only on the
+    /// case-insensitive iOS filesystem and wedge `createDirectory` into
+    /// EIO on iOS 26 simulator builds.
     private static func defaultFileURL() -> URL {
         let fm = FileManager.default
         let base = (try? fm.url(
@@ -97,7 +103,7 @@ public actor FileSourcePreferenceStore: SourcePreferenceStore {
             create: true
         )) ?? fm.urls(for: .documentDirectory, in: .userDomainMask).first!
         return base
-            .appendingPathComponent("Lingyue", isDirectory: true)
+            .appendingPathComponent("lingyue", isDirectory: true)
             .appendingPathComponent("source-preferences.json")
     }
 }

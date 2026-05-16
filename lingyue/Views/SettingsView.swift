@@ -26,6 +26,7 @@ struct SettingsView: View {
     /// for Biquge/5dxs catalog + Biquge chapter, falling through to
     /// the legacy implementation on any failure. The toggle only
     /// surfaces in internal builds — see `labSection`.
+#if LINGYUE_INTERNAL
     @AppStorage("lingyue.useSourceRegistryForCatalog") private var useSourceRegistryForCatalog = false
 
     /// Phase 3.3 lab toggle. When on, the Discovery search bar tries each source
@@ -35,6 +36,7 @@ struct SettingsView: View {
     /// default. Empty / failed registry runs still fall through, so this is purely
     /// additive — toggling it off restores 100% legacy behaviour.
     @AppStorage("lingyue.useRegistryForDiscoverySearch") private var useRegistryForDiscoverySearch = false
+#endif
 
     @State private var cacheSizeText = "计算中"
     @State private var cacheNotice: String?
@@ -114,10 +116,11 @@ struct SettingsView: View {
                     appThemeSection
                     storageSection
                     sourcesSection
-                    if ReaderDiagnostics.isInternalBuild {
-                        diagnosticsSection
-                        labSection
-                    }
+                    backupSection
+#if LINGYUE_INTERNAL
+                    diagnosticsSection
+                    labSection
+#endif
                 }
                 .padding(.top, 12)
                 .padding(.bottom, 24)
@@ -414,6 +417,32 @@ struct SettingsView: View {
         }
     }
 
+    private var backupSection: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            SectionHeader(title: "备份与恢复")
+
+            VStack(spacing: 12) {
+                NavigationLink {
+                    BackupView()
+                } label: {
+                    HStack {
+                        Label("导出与导入数据", systemImage: "externaldrive.badge.timemachine")
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(theme.secondaryText)
+                    }
+                    .frame(minHeight: 36)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+            .foregroundStyle(theme.primaryText)
+            .readerCard()
+        }
+    }
+
+#if LINGYUE_INTERNAL
     private var diagnosticsSection: some View {
         VStack(alignment: .leading, spacing: 14) {
             SectionHeader(title: "诊断")
@@ -477,6 +506,7 @@ struct SettingsView: View {
             .readerCard()
         }
     }
+#endif
 
     @MainActor
     private func refreshCacheSize() async {

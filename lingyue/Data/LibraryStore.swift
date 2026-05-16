@@ -338,6 +338,16 @@ final class LibraryStore: ObservableObject {
         await Self.persistReadingStats(statsSnapshot, to: statsURL)
     }
 
+    /// Phase 5.3 restore hook. `readingStats` is `private(set)` so other
+    /// views can't drift the ledger out from under the calendar/streak
+    /// UI; backup-restore is the one place it's legitimate to replace
+    /// the whole snapshot. Setting through the published property runs
+    /// the `didSet` save scheduler — the caller still calls `flush()`
+    /// afterwards so the restore lands on disk before a quit.
+    func replaceReadingStats(_ stats: ReadingStatsLedger) {
+        readingStats = stats
+    }
+
     var allNovels: [Novel] {
         categories.flatMap(\.novels)
     }

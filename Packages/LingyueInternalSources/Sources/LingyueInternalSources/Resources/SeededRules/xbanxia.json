@@ -49,7 +49,7 @@
   },
   "detail": {
     "titleField": {
-      "selector": "h1",
+      "selector": "div.book-describe h1, h1:not(#logo):not(.logo)",
       "transforms": [{ "trim": {} }]
     },
     "catalogURLField": {
@@ -59,7 +59,7 @@
     }
   },
   "catalog": {
-    "chaptersSelector": "div#list dd a, ul.chapter li a",
+    "chaptersSelector": "div.book-list ul li a, div#list dd a, ul.chapter li a",
     "titleField": {
       "transforms": [{ "trim": {} }]
     },
@@ -71,11 +71,11 @@
   },
   "chapter": {
     "titleField": {
-      "selector": "h1",
+      "selector": "h1#nr_title, h1.post-title",
       "transforms": [{ "trim": {} }]
     },
     "bodyField": {
-      "selector": "div#content, div.content",
+      "selector": "div#nr1, div#content, div.content",
       "attribute": "html",
       "transforms": [
         { "brToNewline": {} },
