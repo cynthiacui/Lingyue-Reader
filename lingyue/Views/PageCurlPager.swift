@@ -301,13 +301,21 @@ struct PageCurlPager: UIViewControllerRepresentable {
                     ])
                 }
                 // Apply any pending update that piled up during the gesture/transition.
+                // Defer one runloop tick — calling setViewControllers synchronously inside
+                // UIKit's didFinishAnimating(completed=false) leaves the displayed VC
+                // unchanged even with animated:false, so the next page renders blank
+                // (same nesting hazard 152d5c2 fixed for the animated-completion path).
                 if !isDismantled, let pending = pendingIndex, pending != shownIndex {
                     pendingIndex = nil
                     ReaderDiagnostics.shared.log(.info, "pager apply pending (post-gesture)", context: [
                         "to": String(pending),
                         "shown": String(shownIndex)
                     ])
-                    performTransition(to: pending, animated: false, in: pvc)
+                    DispatchQueue.main.async { [weak self, weak pvc] in
+                        guard let self = self, !self.isDismantled, let pvc = pvc,
+                              self.shownIndex != pending else { return }
+                        self.requestTransition(to: pending, animated: false, in: pvc)
+                    }
                 }
                 return
             }
