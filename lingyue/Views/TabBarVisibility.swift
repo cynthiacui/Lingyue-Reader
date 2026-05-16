@@ -7,6 +7,10 @@ import UIKit
 ///
 /// `viewDidAppear` hides the tab bar; `viewWillDisappear` shows it again, which fires before
 /// the pop animation has finished, so the tab bar is already in place when Library is revealed.
+///
+/// iPad iOS 18+ renders the tabs as a floating tab bar / sidebar that the legacy
+/// `tabBar.isHidden` toggle no longer reaches. Use the iOS 18 `setTabBarHidden(_:animated:)`
+/// API when available so the reader hides both presentations.
 struct TabBarVisibility: UIViewControllerRepresentable {
     let isHidden: Bool
 
@@ -33,16 +37,25 @@ final class TabBarVisibilityController: UIViewController {
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
-        tabBarController?.tabBar.isHidden = targetHidden
+        apply(targetHidden)
     }
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
-        tabBarController?.tabBar.isHidden = false
+        apply(false)
     }
 
     func applyIfVisible() {
         guard isViewLoaded, view.window != nil else { return }
-        tabBarController?.tabBar.isHidden = targetHidden
+        apply(targetHidden)
+    }
+
+    private func apply(_ hidden: Bool) {
+        guard let tabBarController else { return }
+        if #available(iOS 18.0, *) {
+            tabBarController.setTabBarHidden(hidden, animated: false)
+        } else {
+            tabBarController.tabBar.isHidden = hidden
+        }
     }
 }
