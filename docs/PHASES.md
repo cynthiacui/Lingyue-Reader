@@ -1446,12 +1446,17 @@ developer hard-codes a hostname directly in the App Store target's source.
    testers to its new TestFlight group. Existing
    `com.lingyue.reader` record stays for the eventual App Store
    submission.
-5. ⏳ §5.4 CI multi-surface scan. `Scripts/forbidden-hosts.txt` +
-   build job that runs `strings` / bundled-resource grep /
-   `assetutil --info` on the `LingyueAppStore` `.app` bundle. Fails
-   on any match. (Slice 2 manually verified the `strings` arm
-   passes; CI just automates and adds the bundled-resource +
-   asset-catalog arms.)
+5. ✅ §5.4 CI multi-surface scan. `Scripts/forbidden-hosts.txt`
+   lists 24 hosts (10 seeded homepages, 11 legacy host-pattern
+   catalog entries, 3 fast-path adapter hosts).
+   `Scripts/scan-appstore-binary.sh` runs all three scan arms
+   (strings, bundled JSON/plist/txt/strings, `assetutil --info`
+   on `Assets.car`) and exits non-zero on any match. Sanity-checked
+   locally: zero hits against the LingyueAppStore Release `.app`,
+   all 24 hits surfaced against the LingyueInternal Debug `.app`
+   (confirms the scan actually fires). Wiring this into a CI job
+   remains a project-infra task — the script is self-contained and
+   takes the `.app` path as its only argument.
 6. ⏳ Cross-target rule sync (deferred — not a Phase 5 requirement).
    Each target keeps its own per-app sandbox `EditableSourceStore`;
    users carry rules across manually via `.lingyue-backup`.
