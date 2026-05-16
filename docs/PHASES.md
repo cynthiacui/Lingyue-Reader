@@ -1306,6 +1306,13 @@ effort version. The two icon catalogs live under
 `lingyue/Assets.xcassets/AppIcon-AppStore.appiconset` and
 `AppIcon-Internal.appiconset`, each target's build settings point at the
 right one via `ASSETCATALOG_COMPILER_APPICON_NAME`.
+
+**Landed:** the two appiconsets exist and each target's
+`ASSETCATALOG_COMPILER_APPICON_NAME` points at the correct one. Both
+sets currently carry the same `AppIcon-1024.png`; the Internal-variant
+overlay (`DEV` / red-dot) is a follow-up artwork task — replace
+`AppIcon-Internal.appiconset/AppIcon-1024.png` when ready, no code
+change needed.
 - Both targets share most of `lingyue/` source files. The split is:
   - Files that import `LingyueInternalSources` → `Internal` target only.
     Add a tiny header comment listing the import for grep-friendliness,
