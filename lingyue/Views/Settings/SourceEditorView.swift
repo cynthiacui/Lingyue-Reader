@@ -18,6 +18,15 @@ import LingyueCore
 struct SourceEditorView: View {
     enum Origin: Hashable { case seeded, editable }
 
+    /// Deep-link target for the per-block 修复 buttons on
+    /// `SourceReviewView`. The Review screen passes a value matching the
+    /// row the user tapped, and `body` scrolls that section into view on
+    /// first appear so the user lands on the offending fields rather
+    /// than the top of the form.
+    enum ScrollAnchor: String, Hashable {
+        case identity, detection, search, detail, catalog, chapter, advanced
+    }
+
     @Environment(\.sourceStack) private var sourceStack
     @Environment(\.dismiss) private var dismiss
 
@@ -25,40 +34,73 @@ struct SourceEditorView: View {
     /// Original rule snapshot. Used to detect "no changes" and to drive
     /// the "revert to bundled" affordance on editable forks of seeded rules.
     let original: SourceRule
+    let scrollTo: ScrollAnchor?
 
     @State private var draft: SourceRule
     @State private var loadError: String?
     @State private var showingTestSheet = false
     @State private var pendingDelete = false
+    @State private var advancedExpanded: Bool = false
 
-    init(rule: SourceRule, origin: Origin) {
+    init(rule: SourceRule, origin: Origin, scrollTo: ScrollAnchor? = nil) {
         self.origin = origin
         self.original = rule
+        self.scrollTo = scrollTo
         self._draft = State(initialValue: rule)
+        // Auto-expand the advanced disclosure when the deep-link points
+        // inside it — otherwise the scrollTo lands on a collapsed
+        // section and the user has to tap to reveal what they came for.
+        self._advancedExpanded = State(initialValue: scrollTo == .advanced)
     }
 
     var body: some View {
-        Form {
-            identitySection
-            capabilitiesSection
-            engineSection
-            headersSection
-            detectionSection
-            if draft.capabilities.supportsSearch {
-                searchSection
+        // Power-user controls (engine selection, default headers, request
+        // tuning, advanced detection patterns) live behind the
+        // `advancedSection` DisclosureGroup — collapsed by default so a
+        // novice rule author never has to think about HTTP-vs-headless
+        // or User-Agent overrides to ship a working rule, while still
+        // being reachable via the Review screen's per-block 修复
+        // deep-link (PHASES.md §3.4).
+        ScrollViewReader { proxy in
+            Form {
+                identitySection.id(ScrollAnchor.identity)
+                detectionSection.id(ScrollAnchor.detection)
+                // Search section renders whenever a `SearchStep` exists on
+                // the rule (seeded rules carry one even when 0.7-era
+                // schemas authored it; user-authored drafts get one via
+                // `addSearchStep` below). Capability derivation lives in
+                // §3.5.2 — this form no longer authors capabilities.
+                Group {
+                    if draft.search != nil {
+                        searchSection
+                    } else {
+                        addSearchSection
+                    }
+                }
+                .id(ScrollAnchor.search)
+                detailSection.id(ScrollAnchor.detail)
+                catalogSection.id(ScrollAnchor.catalog)
+                chapterSection.id(ScrollAnchor.chapter)
+                advancedSection.id(ScrollAnchor.advanced)
+                if origin == .editable {
+                    dangerSection
+                }
+                if let loadError {
+                    Section {
+                        Text(loadError)
+                            .font(.footnote.monospaced())
+                            .foregroundStyle(.red)
+                            .textSelection(.enabled)
+                    }
+                }
             }
-            detailSection
-            catalogSection
-            chapterSection
-            if origin == .editable {
-                dangerSection
-            }
-            if let loadError {
-                Section {
-                    Text(loadError)
-                        .font(.footnote.monospaced())
-                        .foregroundStyle(.red)
-                        .textSelection(.enabled)
+            .onAppear {
+                guard let scrollTo else { return }
+                // Form lays out lazily — scrolling synchronously on
+                // first appear races the row materialization and lands
+                // short. One run-loop hop is enough on iOS 17+.
+                DispatchQueue.main.async {
+                    withAnimation { proxy.scrollTo(scrollTo, anchor: .top) }
                 }
             }
         }
@@ -88,15 +130,6 @@ struct SourceEditorView: View {
             Button("删除", role: .destructive) { Task { await delete() } }
         } message: {
             Text("书源 “\(draft.name)” 会从「我的书源」中移除。若该书源同时存在内置版本，内置版会重新生效。")
-        }
-        .onChange(of: draft.capabilities.supportsSearch) { _, newValue in
-            // Auto-materialize a blank SearchStep so the section has
-            // something to bind to. Re-disabling the toggle preserves
-            // whatever the user typed; we only clear on save when the
-            // capability is off, so toggling back on doesn't blank work.
-            if newValue && draft.search == nil {
-                draft.search = SourceEditorView.makeBlankSearchStep()
-            }
         }
     }
 
@@ -130,51 +163,17 @@ struct SourceEditorView: View {
         }
     }
 
-    private var capabilitiesSection: some View {
+    private var addSearchSection: some View {
         Section {
-            Toggle("支持搜索", isOn: $draft.capabilities.supportsSearch)
-            Toggle("出现在搜索栏聚合中", isOn: $draft.capabilities.showInSearchBar)
-                .disabled(!draft.capabilities.supportsSearch)
-            Toggle("支持浏览器导入", isOn: $draft.capabilities.supportsBrowserImport)
-            Toggle("需要无头渲染", isOn: $draft.capabilities.requiresWebRender)
-            Stepper(
-                "最大并发：\(draft.capabilities.maxConcurrentRequests)",
-                value: $draft.capabilities.maxConcurrentRequests,
-                in: 1...8
-            )
-            Stepper(
-                "请求间隔：\(draft.capabilities.requestIntervalMillis) ms",
-                value: $draft.capabilities.requestIntervalMillis,
-                in: 0...10_000,
-                step: 100
-            )
+            Button {
+                draft.search = SourceEditorView.makeBlankSearchStep()
+            } label: {
+                Label("添加搜索步骤", systemImage: "plus.circle")
+            }
         } header: {
-            Text("能力")
+            Text("搜索")
         } footer: {
-            Text("能力字段是声明性的：如启用「支持搜索」却没有搜索步骤，规则在首次使用时会被拒绝。")
-        }
-    }
-
-    private var engineSection: some View {
-        Section {
-            enginePicker("搜索", selection: $draft.enginePerStep.search)
-            enginePicker("详情", selection: $draft.enginePerStep.detail)
-            enginePicker("目录", selection: $draft.enginePerStep.catalog)
-            enginePicker("正文", selection: $draft.enginePerStep.chapter)
-        } header: {
-            Text("引擎选择")
-        } footer: {
-            Text("默认 HTTP；若步骤的页面需要执行 JS 才能拿到 DOM，请选择「无头渲染」。渲染开销远大于 HTTP，请按需开启。")
-        }
-    }
-
-    private var headersSection: some View {
-        Section {
-            HeaderDictionaryEditor(headers: $draft.defaultHeaders)
-        } header: {
-            Text("默认请求头")
-        } footer: {
-            Text("会叠加在加载器的默认请求头上。常见用法：覆盖 User-Agent、Accept-Language。")
+            Text("没有搜索步骤的书源不会出现在搜索栏，但仍可通过应用内浏览器导入书籍。")
         }
     }
 
@@ -182,28 +181,13 @@ struct SourceEditorView: View {
         Section {
             StringListEditor(
                 values: $draft.detection.hostPatterns,
-                addLabel: "添加 host pattern",
+                addLabel: "添加网址",
                 placeholder: "*.example.com 或 example.com"
             )
-            LabeledOptionalTextField(
-                label: "路径正则",
-                value: $draft.detection.pathPattern,
-                prompt: "例如 ^/book/\\d+/?$"
-            )
-            LabeledOptionalTextField(
-                label: "确认选择器",
-                value: $draft.detection.confirmSelector,
-                prompt: "区分详情页与搜索结果页"
-            )
-            OptionalFieldSelectorEditor(
-                title: "规范 URL",
-                hint: "将带跟踪参数的 URL 重写为干净形式；省略则使用响应最终 URL。",
-                value: $draft.detection.canonicalURL
-            )
         } header: {
-            Text("检测")
+            Text("网址")
         } footer: {
-            Text("即使没有搜索步骤，检测仍是必填——它让应用内浏览器在用户访问书页时能识别归属。")
+            Text("列出本书源的域名。应用内浏览器在用户访问书页时根据它识别归属。")
         }
     }
 
@@ -315,6 +299,59 @@ struct SourceEditorView: View {
         }
     }
 
+    private var advancedSection: some View {
+        Section {
+            DisclosureGroup(isExpanded: $advancedExpanded) {
+                // Per-step engine selection. Default `.http` works for
+                // every seeded rule; users only flip a step to `.web`
+                // when a specific page is gated by Cloudflare/JS.
+                Picker("搜索引擎", selection: $draft.enginePerStep.search) {
+                    Text("HTTP").tag(EnginePerStep.Engine.http)
+                    Text("WKWebView").tag(EnginePerStep.Engine.web)
+                }
+                Picker("详情引擎", selection: $draft.enginePerStep.detail) {
+                    Text("HTTP").tag(EnginePerStep.Engine.http)
+                    Text("WKWebView").tag(EnginePerStep.Engine.web)
+                }
+                Picker("目录引擎", selection: $draft.enginePerStep.catalog) {
+                    Text("HTTP").tag(EnginePerStep.Engine.http)
+                    Text("WKWebView").tag(EnginePerStep.Engine.web)
+                }
+                Picker("章节引擎", selection: $draft.enginePerStep.chapter) {
+                    Text("HTTP").tag(EnginePerStep.Engine.http)
+                    Text("WKWebView").tag(EnginePerStep.Engine.web)
+                }
+                // Capability override. Review's `derivedCapabilities`
+                // (PHASES.md §3.5.2) carries this value forward unchanged,
+                // so toggling it here is the authoritative way to flag
+                // a site that must hit WKWebView before slice 8's P3
+                // classifier lands.
+                Toggle("整体需要 WKWebView 渲染", isOn: $draft.capabilities.requiresWebRender)
+                LabeledOptionalTextField(
+                    label: "路径正则",
+                    value: $draft.detection.pathPattern,
+                    prompt: "如 ^/book/\\d+"
+                )
+                LabeledOptionalTextField(
+                    label: "确认选择器",
+                    value: $draft.detection.confirmSelector,
+                    prompt: "如 .book-info"
+                )
+                OptionalFieldSelectorEditor(
+                    title: "规范化 URL 字段",
+                    value: $draft.detection.canonicalURL
+                )
+                HeaderDictionaryEditor(headers: $draft.defaultHeaders)
+            } label: {
+                Label("高级设置", systemImage: "wrench.and.screwdriver")
+            }
+        } header: {
+            Text("高级")
+        } footer: {
+            Text("仅在默认行为失败时调整。引擎一般保持 HTTP;切换到 WKWebView 会显著增加内存与启动时间。默认请求头用于覆盖 User-Agent 或附加 Referer 等站点要求。")
+        }
+    }
+
     private var dangerSection: some View {
         Section {
             Button(role: .destructive) {
@@ -329,16 +366,15 @@ struct SourceEditorView: View {
 
     private func save() async {
         do {
-            // When the capability is off, drop the search step on save so
-            // it doesn't pollute exported JSON. Editor keeps the value
-            // around in memory until then so toggling on/off mid-edit
-            // doesn't lose work.
-            var snapshot = draft
-            if !snapshot.capabilities.supportsSearch {
-                snapshot.search = nil
-            }
-            try await sourceStack.editableStore.saveEditableSource(snapshot)
+            // Direct editor save persists the rule as-is. Capability
+            // derivation runs at Review-screen save / Enable
+            // (PHASES.md §3.5.2), not here — the editor is the §3.4
+            // raw schema surface and stays orthogonal to validation
+            // state. A user popping back to the Review screen after
+            // editing here re-derives capabilities on their next Save.
+            try await sourceStack.editableStore.saveEditableSource(draft)
             await DiscoverySearchService.shared.invalidateRegistryCache()
+            await sourceStack.pageDetector.invalidateCache()
             dismiss()
         } catch {
             loadError = String(describing: error)
@@ -348,7 +384,14 @@ struct SourceEditorView: View {
     private func delete() async {
         do {
             try await sourceStack.editableStore.deleteSource(id: draft.id)
+            // Validation records key on `ruleID`; without the parallel
+            // delete a freshly-imported rule with the same UUID later
+            // would inherit the deleted rule's test history — wrong by
+            // construction.
+            try await sourceStack.validationStore.delete(ruleID: draft.id)
+            try await sourceStack.preferenceStore.delete(ruleID: draft.id)
             await DiscoverySearchService.shared.invalidateRegistryCache()
+            await sourceStack.pageDetector.invalidateCache()
             dismiss()
         } catch {
             loadError = String(describing: error)
@@ -356,13 +399,6 @@ struct SourceEditorView: View {
     }
 
     // MARK: - Helpers
-
-    private func enginePicker(_ label: String, selection: Binding<EnginePerStep.Engine>) -> some View {
-        Picker(label, selection: selection) {
-            Text("HTTP").tag(EnginePerStep.Engine.http)
-            Text("无头渲染").tag(EnginePerStep.Engine.web)
-        }
-    }
 
     private func encodingLabel(_ encoding: SourceEncoding) -> String {
         switch encoding {
@@ -528,63 +564,59 @@ private struct StringListEditor: View {
 
 private struct HeaderDictionaryEditor: View {
     @Binding var headers: [String: String]
-
-    /// Backing array form keeps the row order stable while the user types
-    /// — driving the form directly off a `[String: String]` would shuffle
-    /// the rows on every keystroke. We sync back to the dict whenever the
-    /// pairs change.
-    @State private var pairs: [HeaderPair] = []
+    @State private var newKey: String = ""
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            ForEach(pairs.indices, id: \.self) { idx in
-                HStack {
-                    TextField("Header", text: Binding(
-                        get: { pairs[idx].key },
-                        set: { pairs[idx].key = $0; sync() }
-                    ))
-                    .autocorrectionDisabled()
-                    .textInputAutocapitalization(.never)
-                    .frame(maxWidth: 140)
-                    TextField("Value", text: Binding(
-                        get: { pairs[idx].value },
-                        set: { pairs[idx].value = $0; sync() }
-                    ))
+        VStack(alignment: .leading, spacing: 8) {
+            Text("默认请求头").font(.caption).foregroundStyle(.secondary)
+            ForEach(sortedKeys, id: \.self) { key in
+                HStack(spacing: 8) {
+                    Text(key)
+                        .font(.footnote.monospaced())
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    TextField(
+                        "value",
+                        text: Binding(
+                            get: { headers[key] ?? "" },
+                            set: { headers[key] = $0 }
+                        )
+                    )
+                    .multilineTextAlignment(.trailing)
                     .autocorrectionDisabled()
                     .textInputAutocapitalization(.never)
                     Button(role: .destructive) {
-                        pairs.remove(at: idx)
-                        sync()
+                        headers.removeValue(forKey: key)
                     } label: {
-                        Image(systemName: "minus.circle.fill").foregroundStyle(.red)
+                        Image(systemName: "minus.circle.fill")
+                            .foregroundStyle(.red)
                     }
                     .buttonStyle(.plain)
                 }
             }
-            Button {
-                pairs.append(HeaderPair(key: "", value: ""))
-            } label: {
-                Label("添加请求头", systemImage: "plus.circle").font(.footnote)
+            HStack {
+                TextField("Header 名 (如 User-Agent)", text: $newKey)
+                    .autocorrectionDisabled()
+                    .textInputAutocapitalization(.never)
+                Button {
+                    let trimmed = newKey.trimmingCharacters(in: .whitespaces)
+                    guard !trimmed.isEmpty, headers[trimmed] == nil else { return }
+                    headers[trimmed] = ""
+                    newKey = ""
+                } label: {
+                    Label("添加", systemImage: "plus.circle").font(.footnote)
+                }
+                .buttonStyle(.plain)
+                .disabled(addDisabled)
             }
         }
-        .onAppear { hydrate() }
     }
 
-    private func hydrate() {
-        pairs = headers.sorted { $0.key < $1.key }.map { HeaderPair(key: $0.key, value: $0.value) }
-    }
+    private var sortedKeys: [String] { headers.keys.sorted() }
 
-    private func sync() {
-        var next: [String: String] = [:]
-        for pair in pairs where !pair.key.isEmpty {
-            next[pair.key] = pair.value
-        }
-        headers = next
-    }
-
-    private struct HeaderPair: Hashable {
-        var key: String
-        var value: String
+    private var addDisabled: Bool {
+        let trimmed = newKey.trimmingCharacters(in: .whitespaces)
+        return trimmed.isEmpty || headers[trimmed] != nil
     }
 }
 
@@ -781,13 +813,13 @@ private struct TransformRow: View {
 /// table in sync with the cases by hand. New transform = one line here.
 private enum TransformCatalog {
     static let all: [Kind] = [
-        .trim, .collapseWhitespace, .absoluteURL,
+        .trim, .collapseWhitespace, .absoluteURL, .useBaseURL,
         .stripHTML, .brToNewline, .decodeHTMLEntities,
         .prefix, .suffix, .regexCapture, .regexReplace
     ]
 
     enum Kind: Hashable {
-        case trim, collapseWhitespace, absoluteURL
+        case trim, collapseWhitespace, absoluteURL, useBaseURL
         case stripHTML, brToNewline, decodeHTMLEntities
         case prefix, suffix, regexCapture, regexReplace
 
@@ -796,6 +828,7 @@ private enum TransformCatalog {
             case .trim: return "trim"
             case .collapseWhitespace: return "collapseWhitespace"
             case .absoluteURL: return "absoluteURL"
+            case .useBaseURL: return "useBaseURL"
             case .stripHTML: return "stripHTML"
             case .brToNewline: return "brToNewline"
             case .decodeHTMLEntities: return "decodeHTMLEntities"
@@ -811,6 +844,7 @@ private enum TransformCatalog {
             case .trim: return .trim
             case .collapseWhitespace: return .collapseWhitespace
             case .absoluteURL: return .absoluteURL
+            case .useBaseURL: return .useBaseURL
             case .stripHTML: return .stripHTML
             case .brToNewline: return .brToNewline
             case .decodeHTMLEntities: return .decodeHTMLEntities
@@ -827,6 +861,7 @@ private enum TransformCatalog {
         case .trim: return "trim"
         case .collapseWhitespace: return "collapseWhitespace"
         case .absoluteURL: return "absoluteURL"
+        case .useBaseURL: return "useBaseURL"
         case .stripHTML: return "stripHTML"
         case .brToNewline: return "brToNewline"
         case .decodeHTMLEntities: return "decodeHTMLEntities"

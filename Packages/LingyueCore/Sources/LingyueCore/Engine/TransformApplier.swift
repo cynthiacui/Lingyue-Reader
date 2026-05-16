@@ -91,6 +91,9 @@ public enum TransformApplier {
 
         case .decodeHTMLEntities:
             return decodeEntities(value)
+
+        case .useBaseURL:
+            return baseURL?.absoluteString ?? value
         }
     }
 

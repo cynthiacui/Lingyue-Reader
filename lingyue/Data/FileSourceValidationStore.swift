@@ -1,21 +1,19 @@
 import Foundation
 import LingyueCore
 
-/// On-disk `SourcePreferenceStore` backed by a single JSON file at
-/// `Application Support/lingyue/source-preferences.json`. Mirrors
-/// `FileEditableSourceStore` in storage layout and atomic-write
-/// strategy so the two files behave consistently — a crash mid-write
-/// leaves the previous JSON intact.
+/// On-disk `SourceValidationStore` backed by a single JSON file at
+/// `Application Support/lingyue/source-validation.json`. Sibling to
+/// `FileSourcePreferenceStore` and `FileEditableSourceStore`; same
+/// actor + atomic-write pattern so a crash mid-write leaves the
+/// previous JSON intact.
 ///
-/// Preference state is intentionally separate from rule JSON because
-/// rules travel between installs (Phase 3.2 JSON import) while
-/// preferences are per-install: "which sources do I want enabled, in
-/// what order" is my decision, not the rule author's. Keeping them in
-/// a sibling file lets a user export rules to share without leaking
-/// their on/off state to the recipient.
-public actor FileSourcePreferenceStore: SourcePreferenceStore {
+/// **Device-local on purpose.** The Phase 3.2 JSON-import path on the
+/// Internal target ingests rules only — never this file. "Passed on my
+/// device" doesn't grant Enable on a rule shared to another install;
+/// see PHASES.md §3.5.1.
+public actor FileSourceValidationStore: SourceValidationStore {
     private let fileURL: URL
-    private var cache: [UUID: SourcePreference]?
+    private var cache: [UUID: SourceValidation]?
 
     public init(fileURL: URL? = nil) {
         if let fileURL {
@@ -25,7 +23,7 @@ public actor FileSourcePreferenceStore: SourcePreferenceStore {
         }
     }
 
-    public func loadAll() async throws -> [UUID: SourcePreference] {
+    public func loadAll() async throws -> [UUID: SourceValidation] {
         if let cache { return cache }
         guard FileManager.default.fileExists(atPath: fileURL.path) else {
             cache = [:]
@@ -38,17 +36,27 @@ public actor FileSourcePreferenceStore: SourcePreferenceStore {
         }
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        let list = try decoder.decode([SourcePreference].self, from: data)
+        let list = try decoder.decode([SourceValidation].self, from: data)
         let map = Dictionary(uniqueKeysWithValues: list.map { ($0.ruleID, $0) })
         cache = map
         return map
     }
 
-    public func save(_ preference: SourcePreference) async throws {
+    public func load(ruleID: UUID) async throws -> SourceValidation? {
+        let all = try await loadAll()
+        return all[ruleID]
+    }
+
+    public func recordTest(
+        ruleID: UUID,
+        block: SourceBlock,
+        record: BlockTestRecord
+    ) async throws {
         var current = try await loadAll()
-        var updated = preference
-        updated.updatedAt = Date()
-        current[updated.ruleID] = updated
+        var existing = current[ruleID] ?? SourceValidation(ruleID: ruleID)
+        existing.tests[block] = record
+        existing.updatedAt = Date()
+        current[ruleID] = existing
         try persist(current)
     }
 
@@ -58,19 +66,13 @@ public actor FileSourcePreferenceStore: SourcePreferenceStore {
         try persist(current)
     }
 
-    public func replaceAll(_ preferences: [SourcePreference]) async throws {
-        let map = Dictionary(uniqueKeysWithValues: preferences.map { ($0.ruleID, $0) })
-        try persist(map)
-    }
-
     // MARK: - Persistence
 
-    private func persist(_ map: [UUID: SourcePreference]) throws {
+    private func persist(_ map: [UUID: SourceValidation]) throws {
         try ensureDirectoryExists()
-        // Persist as a sorted array — same shape as the in-memory dictionary
-        // but git-diffable for inspection. Sorting by ruleID keeps the file
-        // stable across save calls so any tooling diffing the store sees
-        // only meaningful changes.
+        // Sorted-by-ruleID array shape: mirrors FileSourcePreferenceStore
+        // so the file is git-diffable for inspection and stable across
+        // save calls (only meaningful changes show up in diffs).
         let sorted = map.values.sorted { $0.ruleID.uuidString < $1.ruleID.uuidString }
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -88,12 +90,10 @@ public actor FileSourcePreferenceStore: SourcePreferenceStore {
         )
     }
 
-    /// Default location: `Application Support/lingyue/source-preferences.json`.
-    /// Lowercase `lingyue/` matches `LibraryStore` and
-    /// `FileEditableSourceStore` so all three stores share one directory
-    /// entry. The capital-L variant could collide case-only on the
-    /// case-insensitive iOS filesystem and wedge `createDirectory` into
-    /// EIO on iOS 26 simulator builds.
+    /// Default location: `Application Support/lingyue/source-validation.json`.
+    /// Lowercase `lingyue/` matches the rest of the store family so all
+    /// four files share one directory entry — see the case-collision
+    /// note in `FileSourcePreferenceStore.defaultFileURL()`.
     private static func defaultFileURL() -> URL {
         let fm = FileManager.default
         let base = (try? fm.url(
@@ -104,6 +104,6 @@ public actor FileSourcePreferenceStore: SourcePreferenceStore {
         )) ?? fm.urls(for: .documentDirectory, in: .userDomainMask).first!
         return base
             .appendingPathComponent("lingyue", isDirectory: true)
-            .appendingPathComponent("source-preferences.json")
+            .appendingPathComponent("source-validation.json")
     }
 }

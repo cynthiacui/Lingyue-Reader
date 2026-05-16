@@ -13,16 +13,13 @@ import WebKit
 /// `renderHTML`; runtime composes it with `HTTPSourceLoader` via
 /// `CompositeSourceLoader` so plain HTTP steps stay cheap.
 struct WebViewSourceLoader: SourceHTMLLoading {
-    let renderer: WebRenderingService
     let settleAfter: TimeInterval
     let timeout: TimeInterval
 
     init(
-        renderer: WebRenderingService = .shared,
         settleAfter: TimeInterval = 0.8,
         timeout: TimeInterval = 6
     ) {
-        self.renderer = renderer
         self.settleAfter = settleAfter
         self.timeout = timeout
     }
@@ -33,7 +30,7 @@ struct WebViewSourceLoader: SourceHTMLLoading {
 
     func renderHTML(_ request: SourceRequest) async throws -> WebPageSnapshot {
         let url = request.url
-        guard let html = await renderer.renderHTML(
+        guard let html = await WebRenderingService.shared.renderHTML(
             at: url,
             settleAfter: settleAfter,
             timeout: timeout

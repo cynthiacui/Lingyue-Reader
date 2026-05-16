@@ -2,7 +2,7 @@ import Foundation
 import LingyueCore
 
 /// On-disk `EditableSourceStore` backed by a single JSON file at
-/// `Application Support/Lingyue/user-sources.json`. Both registries
+/// `Application Support/lingyue/user-sources.json`. Both registries
 /// (`InternalSourceRegistry` and `AppStoreSourceRegistry`) read from
 /// this store, so a rule the user authors is visible to whichever
 /// target is running. Each target keeps its own sandboxed copy of the
@@ -85,7 +85,12 @@ public actor FileEditableSourceStore: EditableSourceStore {
         )
     }
 
-    /// Default location: `Application Support/Lingyue/user-sources.json`.
+    /// Default location: `Application Support/lingyue/user-sources.json`.
+    /// The subfolder name is lowercase to match `LibraryStore`'s
+    /// `Application Support/lingyue/` — sharing the same directory entry
+    /// avoids a case-only collision on the case-insensitive iOS
+    /// filesystem, which has been observed to put `createDirectory` into
+    /// an EIO state on iOS 26 simulator builds.
     /// Falls back to the documents dir if Application Support is
     /// unavailable for some reason — should never happen on iOS, but
     /// the fallback keeps unit-test environments happy without a
@@ -99,7 +104,7 @@ public actor FileEditableSourceStore: EditableSourceStore {
             create: true
         )) ?? fm.urls(for: .documentDirectory, in: .userDomainMask).first!
         return base
-            .appendingPathComponent("Lingyue", isDirectory: true)
+            .appendingPathComponent("lingyue", isDirectory: true)
             .appendingPathComponent("user-sources.json")
     }
 }

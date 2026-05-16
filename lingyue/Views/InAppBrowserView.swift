@@ -1,9 +1,11 @@
 import SwiftUI
 import WebKit
+import LingyueCore
 
 struct InAppBrowserView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.appTheme) private var theme
+    @Environment(\.sourceStack) private var sourceStack
     @EnvironmentObject private var libraryStore: LibraryStore
 
     let url: URL
@@ -18,12 +20,21 @@ struct InAppBrowserView: View {
     @State private var importResult: BrowserImportResult?
     @State private var bookToOpen: Novel?
 
+    // Phase 4: rule-engine-detected import. Runs in parallel to the
+    // heuristic path; a rule hit suppresses the heuristic for that URL.
+    @State private var ruleDetectedBook: RuleImportCandidate?
+    @State private var ruleReplacementCandidate: RuleImportCandidate?
+    @State private var ruleCategoryPrompt: RuleCategoryPromptState?
+
     private var hasBlockingOverlay: Bool {
         detectedBook != nil
             || replacementCandidate != nil
             || categoryPrompt != nil
             || importStatus != nil
             || importResult != nil
+            || ruleDetectedBook != nil
+            || ruleReplacementCandidate != nil
+            || ruleCategoryPrompt != nil
     }
 
     var body: some View {
@@ -74,6 +85,24 @@ struct InAppBrowserView: View {
                     .zIndex(6)
             }
 
+            if let ruleDetectedBook {
+                ruleImportPromptOverlay(candidate: ruleDetectedBook)
+                    .transition(ModalStyle.transition)
+                    .zIndex(4)
+            }
+
+            if let ruleReplacementCandidate {
+                ruleReplacementPromptOverlay(candidate: ruleReplacementCandidate)
+                    .transition(ModalStyle.transition)
+                    .zIndex(5)
+            }
+
+            if let ruleCategoryPrompt {
+                ruleCategoryPromptOverlay(prompt: ruleCategoryPrompt)
+                    .transition(BrandedPopupStyle.bottomTransition)
+                    .zIndex(6)
+            }
+
             if let importResult {
                 importResultOverlay(result: importResult)
                     .transition(ModalStyle.transition)
@@ -86,6 +115,9 @@ struct InAppBrowserView: View {
         .animation(ModalStyle.presentationAnimation, value: detectedBook?.sourceURL)
         .animation(ModalStyle.presentationAnimation, value: replacementCandidate?.sourceURL)
         .animation(ModalStyle.presentationAnimation, value: categoryPrompt?.id)
+        .animation(ModalStyle.presentationAnimation, value: ruleDetectedBook?.id)
+        .animation(ModalStyle.presentationAnimation, value: ruleReplacementCandidate?.id)
+        .animation(ModalStyle.presentationAnimation, value: ruleCategoryPrompt?.id)
         .animation(ModalStyle.presentationAnimation, value: importStatus)
         .animation(ModalStyle.presentationAnimation, value: importResult?.id)
         .navigationTitle(title)
@@ -185,41 +217,162 @@ struct InAppBrowserView: View {
         guard replacementCandidate == nil,
               categoryPrompt == nil,
               importStatus == nil,
-              importResult == nil else { return }
+              importResult == nil,
+              ruleReplacementCandidate == nil,
+              ruleCategoryPrompt == nil else { return }
         guard !ignoredBookURLs.contains(url.absoluteString) else { return }
 
+        let detector = sourceStack.pageDetector
+
         Task {
-            let candidate = await Task.detached(priority: .userInitiated) {
-                BookImportService.shared.detectBook(html: html, url: url, pageTitle: pageTitle)
-            }.value
-            guard let candidate else { return }
+            // Run rule + heuristic in parallel. Rule wins the prompt
+            // when present, but we stash the heuristic candidate as
+            // a fallback for the import action because seeded JSON
+            // rules' fetchDetail / fetchCatalog are less robust than
+            // the heuristic's WebView-backed catalog stitching for
+            // some legacy mirrors.
+            async let ruleTask = detector.detect(in: WebPageSnapshot(
+                html: html,
+                finalURL: url,
+                responseHeaders: [:],
+                statusCode: nil
+            ))
+            // Phase 5 gate: heuristic detection is Internal-only. The App
+            // Store target relies entirely on user-authored rules — the
+            // heuristic fallback would happily import from pirate mirrors
+            // a rule never claimed, which is exactly the App Store
+            // posture we're avoiding. The helper returns nil under
+            // `!LINGYUE_INTERNAL`, so `heuristic` stays nil and every
+            // heuristic-fed branch below short-circuits.
+            async let heuristicTask = Self.runHeuristicDetection(
+                html: html,
+                url: url,
+                pageTitle: pageTitle
+            )
+
+            let ruleResult = await ruleTask
+            let heuristic = await heuristicTask
+
             await MainActor.run {
-#if DEBUG
-                debugLog("[Browser] candidate ready for \(url.absoluteString) — title=\(candidate.title)")
-#endif
                 guard replacementCandidate == nil,
                       categoryPrompt == nil,
                       importStatus == nil,
                       importResult == nil,
-                      !ignoredBookURLs.contains(url.absoluteString) else {
+                      ruleReplacementCandidate == nil,
+                      ruleCategoryPrompt == nil,
+                      browserState.currentURL == url,
+                      !ignoredBookURLs.contains(url.absoluteString) else { return }
+
+                if let ruleResult {
+                    let ruleTitle = ruleResult.detection.title?
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                        .nilIfEmpty
+                    let heuristicTitle = heuristic?.title.nilIfEmpty
+                    let strongTitle = ruleTitle ?? heuristicTitle
+                    let displayTitle = strongTitle
+                        ?? pageTitle?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+                        ?? ruleResult.sourceName
+                    let titleIsStrong = (strongTitle != nil)
+
+                    // Same URL re-scan: refine title and/or stash a better
+                    // heuristic fallback. The 0s scan often catches an
+                    // incomplete DOM; 0.6s / 1.5s scans see the fully
+                    // rendered chapter list. We always want the richest
+                    // heuristic available at import time.
+                    if let existing = ruleDetectedBook, existing.pageURL == url {
+                        let refinedTitle: String
+                        let refinedTitleStrong: Bool
+                        if !existing.titleIsStrong, titleIsStrong {
+                            refinedTitle = displayTitle
+                            refinedTitleStrong = true
+                        } else {
+                            refinedTitle = existing.displayTitle
+                            refinedTitleStrong = existing.titleIsStrong
+                        }
+
+                        let refinedFallback: WebBookCandidate?
+                        switch (existing.heuristicFallback, heuristic) {
+                        case let (oldH?, newH?):
+                            refinedFallback = shouldReplaceDetectedBook(oldH, with: newH) ? newH : oldH
+                        case (nil, let newH?):
+                            refinedFallback = newH
+                        case (let oldH, nil):
+                            refinedFallback = oldH
+                        }
+
+                        let titleChanged = refinedTitle != existing.displayTitle
+                        let strongChanged = refinedTitleStrong != existing.titleIsStrong
+                        let fallbackChanged = refinedFallback?.htmlSnapshot.count != existing.heuristicFallback?.htmlSnapshot.count
+                            || refinedFallback?.detectedChapterCount != existing.heuristicFallback?.detectedChapterCount
+                        guard titleChanged || strongChanged || fallbackChanged else { return }
+
+                        ruleDetectedBook = RuleImportCandidate(
+                            detection: ruleResult,
+                            displayTitle: refinedTitle,
+                            pageURL: url,
+                            heuristicFallback: refinedFallback,
+                            titleIsStrong: refinedTitleStrong
+                        )
 #if DEBUG
-                    debugLog("[Browser] candidate dropped — guard triggered")
+                        debugLog("[Browser] rule-engine refined for \(url.absoluteString) — title=\(refinedTitle) strong=\(refinedTitleStrong) fallbackChapters=\(refinedFallback?.detectedChapterCount ?? 0)")
+#endif
+                        return
+                    }
+
+                    detectedBook = nil
+                    ruleDetectedBook = RuleImportCandidate(
+                        detection: ruleResult,
+                        displayTitle: displayTitle,
+                        pageURL: url,
+                        heuristicFallback: heuristic,
+                        titleIsStrong: titleIsStrong
+                    )
+#if DEBUG
+                    debugLog("[Browser] rule-engine match for \(url.absoluteString) — source=\(ruleResult.sourceID) title=\(displayTitle) strong=\(titleIsStrong) hasFallback=\(heuristic != nil)")
 #endif
                     return
                 }
-                if let detectedBook,
-                   !shouldReplaceDetectedBook(detectedBook, with: candidate) {
+
+                guard let heuristic else { return }
+#if DEBUG
+                debugLog("[Browser] candidate ready for \(url.absoluteString) — title=\(heuristic.title)")
+#endif
+                if let existing = detectedBook,
+                   !shouldReplaceDetectedBook(existing, with: heuristic) {
 #if DEBUG
                     debugLog("[Browser] candidate dropped — existing candidate is better")
 #endif
                     return
                 }
-                detectedBook = candidate
+                detectedBook = heuristic
 #if DEBUG
                 debugLog("[Browser] popup armed for \(url.absoluteString)")
 #endif
             }
         }
+    }
+
+    /// Runs `BookImportService`'s hardcoded-heuristic detector — but
+    /// only on the Internal target. The App Store target ships without
+    /// the heuristic catalog (no laundry list of `.cn` pirate hosts,
+    /// no `isLikelyChapterURL` / `isLikelyChapterTitle` walker), and
+    /// the only path that ever reached it from the in-app browser is
+    /// here. Returning `nil` under `!LINGYUE_INTERNAL` keeps the call
+    /// site shape identical and lets every downstream heuristic branch
+    /// short-circuit naturally.
+    nonisolated static func runHeuristicDetection(
+        html: String,
+        url: URL,
+        pageTitle: String?
+    ) async -> WebBookCandidate? {
+#if LINGYUE_INTERNAL
+        return await Task.detached(priority: .userInitiated) {
+            BookImportService.shared.detectBook(html: html, url: url, pageTitle: pageTitle)
+        }.value
+#else
+        _ = (html, url, pageTitle)
+        return nil
+#endif
     }
 
     private func shouldReplaceDetectedBook(_ existing: WebBookCandidate, with candidate: WebBookCandidate) -> Bool {
@@ -297,6 +450,187 @@ struct InAppBrowserView: View {
                     type: .error,
                     title: "导入失败",
                     bookTitle: candidate.title,
+                    message: error.localizedDescription,
+                    novel: nil
+                )
+            }
+        }
+    }
+
+    // MARK: - Rule-engine import flow (Phase 4)
+
+    private func ruleImportPromptOverlay(candidate: RuleImportCandidate) -> some View {
+        let dismiss = {
+            withAnimation(ModalStyle.presentationAnimation) {
+                ignoredBookURLs.insert(candidate.pageURL.absoluteString)
+                ruleDetectedBook = nil
+            }
+        }
+
+        return CustomAlertView(
+            type: .info,
+            title: "从 \(candidate.detection.sourceName) 导入",
+            bookTitle: candidate.displayTitle,
+            message: "是否将此书导入到书架？",
+            primaryButton: .primary("导入") {
+                ignoredBookURLs.insert(candidate.pageURL.absoluteString)
+                withAnimation(ModalStyle.presentationAnimation) {
+                    ruleDetectedBook = nil
+                }
+                requestRuleImport(candidate)
+            },
+            secondaryButton: .secondary("暂不", action: dismiss),
+            onDismiss: dismiss
+        )
+    }
+
+    private func ruleReplacementPromptOverlay(candidate: RuleImportCandidate) -> some View {
+        let dismiss = {
+            withAnimation(ModalStyle.presentationAnimation) {
+                ignoredBookURLs.insert(candidate.pageURL.absoluteString)
+                ruleReplacementCandidate = nil
+            }
+        }
+
+        return CustomAlertView(
+            type: .info,
+            title: "书籍已存在",
+            bookTitle: candidate.displayTitle,
+            message: "书架里已经有这本书啦。\n要用当前页面的内容更新一下吗？",
+            primaryButton: .primary("更新书籍") {
+                withAnimation(ModalStyle.presentationAnimation) {
+                    ruleReplacementCandidate = nil
+                }
+                promptRuleCategory(candidate, isReplacing: true)
+            },
+            secondaryButton: .secondary("先不了", action: dismiss),
+            iconOverride: "books.vertical.circle.fill",
+            tintOverride: Color.readerAccent,
+            onDismiss: dismiss
+        )
+    }
+
+    private func ruleCategoryPromptOverlay(prompt: RuleCategoryPromptState) -> some View {
+        BrandedPopupContainer(alignment: .bottom, dismissOnScrim: true) {
+            withAnimation(ModalStyle.presentationAnimation) {
+                ruleCategoryPrompt = nil
+            }
+        } content: {
+            BrandedRuleCategoryCard(
+                prompt: prompt,
+                existingCategoryNames: libraryStore.categories.map(\.name),
+                onCancel: {
+                    withAnimation(ModalStyle.presentationAnimation) {
+                        ruleCategoryPrompt = nil
+                    }
+                },
+                onConfirm: { name in
+                    let chosen = name.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let categoryName = chosen.isEmpty ? LibraryStore.uncategorizedName : chosen
+                    let candidate = prompt.candidate
+                    let isReplacing = prompt.isReplacing
+                    withAnimation(ModalStyle.presentationAnimation) {
+                        ruleCategoryPrompt = nil
+                    }
+                    startRuleImport(candidate, isReplacing: isReplacing, categoryName: categoryName)
+                }
+            )
+        }
+    }
+
+    private func requestRuleImport(_ candidate: RuleImportCandidate) {
+        let detailURL = candidate.detection.detection.detailURL.absoluteString
+        if libraryStore.containsBook(sourceURLString: detailURL, title: candidate.displayTitle) {
+            ruleReplacementCandidate = candidate
+            return
+        }
+        promptRuleCategory(candidate, isReplacing: false)
+    }
+
+    private func promptRuleCategory(_ candidate: RuleImportCandidate, isReplacing: Bool) {
+        let detailURL = candidate.detection.detection.detailURL.absoluteString
+        let existing = libraryStore.categoryName(
+            forBookWith: detailURL,
+            title: candidate.displayTitle
+        )
+        ruleCategoryPrompt = RuleCategoryPromptState(
+            candidate: candidate,
+            isReplacing: isReplacing,
+            initialCategory: existing
+        )
+    }
+
+    private func startRuleImport(
+        _ candidate: RuleImportCandidate,
+        isReplacing: Bool,
+        categoryName: String
+    ) {
+        ignoredBookURLs.insert(candidate.pageURL.absoluteString)
+        importStatus = BrowserImportStatus(title: candidate.displayTitle)
+
+        let registry = sourceStack.registry
+        Task {
+            // PHASES.md §4.3 — for .http-engine sources that fetchDetail
+            // before any .webView step runs, pull the visible browser's
+            // cookies into the shared HTTP store once so a session set up
+            // inside InAppBrowserView (Cloudflare clearance, login) is
+            // visible to the URLSession-backed loader.
+            await WebViewSourceLoader.syncWKCookiesToHTTPStorage()
+            do {
+                let novel: Novel
+                do {
+                    novel = try await BookImportService.shared.importBook(
+                        detection: candidate.detection,
+                        registry: registry
+                    )
+                } catch {
+#if LINGYUE_INTERNAL
+#if DEBUG
+                    debugLog("[Browser] rule import failed (\(candidate.detection.sourceID)) — \(error). fallback=\(candidate.heuristicFallback != nil)")
+#endif
+                    // Phase 4 regression repair: seeded JSON rules'
+                    // fetchDetail/fetchCatalog can't always handle the
+                    // legacy mirrors the heuristic flow used to import
+                    // successfully. Fall back to the heuristic import
+                    // pipeline (in-browser HTML stitching, multi-URL
+                    // catalog expansion) when we have a candidate.
+                    // App Store gate: this branch is Internal-only. On
+                    // App Store there is no heuristic catalog, so we
+                    // rethrow and let the user see the rule-level
+                    // failure rather than silently routing through the
+                    // legacy importer.
+                    guard let fallback = candidate.heuristicFallback else { throw error }
+                    let enriched = await enrichedCandidateForImport(fallback)
+                    novel = try await BookImportService.shared.importBook(from: enriched)
+#else
+                    throw error
+#endif
+                }
+                let inserted = libraryStore.addImportedNovel(novel, categoryName: categoryName)
+                importStatus = nil
+                let resultType: CustomAlertType = inserted ? .success : .info
+                let title = inserted ? "导入成功" : "已在书架"
+                let message: String
+                if isReplacing {
+                    message = "已替换旧记录，加入「\(categoryName)」。打开章节时会联网加载正文。"
+                } else if inserted {
+                    message = "已加入「\(categoryName)」。打开章节时会联网加载正文。"
+                } else {
+                    message = "这本书已经在你的书架中了。"
+                }
+                importResult = BrowserImportResult(
+                    type: resultType,
+                    title: title,
+                    bookTitle: novel.title,
+                    message: message,
+                    novel: inserted ? novel : nil
+                )
+            } catch {
+                importStatus = nil
+                importResult = BrowserImportResult(
+                    type: .error,
+                    title: "导入失败",
+                    bookTitle: candidate.displayTitle,
                     message: error.localizedDescription,
                     novel: nil
                 )
@@ -748,6 +1082,45 @@ private struct CategoryPromptState: Identifiable {
     let initialCategory: String?
 }
 
+private struct RuleImportCandidate: Identifiable, Equatable {
+    // URL-derived so delayed re-scans that refine the title don't change
+    // identity (no overlay re-mount animation).
+    var id: String { pageURL.absoluteString }
+    let detection: DetectionResult
+    let displayTitle: String
+    let pageURL: URL
+    // Heuristic candidate detected in parallel on the same page. If the
+    // rule's fetchDetail / fetchCatalog throws (network error, parse
+    // failure on a layout the seeded rule didn't anticipate), the
+    // import action falls back to the heuristic import path which reuses
+    // the live WebView session and stitches multiple catalog snapshots —
+    // the path that used to work pre-Phase 4.
+    let heuristicFallback: WebBookCandidate?
+    // `true` when displayTitle came from the rule's detection or the
+    // heuristic candidate. `false` when we fell back to <title> tag or
+    // sourceName because neither detector had a title yet. A later scan
+    // with a strong title replaces a weak one in-place.
+    let titleIsStrong: Bool
+
+    static func == (lhs: RuleImportCandidate, rhs: RuleImportCandidate) -> Bool {
+        lhs.pageURL == rhs.pageURL
+            && lhs.displayTitle == rhs.displayTitle
+            && lhs.detection.sourceID == rhs.detection.sourceID
+            && lhs.titleIsStrong == rhs.titleIsStrong
+    }
+}
+
+private struct RuleCategoryPromptState: Identifiable {
+    let id = UUID()
+    let candidate: RuleImportCandidate
+    let isReplacing: Bool
+    let initialCategory: String?
+}
+
+private extension String {
+    var nilIfEmpty: String? { isEmpty ? nil : self }
+}
+
 private struct BrandedCategoryRow: View {
     let name: String
     let isSelected: Bool
@@ -888,6 +1261,156 @@ private struct BrandedCategoryCard: View {
                     .foregroundStyle(.primary)
 
                 Text("《\(prompt.candidate.title)》")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+            }
+
+            ScrollViewReader { proxy in
+                ScrollView(showsIndicators: false) {
+                    VStack(spacing: 2) {
+                        ForEach(allCategoryNames, id: \.self) { name in
+                            BrandedCategoryRow(
+                                name: name,
+                                isSelected: selectedName == name
+                            ) {
+                                withAnimation(.spring(response: 0.32, dampingFraction: 0.78)) {
+                                    selectedName = name
+                                }
+                            }
+                            .id(name)
+                        }
+
+                        BrandedNewCategoryField(
+                            text: $newCategoryDraft,
+                            isFocused: $newFieldFocused,
+                            trimmedDraft: trimmedDraft,
+                            onCommit: commitNewCategory
+                        )
+                        .animation(.easeInOut(duration: 0.18), value: trimmedDraft.isEmpty)
+                    }
+                    .animation(.spring(response: 0.42, dampingFraction: 0.84), value: allCategoryNames)
+                }
+                .frame(maxHeight: 280)
+                .onChange(of: scrollTick) { _, _ in
+                    guard let target = scrollTarget else { return }
+                    withAnimation(.spring(response: 0.42, dampingFraction: 0.84)) {
+                        proxy.scrollTo(target, anchor: .bottom)
+                    }
+                }
+            }
+
+            HStack(spacing: 10) {
+                ModalButton(title: "取消", role: .secondary, action: onCancel)
+                ModalButton(title: "加入", role: .primary) {
+                    onConfirm(selectedName)
+                }
+            }
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, 10)
+        .padding(.bottom, 20)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(BrandedSurface())
+        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .stroke(Color.primary.opacity(0.06), lineWidth: 1)
+        }
+        .shadow(color: Color.black.opacity(0.18), radius: 24, x: 0, y: 12)
+    }
+
+    private func commitNewCategory() {
+        let trimmed = trimmedDraft
+        guard !trimmed.isEmpty else { return }
+
+        let resolvedName: String
+        if let existing = allCategoryNames.first(where: {
+            $0.caseInsensitiveCompare(trimmed) == .orderedSame
+        }) {
+            withAnimation(.easeInOut(duration: 0.18)) {
+                selectedName = existing
+            }
+            resolvedName = existing
+        } else {
+            withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
+                locallyCreatedNames.append(trimmed)
+                selectedName = trimmed
+            }
+            resolvedName = trimmed
+        }
+
+        newCategoryDraft = ""
+        newFieldFocused = false
+
+        scrollTarget = resolvedName
+        scrollTick &+= 1
+    }
+}
+
+private struct BrandedRuleCategoryCard: View {
+    let prompt: RuleCategoryPromptState
+    let existingCategoryNames: [String]
+    let onCancel: () -> Void
+    let onConfirm: (String) -> Void
+
+    @State private var selectedName: String
+    @State private var newCategoryDraft: String = ""
+    @State private var locallyCreatedNames: [String] = []
+    @State private var scrollTarget: String?
+    @State private var scrollTick = 0
+    @FocusState private var newFieldFocused: Bool
+
+    init(
+        prompt: RuleCategoryPromptState,
+        existingCategoryNames: [String],
+        onCancel: @escaping () -> Void,
+        onConfirm: @escaping (String) -> Void
+    ) {
+        self.prompt = prompt
+        self.existingCategoryNames = existingCategoryNames
+        self.onCancel = onCancel
+        self.onConfirm = onConfirm
+
+        let initial = prompt.initialCategory
+            ?? existingCategoryNames.first
+            ?? LibraryStore.uncategorizedName
+        _selectedName = State(initialValue: initial)
+    }
+
+    private var allCategoryNames: [String] {
+        var names: [String] = []
+        if !existingCategoryNames.contains(LibraryStore.uncategorizedName) {
+            names.append(LibraryStore.uncategorizedName)
+        }
+        names.append(contentsOf: existingCategoryNames)
+        for name in locallyCreatedNames where !names.contains(name) {
+            names.append(name)
+        }
+        return names
+    }
+
+    private var trimmedDraft: String {
+        newCategoryDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                Capsule(style: .continuous)
+                    .fill(Color.primary.opacity(0.18))
+                    .frame(width: 36, height: 5)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.top, 2)
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("选择分类")
+                    .font(.headline)
+                    .fontWeight(.bold)
+                    .foregroundStyle(.primary)
+
+                Text("《\(prompt.candidate.displayTitle)》")
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(.primary)
                     .lineLimit(1)

@@ -22,7 +22,16 @@ public struct HTTPSourceLoader: SourceHTMLLoading {
     }
 
     public func fetchHTML(_ request: SourceRequest) async throws -> WebPageSnapshot {
-        var urlRequest = URLRequest(url: request.url)
+        // iOS App Transport Security blocks plain `http://` for URLSession
+        // even when WKWebView is allowed. Many seeded sites serve HTTPS
+        // but ship `<link rel=canonical href="http://...">` and `<a
+        // href="http://...">` in their HTML; passing those URLs through
+        // unchanged would yield `loadFailed` for every rule's
+        // fetchDetail / fetchCatalog. All 10 seeded hosts serve HTTPS
+        // (survey 2026-05-14), so upgrading the scheme unconditionally
+        // is strictly an improvement over the alternative.
+        let requestURL = Self.upgradedToHTTPS(request.url)
+        var urlRequest = URLRequest(url: requestURL)
         urlRequest.httpMethod = request.method.rawValue
         if let agent = defaultUserAgent, urlRequest.value(forHTTPHeaderField: "User-Agent") == nil {
             urlRequest.setValue(agent, forHTTPHeaderField: "User-Agent")
@@ -46,7 +55,7 @@ public struct HTTPSourceLoader: SourceHTMLLoading {
         }
 
         let httpResponse = response as? HTTPURLResponse
-        let finalURL = response.url ?? request.url
+        let finalURL = response.url ?? requestURL
         let encoding = stringEncoding(for: request.encoding, response: httpResponse)
         guard let html = String(data: data, encoding: encoding) else {
             throw BookSourceError.loadFailed(
@@ -65,6 +74,15 @@ public struct HTTPSourceLoader: SourceHTMLLoading {
         throw BookSourceError.loadFailed(
             reason: "HTTPSourceLoader does not perform headless rendering"
         )
+    }
+
+    // MARK: - URL hygiene
+
+    private static func upgradedToHTTPS(_ url: URL) -> URL {
+        guard url.scheme?.lowercased() == "http" else { return url }
+        var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        components?.scheme = "https"
+        return components?.url ?? url
     }
 
     // MARK: - Encoding

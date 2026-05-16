@@ -60,13 +60,13 @@
       "transforms": [{ "trim": {} }]
     },
     "catalogURLField": {
-      "selector": "link[rel=canonical]",
+      "selector": "a[href^=\"/chapter/\"]",
       "attribute": "href",
       "transforms": [{ "absoluteURL": {} }]
     }
   },
   "catalog": {
-    "chaptersSelector": "ul.chapter li a, div.chapter-list a",
+    "chaptersSelector": "td.chapterlist a",
     "titleField": {
       "transforms": [{ "trim": {} }]
     },
@@ -82,7 +82,7 @@
       "transforms": [{ "trim": {} }]
     },
     "bodyField": {
-      "selector": "div#content, div.content",
+      "selector": "div[style*=\"text-indent: 2em\"]",
       "attribute": "html",
       "transforms": [
         { "brToNewline": {} },

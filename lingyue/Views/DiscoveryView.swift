@@ -572,23 +572,47 @@ private struct DiscoverySearchResultsView: View {
 
 }
 
+private enum DiscoverySourceKind: Hashable {
+    /// Hardcoded site with a hand-written parser in this file. Registry routing is opt-in via
+    /// the `lingyue.useRegistryForDiscoverySearch` lab flag; legacy parser otherwise.
+    case seeded
+    /// User-created rule from `EditableSourceStore`. No legacy parser exists, so routing MUST
+    /// go through `InternalSourceRegistry`; on failure return [] for that source.
+    case userRule
+}
+
 private struct DiscoverySource: Identifiable, Hashable {
     let id: String
     let name: String
     let tagline: String
     let homepageURL: URL?
     let searchRoute: DiscoverySourceSearchRoute?
+    let kind: DiscoverySourceKind
 
-    init(name: String, tagline: String, homepageURLString: String? = nil, searchRoute: DiscoverySourceSearchRoute? = nil) {
+    init(
+        name: String,
+        tagline: String,
+        homepageURLString: String? = nil,
+        searchRoute: DiscoverySourceSearchRoute? = nil,
+        kind: DiscoverySourceKind = .seeded
+    ) {
         self.id = name
         self.name = name
         self.tagline = tagline
         self.searchRoute = searchRoute
+        self.kind = kind
         if let homepageURLString {
             self.homepageURL = URL(string: homepageURLString)
         } else {
             self.homepageURL = nil
         }
+    }
+
+    /// User-rule sources have no `searchRoute` (no hand-written parser) but still belong in the
+    /// fan-out — they route exclusively through the registry. Seeded sources only participate
+    /// when they expose a route.
+    var isSearchable: Bool {
+        kind == .userRule || searchRoute != nil
     }
 
     var queryName: String {
@@ -856,7 +880,7 @@ private enum DiscoverySourceCatalog {
     }
 
     static var searchableSources: [DiscoverySource] {
-        sources.filter { $0.searchRoute != nil }
+        sources.filter { $0.isSearchable }
     }
 
     static let sources: [DiscoverySource] = [
@@ -970,7 +994,18 @@ actor DiscoverySearchService {
                     continuation.finish()
                     return
                 }
-                let searchableSources = sources.filter { $0.searchRoute != nil }
+                // Phase 3.6 — fan user-created rules into every search round. They route only
+                // via the registry (no legacy parser exists), and the augmentation is recomputed
+                // each round so an editor save shows up on the next query without an app
+                // relaunch. Deduplicated by `id` so a user rule with the same display name as a
+                // seeded one doesn't double-fire.
+                let userRuleSources = await self.loadUserRuleSources()
+                var seenSourceIDs = Set<String>()
+                let combined = (sources + userRuleSources).filter { source in
+                    guard source.isSearchable else { return false }
+                    return seenSourceIDs.insert(source.id).inserted
+                }
+                let searchableSources = combined
                 guard !searchableSources.isEmpty else {
                     continuation.finish()
                     return
@@ -1126,6 +1161,38 @@ actor DiscoverySearchService {
         cachedRegistrySourcesByName = nil
     }
 
+    /// Phase 3.6 — synthesize Discovery entries for user-created rules. Filters to rules that
+    /// declare `supportsSearch` and are enabled in the preference store. Routing for these
+    /// always goes through the registry (no legacy parser exists), so no `searchRoute` is
+    /// attached. Errors silently degrade to an empty list so a store glitch doesn't black out
+    /// the seeded fan-out.
+    fileprivate func loadUserRuleSources() async -> [DiscoverySource] {
+        let stack = SourceStack.live
+        let rules: [SourceRule]
+        do {
+            rules = try await stack.editableStore.loadEditableSources()
+        } catch {
+#if DEBUG
+            debugLog("[DiscoverySearch] editable store load failed: \(error)")
+#endif
+            return []
+        }
+        var sources: [DiscoverySource] = []
+        for rule in rules {
+            guard rule.capabilities.supportsSearch else { continue }
+            let enabled = (try? await stack.preferenceStore.isEnabled(rule.id)) ?? true
+            guard enabled else { continue }
+            sources.append(DiscoverySource(
+                name: rule.name,
+                tagline: "用户自建源",
+                homepageURLString: rule.homepage.absoluteString,
+                searchRoute: nil,
+                kind: .userRule
+            ))
+        }
+        return sources
+    }
+
     /// Try to satisfy the search through `InternalSourceRegistry`. Returns `nil` when no rule
     /// matches this `DiscoverySource` by `displayName`, or when the matched rule's `search`
     /// call threw. Either way the caller falls back to the legacy hand-written parser so a
@@ -1160,6 +1227,25 @@ actor DiscoverySearchService {
     }
 
     private func searchSingleSource(_ source: DiscoverySource, query: String) async -> [DiscoveryRawSearchHit] {
+        // Phase 3.6 — user-created rules have no hand-written parser, so the registry is the
+        // only path. Return whatever the engine produces (including empty) and never fall
+        // through to the legacy URL request flow below.
+        if source.kind == .userRule {
+            let registryHits = await routeViaRegistry(source, query: query) ?? []
+            let probed = await filterPaywalledHits(registryHits)
+            return probed.enumerated().compactMap { index, result in
+                makeDirectSourceHit(
+                    source: source,
+                    title: result.title,
+                    author: result.author,
+                    summary: result.summary,
+                    url: result.url,
+                    rank: index,
+                    query: query
+                )
+            }
+        }
+
         // Phase 3.3 shadow route. When the lab flag is on and the registry has a `BookSource`
         // matching this source's displayName, drive the search through the rule engine instead
         // of the hand-written parser. Empty / failed registry runs fall through to the legacy
