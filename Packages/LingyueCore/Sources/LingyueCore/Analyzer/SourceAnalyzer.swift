@@ -70,12 +70,39 @@ public extension SourceRule {
 public struct AnalyzerInput: Equatable, Sendable {
     public let homepage: URL
     public let exampleBookURL: URL?
+    /// Optional sample chapter-body URL. Today the chapter analyzer (P5)
+    /// derives one from the catalog crawl, but accepting an explicit URL
+    /// lets the simple authoring flow pre-fill the chapter Test sheet
+    /// even when catalog discovery hasn't run.
+    public let chapterURL: URL?
+    /// Optional sample search-results URL — a fully-rendered URL the user
+    /// pasted from their browser (with their keyword already in the query
+    /// string). When present together with `testKeyword`, the analyzer
+    /// derives the search step deterministically from this URL instead of
+    /// scanning the homepage for a `<form>`. Almost every Chinese-language
+    /// book site we've fingerprinted uses GET search, so a pasted URL is
+    /// vastly more reliable than form discovery.
+    public let searchResultURL: URL?
     public let testKeyword: String?
+    /// Optional user-chosen display name. When non-empty, overrides the
+    /// `<title>`-derived suggestion so the source list shows the name the
+    /// user typed.
+    public let customName: String?
 
-    public init(homepage: URL, exampleBookURL: URL?, testKeyword: String?) {
+    public init(
+        homepage: URL,
+        exampleBookURL: URL? = nil,
+        chapterURL: URL? = nil,
+        searchResultURL: URL? = nil,
+        testKeyword: String? = nil,
+        customName: String? = nil
+    ) {
         self.homepage = homepage
         self.exampleBookURL = exampleBookURL
+        self.chapterURL = chapterURL
+        self.searchResultURL = searchResultURL
         self.testKeyword = testKeyword
+        self.customName = customName
     }
 }
 
@@ -218,36 +245,86 @@ public enum SourceAnalyzer {
         // Review banner doesn't pretend nothing ran.
         report.isStub = false
 
-        // P3 — search-form discovery. Skip when JS-only (forms behind
-        // a JS framework typically aren't in the static markup).
-        if !isLikelyJSOnly {
+        // P3 — search-step derivation. Prefer an explicit search-result
+        // URL (deterministic, GET, keyword → {query}) when the user
+        // provided one; otherwise fall back to homepage form scraping.
+        // The URL path is dramatically more reliable on the long tail of
+        // Chinese book sites where the `<form>` markup is hand-rolled
+        // and rarely contains the search-flavoured tokens we look for.
+        let urlDerived: DerivedSearch? = {
+            guard
+                let searchURL = input.searchResultURL,
+                let keyword = input.testKeyword,
+                !keyword.isEmpty
+            else { return nil }
+            return deriveSearchFromURL(searchURL: searchURL, keyword: keyword)
+        }()
+
+        // Unified search-refinement helper: execute the candidate step
+        // with the user's keyword, refine selectors from the live HTML,
+        // and fall back to a smoke-test when refinement fails. Used by
+        // both the URL-derived and form-discovered branches so POST
+        // sites (xbanxia, xsw, nunu) also get real selectors instead of
+        // the `.result, .result-item, ...` placeholder.
+        func refineAndRecord(step initialStep: SearchStep, baseConfidence: AnalysisReport.BlockConfidence, baseNote: String?) async {
+            var step = initialStep
+            // Always probe — if the user didn't supply a keyword we use a
+            // single common Chinese character that appears in nearly every
+            // novel title. The probe is only for HTML structure discovery;
+            // the runtime substitutes the real query at request time.
+            let userKeyword = input.testKeyword?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let keyword = (userKeyword?.isEmpty == false) ? userKeyword! : "一"
+            let refined = await analyzeSearchResults(
+                step: step,
+                keyword: keyword,
+                homepage: input.homepage,
+                encoding: rule.encoding,
+                loader: loader
+            )
+            if let refined {
+                step.resultsSelector = refined.resultsSelector
+                step.titleField = refined.titleField
+                step.detailURLField = refined.detailURLField
+                rule.search = step
+                report.search = refined.confidence
+                if let note = refined.note { report.notes["search"] = note }
+                return
+            }
+            // Refinement failed — fall through to smoke-test so the user
+            // still gets a confidence signal.
+            rule.search = step
+            report.search = baseConfidence
+            if let note = baseNote { report.notes["search"] = note }
+            let verdict = await verifySearch(
+                step: step,
+                keyword: keyword,
+                encoding: rule.encoding,
+                loader: loader
+            )
+            if let verdict {
+                report.search = verdict.confidence
+                if let note = verdict.note { report.notes["search"] = note }
+            }
+        }
+
+        if let urlDerived {
+            await refineAndRecord(
+                step: urlDerived.step,
+                baseConfidence: urlDerived.confidence,
+                baseNote: urlDerived.note
+            )
+        } else if !isLikelyJSOnly {
             let p3 = discoverSearchForm(in: document, baseURL: snapshot.finalURL)
             if let p3 {
-                rule.search = p3.step
-                report.search = p3.confidence
-                if let note = p3.note { report.notes["search"] = note }
-
-                // Optional smoke-test against the live site. A real
-                // green requires non-empty parseable results — without
-                // a keyword we leave the analyzer score in place and
-                // let the user run Test manually.
-                if let keyword = input.testKeyword, !keyword.isEmpty,
-                   p3.confidence != .red {
-                    let verdict = await verifySearch(
-                        step: p3.step,
-                        keyword: keyword,
-                        encoding: rule.encoding,
-                        loader: loader
-                    )
-                    if let verdict {
-                        report.search = verdict.confidence
-                        if let note = verdict.note {
-                            // Keep the discovery note if present; the
-                            // verifier's note wins on the active key.
-                            report.notes["search"] = note
-                        }
-                    }
-                }
+                // `refineAndRecord` already fetches with the user's
+                // keyword, refines selectors from the live response,
+                // and smoke-tests when refinement fails — so the older
+                // standalone `verifySearch` follow-up is redundant.
+                await refineAndRecord(
+                    step: p3.step,
+                    baseConfidence: p3.confidence,
+                    baseNote: p3.note
+                )
             } else {
                 report.search = .red
                 report.notes["search"] = "未找到搜索表单 — 该站点可能使用 AJAX/JS 搜索,请运行「测试」或在「高级修复」中手动配置。"
@@ -333,6 +410,45 @@ public enum SourceAnalyzer {
             report.notes["detail"] = "提供一本书的详情页 URL 以启用详情分析,或运行「测试」手动验证。"
             report.notes["catalog"] = "缺少示例书籍 URL,无法推断目录结构。请回到上一步补充,或运行「测试」/「高级修复」。"
             report.notes["chapter"] = "依赖于目录推断,需先提供示例书籍 URL 或手动设置。"
+        }
+
+        // User-supplied chapter URL wins over P4's catalog-derived guess
+        // when present — the user knows which page they want sampled, and
+        // catalog crawls sometimes pick a "latest update" placeholder
+        // rather than chapter 1.
+        if let chapterURL = input.chapterURL {
+            report.firstChapterURL = chapterURL
+        }
+
+        // Custom display name overrides the analyzer's `<title>` guess so
+        // the source list shows what the user typed.
+        if let custom = input.customName?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !custom.isEmpty {
+            rule.name = custom
+            report.suggestedName = custom
+        }
+
+        // Self-test detail + chapter using the same runtime path the
+        // Test sheet uses, so the user doesn't have to figure out what
+        // to type to verify the analyzer's guesses. Runs the actual
+        // RuleBasedBookSource against the user-supplied detail and
+        // chapter URLs; bumps the block confidence to .green when the
+        // engine extracts a non-empty result. Failures leave the prior
+        // .yellow/.red verdict in place — the user can still tap 修复.
+        let probeSource = RuleBasedBookSource(rule: rule, loader: loader)
+        if report.detail != .red, let exampleBook = input.exampleBookURL {
+            if let detail = try? await probeSource.fetchDetail(url: exampleBook),
+               !detail.title.trimmingCharacters(in: .whitespaces).isEmpty {
+                report.detail = .green
+                report.notes["detail"] = "已识别书名「\(detail.title)」。"
+            }
+        }
+        if report.chapter != .red, let firstURL = report.firstChapterURL {
+            if let content = try? await probeSource.fetchChapter(url: firstURL),
+               !content.paragraphs.isEmpty {
+                report.chapter = .green
+                report.notes["chapter"] = "已识别正文 (\(content.paragraphs.count) 段)。"
+            }
         }
 
         return (rule, report)
@@ -515,6 +631,311 @@ public enum SourceAnalyzer {
             authorField: nil,
             coverField: nil,
             snippetField: nil
+        )
+    }
+
+    private struct DerivedSearch {
+        let step: SearchStep
+        let confidence: AnalysisReport.BlockConfidence
+        let note: String?
+    }
+
+    private struct SearchResultsDiscovery {
+        let resultsSelector: String
+        let titleField: FieldSelector
+        let detailURLField: FieldSelector
+        let confidence: AnalysisReport.BlockConfidence
+        let note: String?
+    }
+
+    /// Execute the provided `SearchStep` with the user's keyword and
+    /// locate the densest cluster of anchor-bearing rows whose links
+    /// point at distinct, same-host detail-page paths in the response.
+    /// Mirrors the catalog P4 cluster heuristic but tuned for search
+    /// pages: fewer expected rows (≥ 3), stricter same-host check, and
+    /// distinct-path filter that rules out navbars / tag clouds whose
+    /// anchors all point at the same landing page.
+    ///
+    /// Works for both GET and POST search — the step carries `method` +
+    /// `bodyTemplate`, so this function is called from both the
+    /// URL-derived branch and the homepage-form-discovery branch. The
+    /// substitution mirrors `verifySearch`: percent-encode the keyword
+    /// for the URL/body. Real runtime requests honour `queryEncoding`
+    /// for GBK/GB18030 sites; this analyzer step is best-effort.
+    ///
+    /// Returns refined `resultsSelector / titleField / detailURLField`
+    /// so the user almost never has to open 高级修复 for common Chinese
+    /// book sites.
+    private static func analyzeSearchResults(
+        step: SearchStep,
+        keyword: String,
+        homepage: URL,
+        encoding: SourceEncoding,
+        loader: any SourceHTMLLoading
+    ) async -> SearchResultsDiscovery? {
+        let encoded = keyword.addingPercentEncoding(
+            withAllowedCharacters: .urlQueryAllowed
+        ) ?? keyword
+        let urlString = step.urlTemplate.replacingOccurrences(
+            of: "{query}", with: encoded
+        )
+        guard let url = URL(string: urlString) else { return nil }
+
+        var bodyData: Data? = nil
+        if let bodyTemplate = step.bodyTemplate {
+            let bodyString = bodyTemplate.replacingOccurrences(
+                of: "{query}", with: encoded
+            )
+            bodyData = bodyString.data(using: .utf8)
+        }
+
+        let method: SourceRequest.Method = (step.method == .post) ? .post : .get
+        let request = SourceRequest(
+            url: url,
+            method: method,
+            headers: [:],
+            body: bodyData,
+            encoding: encoding,
+            referer: nil
+        )
+
+        let snapshot: WebPageSnapshot
+        do { snapshot = try await loader.fetchHTML(request) }
+        catch { return nil }
+        guard let document = try? SwiftSoup.parse(
+            snapshot.html, snapshot.finalURL.absoluteString
+        ) else { return nil }
+
+        let homepageHost = (homepage.host(percentEncoded: false) ?? "").lowercased()
+        let homepagePath = homepage.path
+        let baseURL = snapshot.finalURL
+
+        let containers: Elements
+        do { containers = try document.select("ul, ol, dl, div, table, tbody") }
+        catch { return nil }
+
+        struct Cluster {
+            let container: Element
+            let rowTag: String
+            let rowCount: Int
+            let distinctPaths: Int
+        }
+
+        var clusters: [Cluster] = []
+        for container in containers {
+            let children = container.children().array()
+            guard children.count >= 3 else { continue }
+            var byTag: [String: [Element]] = [:]
+            for child in children {
+                byTag[child.tagName().lowercased(), default: []].append(child)
+            }
+            for (tag, group) in byTag {
+                guard ["li", "dt", "tr", "div", "p", "article"].contains(tag),
+                      group.count >= 3 else { continue }
+                var hrefRowCount = 0
+                var distinctPaths = Set<String>()
+                for row in group {
+                    let anchors = (try? row.select("a[href]").array()) ?? []
+                    guard let first = anchors.first else { continue }
+                    let href = (try? first.attr("href")) ?? ""
+                    if href.isEmpty || href.hasPrefix("#") || href.hasPrefix("javascript:") {
+                        continue
+                    }
+                    guard
+                        let abs = URL(string: href, relativeTo: baseURL)?.absoluteURL,
+                        let host = abs.host(percentEncoded: false)?.lowercased(),
+                        homepageHost.isEmpty || host == homepageHost
+                            || host.hasSuffix("." + homepageHost)
+                            || homepageHost.hasSuffix("." + host)
+                    else { continue }
+                    let path = abs.path
+                    guard !path.isEmpty, path != "/", path != homepagePath else { continue }
+                    hrefRowCount += 1
+                    distinctPaths.insert(path)
+                }
+                // Most rows must point at distinct paths — otherwise we
+                // picked up a sidebar / pagination row where every link
+                // goes to the same target.
+                if hrefRowCount >= 3, distinctPaths.count * 3 >= hrefRowCount * 2 {
+                    clusters.append(Cluster(
+                        container: container,
+                        rowTag: tag,
+                        rowCount: hrefRowCount,
+                        distinctPaths: distinctPaths.count
+                    ))
+                }
+            }
+        }
+
+        if clusters.isEmpty {
+            // Empty-results fallback: a non-existent keyword (e.g. user
+            // pasted a typo) takes us here because the response contains
+            // no rows to cluster on. But Chinese book CMSes still emit
+            // the empty results container with a named class — e.g.
+            // xbanxia.cc renders `<div class="pop-books2"><ol></ol></div>`
+            // even on 0 hits. Walk those empty lists, look for a results
+            // signal on the element or a near ancestor, and infer the
+            // selector anyway so the user only needs to retry with a
+            // known-good keyword (not also hand-edit selectors).
+            let resultTokens = [
+                "result", "search", "book", "novel", "story",
+                "list", "items", "rows"
+            ]
+            let listEls = (try? document.select("ol, ul, tbody").array()) ?? []
+            for el in listEls {
+                guard el.children().array().isEmpty else { continue }
+                var ancestor: Element? = el
+                var hops = 0
+                var matched: Element? = nil
+                while let node = ancestor, hops <= 2 {
+                    let id = ((try? node.id()) ?? "").lowercased()
+                    let cls = ((try? node.className()) ?? "").lowercased()
+                    if resultTokens.contains(where: { id.contains($0) || cls.contains($0) }) {
+                        matched = node
+                        break
+                    }
+                    ancestor = node.parent()
+                    hops += 1
+                }
+                guard let matched else { continue }
+                let rowTag = (el.tagName().lowercased() == "tbody") ? "tr" : "li"
+                let containerSelector: String
+                if matched === el {
+                    containerSelector = selectorPath(for: el) ?? el.tagName().lowercased()
+                } else {
+                    let outer = selectorPath(for: matched) ?? matched.tagName().lowercased()
+                    containerSelector = "\(outer) \(el.tagName().lowercased())"
+                }
+                let resultsSelector = "\(containerSelector) > \(rowTag)"
+                return SearchResultsDiscovery(
+                    resultsSelector: resultsSelector,
+                    titleField: FieldSelector(selector: "a", attribute: nil, transforms: [.trim]),
+                    detailURLField: FieldSelector(
+                        selector: "a",
+                        attribute: "href",
+                        transforms: [.absoluteURL]
+                    ),
+                    confidence: .yellow,
+                    note: "搜索请求成功,但「\(keyword)」未匹配到结果。已根据页面结构推断结果选择器 `\(resultsSelector)`,请用该网站肯定收录的关键词(如某本书名)重新「测试」验证。"
+                )
+            }
+            return nil
+        }
+        clusters.sort { $0.rowCount > $1.rowCount }
+        let winner = clusters[0]
+
+        let containerSelector = selectorPath(for: winner.container)
+            ?? winner.container.tagName().lowercased()
+        let resultsSelector = "\(containerSelector) > \(winner.rowTag)"
+
+        let confidence: AnalysisReport.BlockConfidence
+        let note: String?
+        if winner.rowCount >= 5
+            && (clusters.count == 1 || winner.rowCount >= 2 * clusters[1].rowCount) {
+            confidence = .green
+            note = "识别到 \(winner.rowCount) 条搜索结果(`\(resultsSelector)`)。"
+        } else if clusters.count > 1 && clusters[1].rowCount * 2 > winner.rowCount {
+            confidence = .yellow
+            note = "搜索结果候选多于一个 (\(winner.rowCount) vs \(clusters[1].rowCount));已选用最大者,如不正确请在「高级修复」中调整 `resultsSelector`。"
+        } else {
+            confidence = .yellow
+            note = "搜索结果较少 (\(winner.rowCount) 条),请运行「测试」验证。"
+        }
+
+        return SearchResultsDiscovery(
+            resultsSelector: resultsSelector,
+            titleField: FieldSelector(selector: "a", attribute: nil, transforms: [.trim]),
+            detailURLField: FieldSelector(
+                selector: "a",
+                attribute: "href",
+                transforms: [.absoluteURL]
+            ),
+            confidence: confidence,
+            note: note
+        )
+    }
+
+    /// Derive a `SearchStep` deterministically from a search-results URL
+    /// the user pasted from their browser. GET method is assumed because
+    /// pasted URLs come from the address bar (POST forms don't preserve
+    /// the body in the URL). The keyword's occurrence — plain or
+    /// UTF-8/GBK percent-encoded — is replaced with the `{query}` token
+    /// so the engine can substitute future queries.
+    ///
+    /// Returns `nil` if the keyword can't be located in the URL — in
+    /// that case the caller falls back to homepage form discovery.
+    private static func deriveSearchFromURL(
+        searchURL: URL,
+        keyword: String
+    ) -> DerivedSearch? {
+        let trimmed = keyword.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        let urlString = searchURL.absoluteString
+        var template: String? = nil
+        var queryEncoding: SourceEncoding = .utf8
+
+        // 1) Plain occurrence (ASCII keyword or unencoded CJK).
+        if urlString.contains(trimmed) {
+            template = urlString.replacingOccurrences(of: trimmed, with: "{query}")
+        }
+
+        // 2) UTF-8 percent-encoded.
+        if template == nil,
+           let utf8Encoded = trimmed.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+           urlString.range(of: utf8Encoded, options: .caseInsensitive) != nil {
+            template = urlString.replacingOccurrences(
+                of: utf8Encoded,
+                with: "{query}",
+                options: .caseInsensitive
+            )
+            queryEncoding = .utf8
+        }
+
+        // 3) GBK / GB18030 percent-encoded. Legacy Chinese book CMSes
+        // (DZBook 3.0, JieQi, etc.) still ship GB18030 search forms.
+        if template == nil {
+            for encoding in [String.Encoding(rawValue: CFStringConvertEncodingToNSStringEncoding(CFStringEncoding(CFStringEncodings.GB_18030_2000.rawValue))),
+                             String.Encoding(rawValue: CFStringConvertEncodingToNSStringEncoding(CFStringEncoding(CFStringEncodings.GBK_95.rawValue)))] {
+                guard let data = trimmed.data(using: encoding) else { continue }
+                let percent = data.map { String(format: "%%%02X", $0) }.joined()
+                if urlString.range(of: percent, options: .caseInsensitive) != nil {
+                    template = urlString.replacingOccurrences(
+                        of: percent,
+                        with: "{query}",
+                        options: .caseInsensitive
+                    )
+                    queryEncoding = .gb18030
+                    break
+                }
+            }
+        }
+
+        guard let urlTemplate = template else { return nil }
+
+        let step = SearchStep(
+            method: .get,
+            urlTemplate: urlTemplate,
+            bodyTemplate: nil,
+            queryEncoding: queryEncoding,
+            // Placeholder selectors — Slice B will replace these with
+            // HTML-driven detection from the live search response. Until
+            // then the user can refine in 高级修复 or run Test to iterate.
+            resultsSelector: ".result, .result-item, .search-result li, li",
+            titleField: FieldSelector(selector: "a", attribute: nil, transforms: [.trim]),
+            detailURLField: FieldSelector(
+                selector: "a",
+                attribute: "href",
+                transforms: [.absoluteURL]
+            ),
+            authorField: nil,
+            coverField: nil,
+            snippetField: nil
+        )
+        return DerivedSearch(
+            step: step,
+            confidence: .yellow,
+            note: "已根据搜索 URL 推断搜索接口;结果选择器为占位值,请运行「测试」验证。"
         )
     }
 

@@ -115,7 +115,13 @@ struct SettingsView: View {
                     readingControlsSection
                     appThemeSection
                     storageSection
+#if LINGYUE_INTERNAL
+                    // App Store builds reach 我的书源 from the Discovery
+                    // tab (see DiscoveryAppStoreView); only the Internal
+                    // build keeps the Settings entry, since its Discovery
+                    // page is busy with the seeded 书库 grid.
                     sourcesSection
+#endif
                     backupSection
 #if LINGYUE_INTERNAL
                     diagnosticsSection
@@ -392,6 +398,7 @@ struct SettingsView: View {
         }
     }
 
+#if LINGYUE_INTERNAL
     private var sourcesSection: some View {
         VStack(alignment: .leading, spacing: 14) {
             SectionHeader(title: "书源")
@@ -416,6 +423,7 @@ struct SettingsView: View {
             .readerCard()
         }
     }
+#endif
 
     private var backupSection: some View {
         VStack(alignment: .leading, spacing: 14) {

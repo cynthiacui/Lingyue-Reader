@@ -343,10 +343,8 @@ struct SourceEditorView: View {
                 )
                 HeaderDictionaryEditor(headers: $draft.defaultHeaders)
             } label: {
-                Label("高级设置", systemImage: "wrench.and.screwdriver")
+                Text("高级设置")
             }
-        } header: {
-            Text("高级")
         } footer: {
             Text("仅在默认行为失败时调整。引擎一般保持 HTTP;切换到 WKWebView 会显著增加内存与启动时间。默认请求头用于覆盖 User-Agent 或附加 Referer 等站点要求。")
         }

@@ -1345,12 +1345,24 @@ final class BookImportService: Sendable {
             title = parsedTitle
         }
         let bodyHTML: String
+#if LINGYUE_INTERNAL
         if allowDynamicTextEndpoint {
             bodyHTML = try await dynamicChapterBodyHTML(from: html, chapterURL: link.url)
                 ?? chapterBodyHTML(from: html)
         } else {
             bodyHTML = chapterBodyHTML(from: html)
         }
+#else
+        // AppStore: the dynamic-text endpoint is an 8book.com-specific
+        // workaround and shipping the host literal in shared source
+        // would put it in the AppStore binary. The endpoint and its
+        // helpers (`dynamicChapterBodyHTML`, `currentChapterID`,
+        // `dynamicChapterIDList`) live under `#if LINGYUE_INTERNAL`.
+        // AppStore parses chapter bodies with the standard
+        // `chapterBodyHTML` path regardless of `allowDynamicTextEndpoint`.
+        _ = allowDynamicTextEndpoint
+        bodyHTML = chapterBodyHTML(from: html)
+#endif
         let content = cleanChapterBody(bodyHTML)
         let contentWithoutTitle = content
             .replacingOccurrences(of: title, with: "")
@@ -1601,6 +1613,7 @@ final class BookImportService: Sendable {
         return nil
     }
 
+#if LINGYUE_INTERNAL
     private func dynamicChapterBodyHTML(from html: String, chapterURL: URL) async throws -> String? {
         guard html.contains("/js/read.js") || html.contains("i31pdbha_") else { return nil }
         guard let itemID = metaContent(named: "itemid", in: html),
@@ -1648,6 +1661,7 @@ final class BookImportService: Sendable {
                     && (list.last?.count ?? 0) > 20
             }
     }
+#endif
 
     private func substring(_ text: String, start: Int, length: Int) -> String {
         guard start >= 0, length > 0, start < text.count else { return "" }

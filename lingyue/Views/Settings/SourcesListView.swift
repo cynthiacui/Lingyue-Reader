@@ -6,10 +6,10 @@ import LingyueInternalSources
 
 /// Phase 3.1 — sources management screen. Lists every rule available
 /// to the runtime (seeded + user-authored), with per-rule enable/disable
-/// toggles and drag-to-reorder. State lives in `SourcePreferenceStore`,
-/// not in the rule JSON, so a user's on/off and ordering preferences are
-/// per-install and never bleed into rules they share via the Phase 3.2
-/// import flow.
+/// toggles and trailing-swipe delete on user-authored rows. State lives
+/// in `SourcePreferenceStore`, not in the rule JSON, so a user's on/off
+/// preferences are per-install and never bleed into rules they share
+/// via the Phase 3.2 import flow.
 ///
 /// Phase 3.2 — toolbar "+" pushes `SourceEditorView` with an empty draft
 /// (the "from scratch" entry point). URL Analyzer (3.2.1) and JSON import
@@ -17,15 +17,14 @@ import LingyueInternalSources
 /// second option exists.
 ///
 /// The view reads from `\.sourceStack` directly. Refresh runs on `.task`
-/// and again on each toggle/reorder so persistence flushes hit the
-/// store before the UI redraws — the registry's `enabledSources()`
-/// snapshot becomes consistent without explicit invalidation. `.onAppear`
-/// re-runs on pop-back from the editor so newly-added / edited rules
-/// land in the list without a manual pull-to-refresh.
+/// and again on each toggle so persistence flushes hit the store before
+/// the UI redraws — the registry's `enabledSources()` snapshot becomes
+/// consistent without explicit invalidation. `.onAppear` re-runs on
+/// pop-back from the editor so newly-added / edited rules land in the
+/// list without a manual pull-to-refresh.
 struct SourcesListView: View {
     @Environment(\.sourceStack) private var sourceStack
     @Environment(\.appTheme) private var theme
-    @Environment(\.editMode) private var editMode
 
     @State private var entries: [SourceEntry] = []
     @State private var loadError: String?
@@ -37,74 +36,76 @@ struct SourcesListView: View {
     /// reachable from inside Review via the 高级修复 button.
     /// `nil` after `onComplete` pops the destination back to this list.
     @State private var selectedReviewEntry: SourceEntry?
-
-    private var isEditing: Bool {
-        editMode?.wrappedValue.isEditing == true
-    }
+    /// Trailing-swipe delete target. Set when the user taps Delete on a
+    /// row's swipe action; drives the confirmation alert. Cleared on
+    /// confirm or cancel.
+    @State private var pendingDelete: SourceEntry?
+    /// Rule IDs currently being auto-verified after a toggle-on. Used to
+    /// render an in-row 检查中… indicator so the user knows their flip
+    /// kicked off a real-site verification round.
+    @State private var verifyingIDs: Set<UUID> = []
 
     var body: some View {
-        Group {
-            if let loadError {
-                ScrollView {
-                    errorCard(loadError)
-                        .padding(.horizontal, 16)
-                        .padding(.top, 12)
-                }
-            } else if !hasLoaded {
-                ScrollView {
-                    loadingCard
-                        .padding(.horizontal, 16)
-                        .padding(.top, 12)
-                }
-            } else if entries.isEmpty {
-                ScrollView {
-                    emptyCard
-                        .padding(.horizontal, 16)
-                        .padding(.top, 12)
-                }
-            } else {
-                List {
-                    ForEach(entries) { entry in
-                        // While editing, drop the NavigationLink wrapper.
-                        // SwiftUI applies `.disabled` to nav-link labels
-                        // inside a list in edit mode (the tap can't fire),
-                        // which desaturates text, badges, and chevrons —
-                        // making the whole list read as "disabled" even
-                        // though the user only entered reorder mode. A
-                        // bare card renders at full strength.
-                        Group {
-                            if isEditing {
+        ZStack {
+            ThemeBackgroundView()
+
+            Group {
+                if let loadError {
+                    ScrollView {
+                        errorCard(loadError)
+                            .padding(.horizontal, 16)
+                            .padding(.top, 12)
+                    }
+                } else if !hasLoaded {
+                    ScrollView {
+                        loadingCard
+                            .padding(.horizontal, 16)
+                            .padding(.top, 12)
+                    }
+                } else if entries.isEmpty {
+                    ScrollView {
+                        emptyCard
+                            .padding(.horizontal, 16)
+                            .padding(.top, 12)
+                    }
+                } else {
+                    List {
+                        ForEach(entries) { entry in
+                            Button {
+                                selectedReviewEntry = entry
+                            } label: {
                                 ruleCard(entry)
-                            } else {
-                                Button {
-                                    selectedReviewEntry = entry
-                                } label: {
-                                    ruleCard(entry)
+                            }
+                            .buttonStyle(.plain)
+                            .listRowSeparator(.hidden)
+                            .listRowBackground(Color.clear)
+                            .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+                            // Swipe-to-delete is gated on `.editable`
+                            // origin: seeded rules ship inside the app
+                            // bundle and would just be re-emitted on the
+                            // next refresh, so deletion is meaningless
+                            // for them. Users can still disable seeded
+                            // rules via the toggle.
+                            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                                if entry.origin == .editable {
+                                    Button(role: .destructive) {
+                                        pendingDelete = entry
+                                    } label: {
+                                        Label("删除", systemImage: "trash")
+                                    }
+                                    .tint(.red)
                                 }
-                                .buttonStyle(.plain)
                             }
                         }
-                        .listRowSeparator(.hidden)
-                        .listRowBackground(Color.clear)
-                        .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
                     }
-                    .onMove(perform: handleMove)
+                    .listStyle(.plain)
+                    .scrollContentBackground(.hidden)
                 }
-                .listStyle(.plain)
-                .scrollContentBackground(.hidden)
             }
         }
         .navigationTitle("书源")
         .navigationBarTitleDisplayMode(.large)
         .toolbar {
-            // Standard SwiftUI EditButton: drives the list's edit mode so
-            // `.onMove` activates only when the user opts in. Forcing
-            // `.editMode = .active` (an earlier attempt) made the whole
-            // list look disabled — toggles render in their disabled
-            // appearance and NavigationLink rows stop responding to taps.
-            ToolbarItem(placement: .topBarLeading) {
-                if !entries.isEmpty { EditButton() }
-            }
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
                     isAddingSource = true
@@ -114,14 +115,37 @@ struct SourcesListView: View {
                 .accessibilityLabel("新建书源")
             }
         }
+        .alert(
+            "删除该书源？",
+            isPresented: Binding(
+                get: { pendingDelete != nil },
+                set: { if !$0 { pendingDelete = nil } }
+            ),
+            presenting: pendingDelete
+        ) { entry in
+            Button("取消", role: .cancel) { pendingDelete = nil }
+            Button("删除", role: .destructive) {
+                let target = entry
+                pendingDelete = nil
+                Task { await deleteEntry(target) }
+            }
+        } message: { entry in
+            Text("书源「\(entry.rule.name)」会从书源列表中移除。该操作无法撤销。")
+        }
         .sheet(isPresented: $isAddingSource) {
             // Sheet-hosted URL form. The Review screen sits inside the
             // same NavigationStack so 分析 → 保存 → 列表 lives in one
             // modal. `onComplete` from Review fires after a successful
             // save, closing the sheet so the user lands back on the
             // updated source list.
+            //
+            // `AddSourceFlowView` is the Phase 6.1 gate wrapper: on the
+            // App Store target it presents `IPAttestationView` until
+            // the user accepts (once per install), then forwards to
+            // `AddSourceURLView`. Internal builds skip the gate at
+            // compile time.
             NavigationStack {
-                AddSourceURLView(onComplete: {
+                AddSourceFlowView(onComplete: {
                     isAddingSource = false
                     Task { await refresh() }
                 })
@@ -152,42 +176,22 @@ struct SourcesListView: View {
         }
     }
 
-    /// Apply a user drag — reassign `priority` for the new order and persist
-    /// every changed entry. Priorities are normalized to dense 0-based ints
-    /// so a long history of moves can't drift values into absurd ranges.
-    private func handleMove(from source: IndexSet, to destination: Int) {
-        var reordered = entries
-        reordered.move(fromOffsets: source, toOffset: destination)
-        let normalized: [SourceEntry] = reordered.enumerated().map { index, entry in
-            SourceEntry(
-                rule: entry.rule,
-                origin: entry.origin,
-                isEnabled: entry.isEnabled,
-                priority: index,
-                rowStatus: entry.rowStatus
-            )
-        }
-        entries = normalized
-        Task { await persistPriorities(normalized) }
-    }
-
-    private func persistPriorities(_ ordered: [SourceEntry]) async {
+    /// Delete a user-authored source across all three persistence
+    /// stores. Validation + preference records key on `ruleID`; without
+    /// the parallel delete a later re-import with the same UUID would
+    /// inherit the deleted rule's test history and enable/priority,
+    /// which is wrong by construction (matches `SourceEditorView.delete`).
+    private func deleteEntry(_ entry: SourceEntry) async {
         do {
-            for entry in ordered {
-                try await sourceStack.preferenceStore.save(
-                    SourcePreference(
-                        ruleID: entry.rule.id,
-                        isEnabled: entry.isEnabled,
-                        priority: entry.priority
-                    )
-                )
-            }
+            try await sourceStack.editableStore.deleteSource(id: entry.rule.id)
+            try await sourceStack.validationStore.delete(ruleID: entry.rule.id)
+            try await sourceStack.preferenceStore.delete(ruleID: entry.rule.id)
             await DiscoverySearchService.shared.invalidateRegistryCache()
-            // The PageDetector cache is URL-keyed and has no idea which
-            // source produced each cached hit — reorder/toggle must drop
-            // it or a now-disabled source's prior result keeps flashing
-            // on matching pages (PHASES.md §4.6).
+            // PageDetector caches per-URL hits with no per-source key —
+            // a deleted source's prior result would keep flashing on
+            // matching pages otherwise (PHASES.md §4.6).
             await sourceStack.pageDetector.invalidateCache()
+            await refresh()
         } catch {
             loadError = String(describing: error)
         }
@@ -254,10 +258,74 @@ struct SourcesListView: View {
                 await DiscoverySearchService.shared.invalidateRegistryCache()
                 await sourceStack.pageDetector.invalidateCache()
                 await refresh()
+                // Auto-verify on enable: re-running the search→detail→
+                // catalog→chapter chain against the live site refreshes
+                // every block's persisted test status, so disable→enable
+                // cycles no longer reset the pills to 需要检查 for blocks
+                // the user never manually tested. Editable rules only —
+                // seeded rules trust their authored capabilities.
+                if newValue && entry.origin == .editable {
+                    await verifyAndPersist(rule: entry.rule)
+                }
             } catch {
                 loadError = String(describing: error)
             }
         }
+    }
+
+    /// Run the live verification chain for `rule` and persist each
+    /// passing block to `validationStore`. Silent on failure — verification
+    /// is a background nicety, not a blocking save path. The user can
+    /// always tap into Review and run the per-block tests manually.
+    private func verifyAndPersist(rule: SourceRule) async {
+        verifyingIDs.insert(rule.id)
+        defer {
+            verifyingIDs.remove(rule.id)
+            Task { await refresh() }
+        }
+        // Sites without a search block can't seed the chain — there's no
+        // URL to feed into detail. Skip; the user added the rule via
+        // browser import and will exercise it that way.
+        guard rule.search != nil else { return }
+        let source = RuleBasedBookSource(rule: rule, loader: sourceStack.loader)
+        let keyword = "一"
+
+        guard let hits = try? await source.search(keyword), let firstHit = hits.first else {
+            return
+        }
+        await persistVerification(rule: rule, block: .search, passed: true)
+
+        guard let detail = try? await source.fetchDetail(url: firstHit.detailURL),
+              !detail.title.trimmingCharacters(in: .whitespaces).isEmpty else {
+            return
+        }
+        await persistVerification(rule: rule, block: .detail, passed: true)
+
+        guard let chapters = try? await source.fetchCatalog(url: detail.catalogURL),
+              let firstChapter = chapters.first else {
+            return
+        }
+        await persistVerification(rule: rule, block: .catalog, passed: true)
+
+        guard let content = try? await source.fetchChapter(url: firstChapter.url),
+              !content.paragraphs.isEmpty else {
+            return
+        }
+        await persistVerification(rule: rule, block: .chapter, passed: true)
+    }
+
+    private func persistVerification(rule: SourceRule, block: SourceBlock, passed: Bool) async {
+        let record = BlockTestRecord(
+            status: passed ? .passed : .failed,
+            lastRunAt: Date(),
+            failureSummary: passed ? nil : "自动验证未通过",
+            inputFingerprint: rule.blockFingerprint(block)
+        )
+        try? await sourceStack.validationStore.recordTest(
+            ruleID: rule.id,
+            block: block,
+            record: record
+        )
     }
 
     // MARK: - Subviews
@@ -270,10 +338,14 @@ struct SourcesListView: View {
                 .foregroundStyle(theme.secondaryText)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .readerCard()
+        .sourcesListCard()
     }
 
+    @ViewBuilder
     private var emptyCard: some View {
+#if LINGYUE_INTERNAL
+        // Internal ships with seeded rules — an empty list here is
+        // diagnostic, not first-launch.
         VStack(alignment: .leading, spacing: 8) {
             Label("还没有可用书源", systemImage: "tray")
                 .font(.headline)
@@ -284,8 +356,27 @@ struct SourcesListView: View {
                 .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .readerCard()
+        .sourcesListCard()
+#else
+        appStoreFirstLaunchCard
+#endif
     }
+
+#if !LINGYUE_INTERNAL
+    private var appStoreFirstLaunchCard: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Label("尚未添加任何来源", systemImage: "books.vertical")
+                .font(.headline)
+                .foregroundStyle(theme.primaryText)
+            Text("点击右上角 + 添加您要读取的网页来源。")
+                .font(.subheadline)
+                .foregroundStyle(theme.secondaryText)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .sourcesListCard()
+    }
+#endif
 
     private func errorCard(_ message: String) -> some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -299,13 +390,13 @@ struct SourcesListView: View {
                 .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .readerCard()
+        .sourcesListCard()
     }
 
     private func ruleCard(_ entry: SourceEntry) -> some View {
         let rule = entry.rule
-        return VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
+        return VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .center, spacing: 8) {
                 Text(rule.name)
                     .font(.headline)
                     .foregroundStyle(theme.primaryText)
@@ -313,24 +404,15 @@ struct SourcesListView: View {
 
                 Spacer(minLength: 8)
 
-                // SwiftUI dims interactive controls inside a List in
-                // edit mode regardless of their actual `isEnabled` value,
-                // which made the page read as "everything disabled" when
-                // the user only wanted to reorder. Hide the toggle while
-                // editing — matches Apple's own pattern (Settings ›
-                // Edit Home Screen drops toggle affordances while in
-                // reorder mode).
-                if !isEditing {
-                    Toggle(
-                        "",
-                        isOn: Binding(
-                            get: { entry.isEnabled },
-                            set: { newValue in toggleEnabled(for: entry, to: newValue) }
-                        )
+                Toggle(
+                    "",
+                    isOn: Binding(
+                        get: { entry.isEnabled },
+                        set: { newValue in toggleEnabled(for: entry, to: newValue) }
                     )
-                    .labelsHidden()
-                    .tint(theme.accent)
-                }
+                )
+                .labelsHidden()
+                .tint(theme.accent)
             }
 
             Text(rule.homepage.host(percentEncoded: false) ?? rule.homepage.absoluteString)
@@ -341,14 +423,29 @@ struct SourcesListView: View {
 
             HStack(spacing: 6) {
                 originBadge(entry.origin)
-                statusPill(entry.rowStatus)
+                if verifyingIDs.contains(entry.rule.id) {
+                    verifyingPill
+                } else {
+                    statusPill(entry.rowStatus)
+                }
                 Spacer(minLength: 0)
             }
-            .padding(.top, 2)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .readerCard()
-        .opacity(isEditing || entry.isEnabled ? 1.0 : 0.55)
+        .sourcesListCard()
+    }
+
+    private var verifyingPill: some View {
+        HStack(spacing: 4) {
+            ProgressView().controlSize(.mini)
+            Text("检查中…")
+                .font(.caption2.weight(.medium))
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 3)
+        .background(theme.secondaryText.opacity(0.12))
+        .foregroundStyle(theme.secondaryText)
+        .clipShape(Capsule())
     }
 
     private func statusPill(_ status: RowStatus) -> some View {
@@ -433,6 +530,28 @@ enum RowStatus: Hashable {
     case needsCheck
     case failed
     case disabled
+}
+
+/// Local card style for the 书源 list. Uses `Color(.systemBackground)` instead of
+/// `theme.cardBackground` so cards read as a whiter "raised" surface against the
+/// theme-tinted page background. Keeping it local avoids changing every other
+/// `.readerCard()` caller (Settings / Backup / etc.) where pure white would
+/// clash with the surrounding chrome.
+private struct SourcesListCardModifier: ViewModifier {
+    @Environment(\.appTheme) private var theme
+    func body(content: Content) -> some View {
+        content
+            .padding(16)
+            .background(Color(.systemBackground))
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .shadow(color: theme.cardShadow, radius: 12, x: 0, y: 6)
+    }
+}
+
+private extension View {
+    func sourcesListCard() -> some View {
+        modifier(SourcesListCardModifier())
+    }
 }
 
 private struct SourceEntry: Identifiable, Hashable {

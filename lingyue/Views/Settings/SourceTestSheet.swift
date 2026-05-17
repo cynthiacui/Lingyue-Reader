@@ -181,17 +181,21 @@ struct SourceTestSheet: View {
         }
         outcome = result
         isRunning = false
-        onResult?(step, Self.didPass(result))
+        if let passed = Self.didPass(result) {
+            onResult?(step, passed)
+        }
     }
 
     /// "Did this outcome demonstrate the step actually works?" — used by
-    /// the Review screen to flip per-block status. Non-empty results
-    /// count as a pass; empty hits / no detection / parse failure all
-    /// count as test failures. The Test sheet itself still shows the
-    /// raw result so a power user can disagree with the heuristic.
-    private static func didPass(_ outcome: Outcome) -> Bool {
+    /// the Review screen to flip per-block status. `nil` means
+    /// inconclusive: don't write a verdict, leave whatever was there.
+    /// Search with 0 hits is the canonical inconclusive case — the
+    /// request succeeded so the selectors aren't obviously broken; the
+    /// user may have simply typed a keyword the site doesn't index.
+    /// Power users still see the raw "无结果" in the sheet.
+    private static func didPass(_ outcome: Outcome) -> Bool? {
         switch outcome {
-        case .search(let hits): return !hits.isEmpty
+        case .search(let hits): return hits.isEmpty ? nil : true
         case .detail(let detail): return !detail.title.isEmpty
         case .catalog(let chapters): return !chapters.isEmpty
         case .chapter(let content): return !content.paragraphs.isEmpty
@@ -215,7 +219,13 @@ struct SourceTestSheet: View {
         case .search(let hits):
             Section("搜索结果 (\(hits.count))") {
                 if hits.isEmpty {
-                    Text("无结果").foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("无结果").foregroundStyle(.secondary)
+                        Text("如果你确信搜索接口没问题,可能是该关键词在此站点没有匹配的书。请换一个该站点肯定收录的关键词(例如某本书的书名)再试。")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.vertical, 4)
                 } else {
                     ForEach(Array(hits.prefix(20).enumerated()), id: \.offset) { _, hit in
                         VStack(alignment: .leading, spacing: 4) {

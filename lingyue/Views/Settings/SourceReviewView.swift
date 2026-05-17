@@ -43,6 +43,14 @@ struct SourceReviewView: View {
     @State private var testingBlock: SourceBlock?
     @State private var pendingAdvancedEdit: AdvancedEditDestination?
     @State private var hasAppearedOnce = false
+    /// True when this rule lives in `editableStore` (i.e. it's a saved
+    /// user-authored source). Drives whether the delete action surfaces
+    /// at the bottom of the screen — seeded rules are bundle-resident
+    /// and can't be deleted, and a freshly-analyzed draft (not yet
+    /// saved) has nothing to delete either.
+    @State private var canDelete = false
+    @State private var pendingDelete = false
+    @State private var isDeleting = false
 
     /// Wrapper for `navigationDestination(item:)`. Carries both the
     /// rule snapshot the editor opens against and the deep-link target
@@ -83,9 +91,20 @@ struct SourceReviewView: View {
                         .textSelection(.enabled)
                 }
             }
+            if canDelete {
+                deleteSection
+            }
         }
-        .navigationTitle("分析结果")
+        .navigationTitle("书源详情")
         .navigationBarTitleDisplayMode(.inline)
+        .alert("删除该书源？", isPresented: $pendingDelete) {
+            Button("取消", role: .cancel) {}
+            Button("删除", role: .destructive) {
+                Task { await deleteDraft() }
+            }
+        } message: {
+            Text("书源「\(draft.name)」会从书源列表中移除。该操作无法撤销。")
+        }
         .task { await refreshValidation() }
         .sheet(item: $testingBlock) { block in
             NavigationStack {
@@ -184,7 +203,7 @@ struct SourceReviewView: View {
                 blockRow(block)
             }
         } header: {
-            Text("分析结果")
+            Text("识别状态")
         } footer: {
             Text("点击「测试」会用真实站点验证该步骤;通过后状态变为「已识别」。如果该步骤的选择器之后被修改,先前的通过记录会自动失效。")
         }
@@ -225,6 +244,23 @@ struct SourceReviewView: View {
             Text("保存与启用")
         } footer: {
             Text("「启用书源」要求至少书籍详情、目录、章节三项均已识别——这是浏览导入的最低条件。搜索若未通过测试,该书源不会出现在搜索栏。")
+        }
+    }
+
+    private var deleteSection: some View {
+        Section {
+            Button(role: .destructive) {
+                pendingDelete = true
+            } label: {
+                HStack {
+                    if isDeleting { ProgressView() }
+                    Label("删除书源", systemImage: "trash")
+                }
+                .frame(maxWidth: .infinity)
+            }
+            .disabled(isDeleting)
+        } footer: {
+            Text("删除后该书源的规则、测试记录和启用状态都会一并清除。")
         }
     }
 
@@ -347,6 +383,27 @@ struct SourceReviewView: View {
                 }
             }
             blockStatuses = statuses
+            // Delete is only meaningful for rules that already live in
+            // editableStore: seeded bundle rules would just re-emerge on
+            // the next refresh, and a freshly-analyzed-but-not-saved
+            // draft isn't on disk yet so there's nothing to remove.
+            let editable = try await sourceStack.editableStore.loadEditableSources()
+            canDelete = editable.contains { $0.id == draft.id }
+        } catch {
+            saveError = String(describing: error)
+        }
+    }
+
+    private func deleteDraft() async {
+        isDeleting = true
+        defer { isDeleting = false }
+        do {
+            try await sourceStack.editableStore.deleteSource(id: draft.id)
+            try await sourceStack.validationStore.delete(ruleID: draft.id)
+            try await sourceStack.preferenceStore.delete(ruleID: draft.id)
+            await DiscoverySearchService.shared.invalidateRegistryCache()
+            await sourceStack.pageDetector.invalidateCache()
+            onComplete()
         } catch {
             saveError = String(describing: error)
         }
@@ -387,6 +444,30 @@ struct SourceReviewView: View {
                 snapshot.search = nil
             }
             try await sourceStack.editableStore.saveEditableSource(snapshot)
+            // Persist analyzer soft-passes to the validation store so the
+            // pills survive disable→enable cycles and app restarts. Without
+            // this the Review screen's analyzer report (held only in
+            // memory) is the lone source for detail/catalog/chapter
+            // "passed", and the moment the user pops back the pills reset
+            // to 需要检查. Only writes when nothing newer (manual test)
+            // already passed for that block.
+            let now = Date()
+            for block in SourceBlock.allCases {
+                let existing = blockStatuses[block] ?? .notRun
+                if existing == .passed { continue }
+                guard analyzerSoftStatus(for: block) == .passed else { continue }
+                let record = BlockTestRecord(
+                    status: .passed,
+                    lastRunAt: now,
+                    failureSummary: nil,
+                    inputFingerprint: snapshot.blockFingerprint(block)
+                )
+                try await sourceStack.validationStore.recordTest(
+                    ruleID: snapshot.id,
+                    block: block,
+                    record: record
+                )
+            }
             try await sourceStack.preferenceStore.save(
                 SourcePreference(
                     ruleID: snapshot.id,

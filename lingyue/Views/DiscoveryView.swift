@@ -2,383 +2,8 @@ import SwiftUI
 import Foundation
 import LingyueCore
 
-struct DiscoveryView: View {
-    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
-    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-    @Environment(\.appTheme) private var theme
 
-    @State private var searchText = ""
-    @State private var activeSearchQuery: String?
-    @State private var browserDestination: DiscoveryBrowserDestination?
-    @FocusState private var isSearchFieldFocused: Bool
-
-    // Search state lives at this level so popping back from an in-app browser doesn't
-    // recreate DiscoverySearchResultsView from scratch and re-fire the search.
-    @State private var searchResultsQuery: String?
-    @State private var searchIsLoading = false
-    @State private var searchFailedMessage: String?
-    @State private var searchGroupedResults: [DiscoveryGroupedResult] = []
-
-    // Recent searches are stored as a JSON-encoded `[String]` blob in @AppStorage so the
-    // history persists across launches. JSON sidesteps separator-collision risks since
-    // novel titles can contain almost any character.
-    @AppStorage("discovery.recentSearches.v1") private var recentSearchesData = Data()
-    /// Storage cap for the persisted history. The visible card clips to two FlowLayout
-    /// rows regardless, so this just bounds how much history is available to fill those
-    /// two rows when chips happen to be narrow (short titles).
-    private static let maxRecentSearches = 20
-
-    private var horizontalMargin: CGFloat {
-        if dynamicTypeSize.isAccessibilitySize { return 14 }
-        return horizontalSizeClass == .compact ? 16 : 24
-    }
-
-    var body: some View {
-        ZStack {
-            ThemeBackgroundView()
-
-            ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
-                    searchBar
-                        .padding(.top, 10)
-
-                    if !recentSearches.isEmpty {
-                        recentSearchesCard
-                            .transition(.opacity.combined(with: .move(edge: .top)))
-                    }
-
-                    libraryList
-                        .padding(.top, 10)
-                }
-                .padding(.bottom, 24)
-                .animation(.easeInOut(duration: 0.18), value: recentSearches)
-            }
-            .contentMargins(.horizontal, horizontalMargin, for: .scrollContent)
-            .safeAreaPadding(.bottom, 12)
-            .scrollDismissesKeyboard(.interactively)
-        }
-        .navigationTitle("发现")
-        .navigationBarTitleDisplayMode(.large)
-        .navigationDestination(
-            isPresented: Binding(
-                get: { activeSearchQuery != nil },
-                set: { isActive in
-                    if !isActive {
-                        activeSearchQuery = nil
-                    }
-                }
-            )
-        ) {
-            if let activeSearchQuery {
-                DiscoverySearchResultsView(
-                    query: activeSearchQuery,
-                    sources: DiscoverySourceCatalog.searchableSources,
-                    isLoading: searchIsLoading,
-                    failedMessage: searchFailedMessage,
-                    groupedResults: searchGroupedResults
-                )
-                .task(id: activeSearchQuery) {
-                    await runSearchIfNeeded(query: activeSearchQuery)
-                }
-            }
-        }
-        // Browser pushed from a row tap on Discovery's *main* page (sourceRow).
-        // Search-results-driven browser pushes are owned by DiscoverySearchResultsView
-        // itself so dismissing the browser pops back to the search results, not all
-        // the way to Discovery's home.
-        .navigationDestination(item: $browserDestination) { destination in
-            InAppBrowserView(url: destination.url, title: destination.title)
-        }
-    }
-
-    private var searchBar: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "magnifyingglass")
-                .font(.headline)
-                .foregroundStyle(theme.secondaryText)
-
-            TextField("搜索小说名或关键词", text: $searchText)
-                .focused($isSearchFieldFocused)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled(true)
-                .submitLabel(.search)
-                .onSubmit(triggerSearch)
-
-            Button {
-                triggerSearch()
-            } label: {
-                Text("搜索")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(theme.accent)
-            }
-            .buttonStyle(.plain)
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 11)
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(theme.cardBackground)
-        )
-    }
-
-    /// Transparent recent-searches card shown beneath the search bar while the field is
-    /// focused. Chips wrap onto multiple rows via `FlowLayout` so titles of any length
-    /// stay readable. The card has no fill — it sits directly on the page background.
-    private var recentSearchesCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("历史记录")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(theme.secondaryText)
-
-                Spacer()
-
-                Button {
-                    saveRecentSearches([])
-                } label: {
-                    Image(systemName: "trash")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundStyle(theme.secondaryText)
-                        .padding(6)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-            }
-
-            FlowLayout(spacing: 10, rowSpacing: 10, maxRows: 2) {
-                ForEach(recentSearches, id: \.self) { query in
-                    recentChip(query)
-                }
-            }
-        }
-        .padding(.horizontal, 4)
-    }
-
-    private func recentChip(_ query: String) -> some View {
-        HStack(spacing: 6) {
-            Button {
-                selectRecentSearch(query)
-            } label: {
-                Text(query)
-                    .font(.system(size: 14))
-                    .foregroundStyle(theme.primaryText)
-                    .lineLimit(1)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-
-            Button {
-                removeRecentSearch(query)
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(theme.secondaryText)
-                    .padding(2)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 7)
-        .overlay(
-            Capsule()
-                .stroke(theme.secondaryText.opacity(0.30), lineWidth: 1)
-        )
-    }
-
-    private var libraryList: some View {
-        let sources = DiscoverySourceCatalog.searchableSources
-            .sorted { discoveryPinyinSortKey($0.name) < discoveryPinyinSortKey($1.name) }
-
-        let columns = [
-            GridItem(.flexible(), spacing: 10),
-            GridItem(.flexible(), spacing: 10)
-        ]
-
-        return VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .lastTextBaseline, spacing: 10) {
-                Text("书库")
-                    .font(.system(size: 30, weight: .semibold))
-                    .foregroundStyle(theme.primaryText)
-
-                Text("\(sources.count)")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(theme.secondaryText)
-            }
-
-            LazyVGrid(columns: columns, spacing: 10) {
-                ForEach(sources) { source in
-                    sourceCard(source)
-                }
-            }
-        }
-    }
-
-    private func sourceCard(_ source: DiscoverySource) -> some View {
-        let monogram = sourceMonogram(for: source.name)
-        let tint = sourceTint(for: source.name)
-
-        return Button {
-            openSource(source)
-        } label: {
-            HStack(spacing: 10) {
-                ZStack {
-                    Circle()
-                        .fill(tint.opacity(0.16))
-                        .frame(width: 32, height: 32)
-                    Text(monogram)
-                        .font(.system(size: monogram.count > 1 ? 12 : 15, weight: .bold, design: .rounded))
-                        .foregroundStyle(tint)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.7)
-                }
-
-                Text(source.name)
-                    .font(.system(size: 15, weight: .semibold, design: .rounded))
-                    .foregroundStyle(theme.primaryText)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 12)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(theme.cardBackground)
-            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .shadow(color: theme.cardShadow, radius: 6, x: 0, y: 3)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-    }
-
-    /// Pulls a 1–2 character "monogram" off the front of a source name. ASCII/digit
-    /// runs (e.g. "52书库", "ESJ轻小说") get up to 2 chars so the avatar carries enough
-    /// signal; CJK names get the leading character only.
-    private func sourceMonogram(for name: String) -> String {
-        guard let first = name.first else { return "" }
-        let isAsciiAlphanumeric: (Character) -> Bool = { ch in
-            ch.isASCII && (ch.isLetter || ch.isNumber)
-        }
-        if isAsciiAlphanumeric(first) {
-            return String(name.prefix(while: isAsciiAlphanumeric).prefix(2))
-        }
-        return String(first)
-    }
-
-    /// Stable per-source accent — uses unicode-scalar sum so the same name always
-    /// maps to the same swatch across launches (Swift's `hashValue` is randomized).
-    private func sourceTint(for name: String) -> Color {
-        let palette: [Color] = [
-            Color(red: 0.78, green: 0.41, blue: 0.42),
-            Color(red: 0.36, green: 0.55, blue: 0.78),
-            Color(red: 0.30, green: 0.62, blue: 0.55),
-            Color(red: 0.74, green: 0.54, blue: 0.30),
-            Color(red: 0.55, green: 0.40, blue: 0.66),
-            Color(red: 0.46, green: 0.56, blue: 0.40),
-            Color(red: 0.72, green: 0.46, blue: 0.62),
-            Color(red: 0.40, green: 0.50, blue: 0.62)
-        ]
-        let sum = name.unicodeScalars.reduce(0) { $0 &+ Int($1.value) }
-        return palette[abs(sum) % palette.count]
-    }
-
-    private func triggerSearch() {
-        let trimmed = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        recordRecentSearch(trimmed)
-        isSearchFieldFocused = false
-        if trimmed != searchResultsQuery {
-            // New query — clear stale cache so the results screen shows a loading spinner
-            // instead of the previous query's results while the new search runs.
-            searchGroupedResults = []
-            searchFailedMessage = nil
-            searchIsLoading = true
-            searchResultsQuery = nil
-        }
-        activeSearchQuery = trimmed
-    }
-
-    private var recentSearches: [String] {
-        guard !recentSearchesData.isEmpty else { return [] }
-        return (try? JSONDecoder().decode([String].self, from: recentSearchesData)) ?? []
-    }
-
-    private func saveRecentSearches(_ searches: [String]) {
-        recentSearchesData = (try? JSONEncoder().encode(searches)) ?? Data()
-    }
-
-    private func recordRecentSearch(_ query: String) {
-        var current = recentSearches
-        current.removeAll { $0 == query }
-        current.insert(query, at: 0)
-        if current.count > Self.maxRecentSearches {
-            current = Array(current.prefix(Self.maxRecentSearches))
-        }
-        saveRecentSearches(current)
-    }
-
-    private func removeRecentSearch(_ query: String) {
-        var current = recentSearches
-        current.removeAll { $0 == query }
-        saveRecentSearches(current)
-    }
-
-    private func selectRecentSearch(_ query: String) {
-        searchText = query
-        triggerSearch()
-    }
-
-    private func openSource(_ source: DiscoverySource) {
-        if let homepageURL = source.homepageURL {
-            browserDestination = DiscoveryBrowserDestination(url: homepageURL, title: source.name)
-            return
-        }
-
-        browserDestination = DiscoveryBrowserDestination(url: source.fallbackSourceURL, title: source.name)
-    }
-
-    /// Runs a search only when the active query differs from the cached one. Re-entering the
-    /// results screen with the same query is a no-op, so popping back from an in-app browser
-    /// shows the previous results instantly. Otherwise consumes the streaming search so the
-    /// UI shows hits as soon as the first source returns instead of waiting for every source.
-    @MainActor
-    private func runSearchIfNeeded(query: String) async {
-        if searchResultsQuery == query, !searchGroupedResults.isEmpty || searchFailedMessage != nil {
-            return
-        }
-        searchResultsQuery = query
-        searchIsLoading = true
-        searchFailedMessage = nil
-        searchGroupedResults = []
-
-        let stream = DiscoverySearchService.shared.searchStream(
-            query: query,
-            sources: DiscoverySourceCatalog.searchableSources
-        )
-
-        for await partialResults in stream {
-            guard !Task.isCancelled, searchResultsQuery == query else { return }
-            searchGroupedResults = partialResults
-        }
-
-        guard !Task.isCancelled, searchResultsQuery == query else { return }
-        searchIsLoading = false
-    }
-}
-
-/// Stable pinyin-based sort key for Discovery source names. Names mix Chinese and
-/// ASCII (e.g. "ESJ轻小说", "52书库"), so a raw `<` would sort by Unicode codepoint
-/// and group all CJK names together. CFStringTransform converts Hanzi to romanized
-/// pinyin while leaving ASCII alone; stripping diacritics drops tone marks so "ān"
-/// and "an" sort the same; lowercasing makes the comparison case-insensitive.
-private func discoveryPinyinSortKey(_ text: String) -> String {
-    let mutable = NSMutableString(string: text)
-    CFStringTransform(mutable, nil, kCFStringTransformMandarinLatin, false)
-    CFStringTransform(mutable, nil, kCFStringTransformStripDiacritics, false)
-    return (mutable as String).lowercased()
-}
-
-private struct DiscoveryBrowserDestination: Identifiable, Hashable {
+struct DiscoveryBrowserDestination: Identifiable, Hashable {
     let id: String
     let url: URL
     let title: String
@@ -390,7 +15,7 @@ private struct DiscoveryBrowserDestination: Identifiable, Hashable {
     }
 }
 
-private struct DiscoverySearchResultsView: View {
+struct DiscoverySearchResultsView: View {
     @Environment(\.appTheme) private var theme
     let query: String
     let sources: [DiscoverySource]
@@ -571,7 +196,7 @@ private struct DiscoverySearchResultsView: View {
 
 }
 
-private enum DiscoverySourceKind: Hashable {
+enum DiscoverySourceKind: Hashable {
     /// Hardcoded site with a hand-written parser in this file. Registry routing is opt-in via
     /// the `lingyue.useRegistryForDiscoverySearch` lab flag; legacy parser otherwise.
     case seeded
@@ -580,7 +205,7 @@ private enum DiscoverySourceKind: Hashable {
     case userRule
 }
 
-private struct DiscoverySource: Identifiable, Hashable {
+struct DiscoverySource: Identifiable, Hashable {
     let id: String
     let name: String
     let tagline: String
@@ -644,12 +269,12 @@ private struct DiscoverySource: Identifiable, Hashable {
     }
 }
 
-private enum DiscoveryHTTPMethod: String, Hashable {
+enum DiscoveryHTTPMethod: String, Hashable {
     case get
     case post
 }
 
-private enum DiscoveryQueryEncoding: Hashable {
+enum DiscoveryQueryEncoding: Hashable {
     case utf8
     case gb18030
 
@@ -672,12 +297,12 @@ private enum DiscoveryQueryEncoding: Hashable {
     }
 }
 
-private struct DiscoveryRouteParam: Hashable {
+struct DiscoveryRouteParam: Hashable {
     let key: String
     let value: String
 }
 
-private struct DiscoverySourceSearchRoute: Hashable {
+struct DiscoverySourceSearchRoute: Hashable {
     let sourceID: String
     let endpoint: String
     let method: DiscoveryHTTPMethod
@@ -753,7 +378,7 @@ private struct DiscoverySourceSearchRoute: Hashable {
     }
 }
 
-private enum DiscoverySourceCatalog {
+enum DiscoverySourceCatalog {
     static let searchRoutes: Set<DiscoverySourceSearchRoute> = {
 #if LINGYUE_INTERNAL
         return [
@@ -924,7 +549,7 @@ private struct DiscoveryRawSearchHit: Hashable {
     let rank: Int
 }
 
-private struct DiscoveryGroupedResult: Identifiable {
+struct DiscoveryGroupedResult: Identifiable {
     let id: String
     let title: String
     let author: String
@@ -933,7 +558,7 @@ private struct DiscoveryGroupedResult: Identifiable {
     let relevance: Double
 }
 
-private struct DiscoverySourceLink: Identifiable {
+struct DiscoverySourceLink: Identifiable {
     let id: String
     let source: DiscoverySource
     let url: URL
@@ -994,7 +619,7 @@ actor DiscoverySearchService {
     /// Streams partial result sets as each source finishes. Wall-clock time is bound by the
     /// slowest single source (not the sum of sequential batches), and the UI sees the first
     /// hits within a few hundred ms instead of waiting for every source.
-    fileprivate nonisolated func searchStream(
+    nonisolated func searchStream(
         query: String,
         sources: [DiscoverySource]
     ) -> AsyncStream<[DiscoveryGroupedResult]> {
@@ -3024,85 +2649,5 @@ private extension Array {
             index = end
         }
         return chunks
-    }
-}
-
-/// Wraps subviews onto multiple rows when they exceed the proposed width — used for the
-/// recent-searches chip card. SwiftUI's stock containers can't do this; HStack overflows
-/// and LazyVGrid forces a fixed column count, neither of which fits variable-width chips.
-///
-/// `maxRows` clips the visible content to N rows. The Layout protocol still requires every
-/// subview be placed, so chips beyond row N are parked offscreen and excluded from the
-/// reported size — equivalent to "show as many as fit in N rows, hide the rest."
-private struct FlowLayout: Layout {
-    var spacing: CGFloat = 8
-    var rowSpacing: CGFloat = 8
-    var maxRows: Int? = nil
-
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let maxWidth = proposal.width ?? .infinity
-        let limit = maxRows ?? Int.max
-        var rowWidth: CGFloat = 0
-        var rowHeight: CGFloat = 0
-        var totalHeight: CGFloat = 0
-        var totalWidth: CGFloat = 0
-        var currentRow = 1
-
-        for subview in subviews {
-            let size = subview.sizeThatFits(.unspecified)
-            let widthIfAppended = rowWidth == 0 ? size.width : rowWidth + spacing + size.width
-            if widthIfAppended > maxWidth, rowWidth > 0 {
-                if currentRow >= limit { break }
-                totalHeight += rowHeight + rowSpacing
-                totalWidth = max(totalWidth, rowWidth)
-                currentRow += 1
-                rowWidth = size.width
-                rowHeight = size.height
-            } else {
-                rowWidth = widthIfAppended
-                rowHeight = max(rowHeight, size.height)
-            }
-        }
-        totalHeight += rowHeight
-        totalWidth = max(totalWidth, rowWidth)
-        return CGSize(width: totalWidth, height: totalHeight)
-    }
-
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        let maxWidth = bounds.width
-        let limit = maxRows ?? Int.max
-        var x: CGFloat = bounds.minX
-        var y: CGFloat = bounds.minY
-        var rowHeight: CGFloat = 0
-        var currentRow = 1
-        var stopped = false
-
-        for subview in subviews {
-            let size = subview.sizeThatFits(.unspecified)
-            if !stopped, x + size.width > bounds.minX + maxWidth, x > bounds.minX {
-                if currentRow >= limit {
-                    stopped = true
-                } else {
-                    x = bounds.minX
-                    y += rowHeight + rowSpacing
-                    rowHeight = 0
-                    currentRow += 1
-                }
-            }
-            if stopped {
-                // Park overflow chips offscreen with a zero proposal so they're not visible.
-                subview.place(at: CGPoint(x: -10_000, y: -10_000), anchor: .topLeading, proposal: .zero)
-            } else {
-                subview.place(at: CGPoint(x: x, y: y), anchor: .topLeading, proposal: ProposedViewSize(size))
-                x += size.width + spacing
-                rowHeight = max(rowHeight, size.height)
-            }
-        }
-    }
-}
-
-#Preview {
-    NavigationStack {
-        DiscoveryView()
     }
 }

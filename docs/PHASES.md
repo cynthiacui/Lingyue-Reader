@@ -1500,35 +1500,33 @@ public release.
 
 ### 6.2 In-app affordances (Phase 3 deliverables)
 
-- **Empty rule library on first launch.** No bundled rules except item 3
-  below. Onboarding shows "Add your first source" with an Add button —
-  not a pre-populated list.
-- **URL field placeholder text must not reference any pirate-adjacent
-  host.** Placeholder shows something like `https://example.com` or
-  `https://en.wikisource.org/wiki/...`. Never 笔趣阁, hjwzw,
-  novel-named hostnames, etc.
-- **Zero bundled rules.** The App Store target ships with an empty
-  rule library — no seeded sources, no "demo" rule, no exceptions. "No
-  bundled source list, period" is a cleaner defensible posture than
-  "no bundled list except this one legitimate exception" — the latter
-  invites a reviewer thread on "which exceptions count," and the
-  former is a single hard-line statement. Means the CI scan stays
-  simple too: any rule-shaped JSON in the App Store `.app` is a fail,
-  no allowlist needed.
-- **Wikisource as inline example, not as bundled data or a one-tap
-  recommendation.** Onboarding's "Add your first source" screen shows
-  example URLs (Chinese Wikisource, Project Gutenberg, a tech blog) as
-  **plain copyable text** in localized onboarding strings — no one-tap
-  "use this URL" button that auto-fills the Add Source flow. The
-  conservative read is that an auto-fill button flirts with "the app
-  is suggesting a source"; plain copyable text reads unambiguously as
-  help copy. The user long-presses to copy (or types manually), then
-  pastes into the URL field. From a binary perspective the URL strings
-  live in `Localizable.strings`, never in any rule JSON.
-- **IP attestation in onboarding.** Before the "Add Source" sheet
-  appears for the first time, a one-screen explainer + a tap-to-confirm
-  checkbox: "I will only add sources I have the right to access." User
-  acknowledgement is logged to `UserDefaults` for our records.
+- ✅ **Empty rule library on first launch.** `AppStoreSourceRegistry`
+  reads only from `FileEditableSourceStore`; `LingyueInternalSources`
+  is not linked into the AppStore target, so seeded rules are not
+  reachable. `SourcesListView`'s first-launch state is a welcoming
+  "尚未添加任何来源 · 点击右上角 + 添加您要读取的网页来源" card —
+  not the diagnostic "resources not packaged" message Internal shows.
+- ✅ **URL field placeholder text must not reference any pirate-adjacent
+  host.** `AddSourceURLView` uses `https://example.com` as the
+  placeholder. Audited against `forbidden-hosts.txt`.
+- ✅ **Zero bundled rules.** The App Store target ships with an empty
+  rule library — no seeded sources, no "demo" rule, no exceptions.
+  `LingyueInternalSources` is not linked, so `bundledRules()` is not
+  even callable from the AppStore binary. CI scan against the AppStore
+  `.app` returns zero hits against all 24 forbidden hosts.
+- ✅ **No suggested URLs in the empty state.** The first-launch card
+  greets the user and points at the `+` button — no example URLs, no
+  one-tap "use this" affordance. Users bring their own sources.
+- ⏳ **JSON import for user-supplied sources (future).** Plan: a
+  `.lingyue-sources.json` file format users can import via document
+  picker to bulk-add sources they curate themselves. Also doubles as
+  the channel for distributing the Internal-only seeded library to
+  Internal users out-of-band (export from Internal → manual sideload),
+  keeping the AppStore binary free of any bundled rule data.
+- ✅ **IP attestation in onboarding.** `IPAttestationView` gates the
+  first `+` → `AddSourceURLView` flow on the App Store target. Toggle
+  persists to `@AppStorage("onboarding.ipAttestationAccepted")`;
+  compile-time-disabled on Internal via `AddSourceFlowView`.
 - **No "popular sources" / "community rules" / "recommended" UI.** Not
   in onboarding, not in Settings, not anywhere. Not even commented out
   — `strings` will find it.
