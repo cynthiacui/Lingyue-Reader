@@ -88,7 +88,15 @@ struct SourcesListView: View {
                             // rules via the toggle.
                             .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                                 if entry.origin == .editable {
-                                    Button(role: .destructive) {
+                                    // No `role: .destructive` here — the
+                                    // List would treat the tap as a
+                                    // committed delete and animate the
+                                    // row out before our confirmation
+                                    // alert resolves, causing the row to
+                                    // flash out and back in if the user
+                                    // cancels. `.tint(.red)` keeps the
+                                    // destructive styling.
+                                    Button {
                                         pendingDelete = entry
                                     } label: {
                                         Label("删除", systemImage: "trash")
@@ -302,16 +310,57 @@ struct SourcesListView: View {
         await persistVerification(rule: rule, block: .detail, passed: true)
 
         guard let chapters = try? await source.fetchCatalog(url: detail.catalogURL),
-              let firstChapter = chapters.first else {
+              !chapters.isEmpty else {
             return
         }
         await persistVerification(rule: rule, block: .catalog, passed: true)
 
-        guard let content = try? await source.fetchChapter(url: firstChapter.url),
-              !content.paragraphs.isEmpty else {
-            return
+        // Many user-authored catalog rules use broad selectors (e.g.
+        // `ul > li`) that scoop the site's top *and* bottom nav strips
+        // alongside the real chapter rows — sampling first-N + last-N
+        // still hits only nav junk on those sites. Real chapter URLs
+        // cluster under one path directory (e.g. `/books/170611/…`)
+        // while nav links scatter across `/`, `/list/`, etc. Filter to
+        // the dominant directory before probing.
+        let candidates = Self.likelyChapterLinks(chapters)
+        let probes = Array(candidates.prefix(3)) + Array(candidates.suffix(3))
+        var seen: Set<URL> = []
+        for chapter in probes where seen.insert(chapter.url).inserted {
+            if let content = try? await source.fetchChapter(url: chapter.url),
+               !content.paragraphs.isEmpty {
+                await persistVerification(rule: rule, block: .chapter, passed: true)
+                return
+            }
         }
-        await persistVerification(rule: rule, block: .chapter, passed: true)
+    }
+
+    /// Filter a noisy catalog to the entries that look like real
+    /// chapters. Heuristic: group by URL directory (path up to the
+    /// final `/`) and keep only the dominant group. On well-authored
+    /// rules the dominant group is the whole catalog, so the filter is
+    /// a no-op. On rules where `ul > li` over-matches nav, the dominant
+    /// group is the real chapter directory because nav links scatter
+    /// across `/`, `/list/`, `/static/`, etc. while every real chapter
+    /// lives under the book's path.
+    private static func likelyChapterLinks(_ chapters: [ChapterLink]) -> [ChapterLink] {
+        guard chapters.count > 1 else { return chapters }
+        func directory(_ url: URL) -> String {
+            let path = url.path
+            guard let slash = path.lastIndex(of: "/") else { return path }
+            return String(path[...slash])
+        }
+        var counts: [String: Int] = [:]
+        for link in chapters { counts[directory(link.url), default: 0] += 1 }
+        guard
+            let dominant = counts.max(by: { $0.value < $1.value })?.key,
+            // Require a meaningful majority — if no single directory
+            // dominates, the catalog is probably structured weirdly and
+            // we shouldn't second-guess it.
+            (counts[dominant] ?? 0) >= chapters.count / 2
+        else {
+            return chapters
+        }
+        return chapters.filter { directory($0.url) == dominant }
     }
 
     private func persistVerification(rule: SourceRule, block: SourceBlock, passed: Bool) async {

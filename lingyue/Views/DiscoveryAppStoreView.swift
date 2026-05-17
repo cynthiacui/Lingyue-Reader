@@ -88,7 +88,7 @@ struct DiscoveryAppStoreView: View {
                 NavigationLink {
                     SourcesListView()
                 } label: {
-                    Image(systemName: "books.vertical")
+                    Image(systemName: "globe")
                         .accessibilityLabel("我的书源")
                 }
             }

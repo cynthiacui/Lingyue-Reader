@@ -1240,21 +1240,38 @@ public enum SourceAnalyzer {
 
         guard !winners.isEmpty else { return nil }
 
+        // Drop wrapping candidates. If A is an ancestor of B and both
+        // qualify, A picks up B's text *plus* whatever else is on the
+        // page (header, nav, footer, recommendations). Reading from A
+        // dumps the entire page chrome into every chapter; reading
+        // from the leaf-most B gives just the body. xbanxia is the
+        // motivating case — both `#pagewrap` (whole page) and `#nr1`
+        // (chapter body) clear the 300-char threshold and neither
+        // matches `knownContentTokens`, so length alone picks the
+        // wrapper. Pruning ancestors keeps `#nr1`.
+        let pruned: [Candidate] = winners.filter { outer in
+            !winners.contains { inner in
+                inner.element !== outer.element
+                    && Self.isAncestor(outer.element, of: inner.element)
+            }
+        }
+        let leafs = pruned.isEmpty ? winners : pruned
+
         // Preferred names win ties even when shorter — class-based
         // signals are dramatically more reliable than length on noisy
         // pages with sidebars + comments.
-        winners.sort { lhs, rhs in
+        let sorted = leafs.sorted { lhs, rhs in
             if lhs.isPreferredName != rhs.isPreferredName { return lhs.isPreferredName }
             return lhs.textLength > rhs.textLength
         }
-        let winner = winners[0]
+        let winner = sorted[0]
 
         guard let selector = selectorPath(for: winner.element) else {
             return ChapterBodyDiscovery(
                 bodyField: FieldSelector(
                     selector: "body",
-                    attribute: nil,
-                    transforms: [.brToNewline, .stripHTML, .collapseWhitespace]
+                    attribute: "html",
+                    transforms: [.brToNewline, .stripHTML, .decodeHTMLEntities]
                 ),
                 confidence: .yellow,
                 note: "未找到稳定的正文容器,已退化为整页文本。请在「高级修复」中设置精确的 `bodyField` 选择器。"
@@ -1268,14 +1285,25 @@ public enum SourceAnalyzer {
             ? "识别到正文容器 `\(selector)` (\(winner.textLength) 字)。"
             : "正文容器 `\(selector)` 系按文本长度推断 (\(winner.textLength) 字),请运行「测试」验证。"
 
+        // `attribute: "html"` + `brToNewline` is the only way to keep
+        // paragraph breaks from `<br>` separators — Element.text() would
+        // collapse them to spaces before any transform runs. Matches
+        // the seeded rule conventions; `decodeHTMLEntities` cleans up
+        // the residual `&nbsp;` / numeric refs left after stripHTML.
         return ChapterBodyDiscovery(
             bodyField: FieldSelector(
                 selector: selector,
-                attribute: nil,
-                transforms: [.brToNewline, .stripHTML, .collapseWhitespace]
+                attribute: "html",
+                transforms: [.brToNewline, .stripHTML, .decodeHTMLEntities]
             ),
             confidence: confidence,
             note: note
         )
+    }
+
+    private static func isAncestor(_ ancestor: Element, of descendant: Element) -> Bool {
+        guard let parents = try? descendant.parents() else { return false }
+        for p in parents where p === ancestor { return true }
+        return false
     }
 }
