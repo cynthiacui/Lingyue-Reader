@@ -159,31 +159,48 @@ public struct RuleBasedBookSource: BookSource {
         } else {
             canonical = page.finalURL
         }
-        let rawTitle = try SelectorEngine.resolveSingle(
-            rule.detail.titleField,
+        // Resolve detail title, skipping any candidate that echoes the
+        // rule's own display name — that's the site logo, not the book
+        // title (common when `detail.titleField` is the analyzer's
+        // default `h1` and the page header carries the site name in an
+        // `<h1>` of its own). Falls back to nil so the browser's
+        // page-`<title>` chain takes over.
+        let title = try resolveTitleSkippingSiteName(
             scope: document,
             baseURL: page.finalURL
         )
-        // Discard a resolved title that echoes the rule's own display
-        // name — that's the site logo, not the book title (common when
-        // `detail.titleField` is the analyzer's default `h1` and the
-        // page header carries the site name in an `<h1>` of its own).
-        // The browser's fallback chain (page `<title>` → source name)
-        // produces a better user-facing label.
-        let trimmed = rawTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let title: String?
-        if let trimmed, !trimmed.isEmpty,
-           trimmed.caseInsensitiveCompare(rule.name) != .orderedSame {
-            title = trimmed
-        } else {
-            title = nil
-        }
         return BookDetection(
             confidence: min(confidence, 1.0),
             detailURL: canonical,
             title: title,
             sourceID: id
         )
+    }
+
+    /// Resolve `rule.detail.titleField` against `scope` and pick the
+    /// first candidate that isn't the site name. Walks `resolveAll`
+    /// because the analyzer's default `h1` selector commonly matches
+    /// both the site-logo `<h1>` and the book-title `<h1>` — the first
+    /// element wins under `resolveSingle`, which is exactly the wrong
+    /// one on sites whose header is an `<h1>`. Returns nil when every
+    /// candidate echoes `rule.name`; callers fall back to the page
+    /// `<title>` chain.
+    private func resolveTitleSkippingSiteName(
+        scope: Element,
+        baseURL: URL
+    ) throws -> String? {
+        let candidates = try SelectorEngine.resolveAll(
+            rule.detail.titleField,
+            scope: scope,
+            baseURL: baseURL
+        )
+        for candidate in candidates {
+            let trimmed = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { continue }
+            if trimmed.caseInsensitiveCompare(rule.name) == .orderedSame { continue }
+            return trimmed
+        }
+        return nil
     }
 
     private func match(glob: String, host: String) -> Bool {
@@ -211,8 +228,9 @@ public struct RuleBasedBookSource: BookSource {
         let document = try SelectorEngine.parse(snapshot.html, baseURL: snapshot.finalURL)
         let step = rule.detail
 
-        guard let title = try SelectorEngine.resolveSingle(
-            step.titleField, scope: document, baseURL: snapshot.finalURL
+        guard let title = try resolveTitleSkippingSiteName(
+            scope: document,
+            baseURL: snapshot.finalURL
         ) else {
             throw BookSourceError.parseFailed(field: "detail.titleField")
         }
