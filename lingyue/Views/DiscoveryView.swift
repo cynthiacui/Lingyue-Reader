@@ -86,36 +86,43 @@ struct DiscoverySearchResultsView: View {
     }
 
     private var emptyView: some View {
+        // Per-source fallback chips only make sense when there are
+        // sources whose `searchURL(for:)` can produce a URL (i.e. the
+        // Internal target's hand-written `DiscoverySource`s). On the
+        // App Store target `sources` is empty by design, so the
+        // "你也可以直接按来源搜索：" prompt would dangle over nothing.
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 Text("没有找到匹配内容")
                     .font(.headline)
                     .foregroundStyle(theme.primaryText)
 
-                Text("你也可以直接按来源搜索：")
-                    .font(.subheadline)
-                    .foregroundStyle(theme.secondaryText)
+                if !sources.isEmpty {
+                    Text("你也可以直接按来源搜索：")
+                        .font(.subheadline)
+                        .foregroundStyle(theme.secondaryText)
 
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 110), spacing: 10)], spacing: 10) {
-                    ForEach(sources) { source in
-                        Button {
-                            if let url = source.searchURL(for: query) {
-                                openSource(url: url, title: source.name)
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 110), spacing: 10)], spacing: 10) {
+                        ForEach(sources) { source in
+                            Button {
+                                if let url = source.searchURL(for: query) {
+                                    openSource(url: url, title: source.name)
+                                }
+                            } label: {
+                                Text(source.name)
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(theme.primaryText)
+                                    .lineLimit(1)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 9)
+                                    .padding(.horizontal, 8)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                            .fill(theme.cardBackground)
+                                    )
                             }
-                        } label: {
-                            Text(source.name)
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(theme.primaryText)
-                                .lineLimit(1)
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 9)
-                                .padding(.horizontal, 8)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                        .fill(theme.cardBackground)
-                                )
+                            .buttonStyle(.plain)
                         }
-                        .buttonStyle(.plain)
                     }
                 }
             }

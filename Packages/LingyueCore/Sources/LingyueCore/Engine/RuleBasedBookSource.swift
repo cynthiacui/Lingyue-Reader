@@ -34,10 +34,20 @@ public struct RuleBasedBookSource: BookSource {
         var results: [BookSearchResult] = []
         results.reserveCapacity(rows.size())
         for row in rows {
+            // Walk every match for the title selector and pick the first
+            // non-empty one — search rows on Chinese book sites commonly
+            // have two anchors per result (one wraps an `<img>`, one
+            // wraps the visible `<h2>`/text). `resolveSingle` would
+            // return the empty img-anchor and the row would silently
+            // drop out of the result list with no user-facing hits.
+            let titleCandidates = (try? SelectorEngine.resolveAll(
+                step.titleField, scope: row, baseURL: snapshot.finalURL
+            )) ?? []
             guard
-                let title = try SelectorEngine.resolveSingle(
-                    step.titleField, scope: row, baseURL: snapshot.finalURL
-                ),
+                let title = titleCandidates
+                    .lazy
+                    .compactMap({ $0.nonEmptyTrimmed })
+                    .first,
                 let detailURLString = try SelectorEngine.resolveSingle(
                     step.detailURLField, scope: row, baseURL: snapshot.finalURL
                 ),
