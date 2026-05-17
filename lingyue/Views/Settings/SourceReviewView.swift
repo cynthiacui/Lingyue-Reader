@@ -439,10 +439,13 @@ struct SourceReviewView: View {
             // every save (PHASES.md §3.5.2). A passing test elsewhere
             // and a fresh edit here keep the rule's `capabilities`
             // honest — we never write a stale `supportsSearch = true`.
+            // We keep `snapshot.search` even when the capability flag
+            // stays false: the analyzer's best-effort step is still
+            // the user's best chance at search working, and the
+            // Discovery fan-out attempts any rule with a configured
+            // step (capability flag remains the verified-for-badges
+            // signal, not the gate on whether to *try*).
             snapshot.capabilities = try await derivedCapabilities(for: snapshot)
-            if !snapshot.capabilities.supportsSearch {
-                snapshot.search = nil
-            }
             try await sourceStack.editableStore.saveEditableSource(snapshot)
             // Persist analyzer soft-passes to the validation store so the
             // pills survive disable→enable cycles and app restarts. Without

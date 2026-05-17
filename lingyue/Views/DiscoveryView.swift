@@ -56,7 +56,12 @@ struct DiscoverySearchResultsView: View {
         VStack(spacing: 12) {
             ProgressView()
                 .tint(theme.accent)
-            Text("正在搜索 \(sources.count) 个来源…")
+            // App Store builds pass `sources: []` (no seeded catalog) and
+            // rely on `DiscoverySearchService` to fan in the user's own
+            // rules internally — so the seeded count would mislead users
+            // into thinking nothing is being searched. Drop the number
+            // when there's no seeded list to talk about.
+            Text(sources.isEmpty ? "正在搜索…" : "正在搜索 \(sources.count) 个来源…")
                 .font(.subheadline)
                 .foregroundStyle(theme.secondaryText)
         }
@@ -771,16 +776,19 @@ actor DiscoverySearchService {
         }
     }
 
-    /// Resolve the registry's searchable sources keyed by `displayName`. Cached on first hit
+    /// Resolve the registry's enabled sources keyed by `displayName`. Cached on first hit
     /// (the registry call walks the editable store + seeded rule bundle, cheap but not free).
     /// Call `invalidateRegistryCache` after rule edits — see Phase 3.1 follow-up.
+    /// Uses `enabledSources()` rather than `searchableSources()` so user rules whose search
+    /// capability hasn't been verified yet (e.g. analyzer landed at `.yellow`) still resolve —
+    /// the engine attempts `.search()` and we get either real hits or a graceful empty.
     private func registrySourcesByName() async -> [String: any BookSource] {
         if let cachedRegistrySourcesByName {
             return cachedRegistrySourcesByName
         }
         let sources: [any BookSource]
         do {
-            sources = try await SourceStack.live.registry.searchableSources()
+            sources = try await SourceStack.live.registry.enabledSources()
         } catch {
             sources = []
         }
@@ -798,10 +806,12 @@ actor DiscoverySearchService {
     }
 
     /// Phase 3.6 — synthesize Discovery entries for user-created rules. Filters to rules that
-    /// declare `supportsSearch` and are enabled in the preference store. Routing for these
-    /// always goes through the registry (no legacy parser exists), so no `searchRoute` is
-    /// attached. Errors silently degrade to an empty list so a store glitch doesn't black out
-    /// the seeded fan-out.
+    /// have a configured `search` step and are enabled in the preference store. The capability
+    /// flag (`supportsSearch`) is the verified-for-badges signal, but the fan-out itself is
+    /// permissive: any rule with a step gets to try, and failures degrade to empty hits inside
+    /// `searchSingleSource`. Routing always goes through the registry (no legacy parser exists),
+    /// so no `searchRoute` is attached. Errors silently degrade to an empty list so a store
+    /// glitch doesn't black out the seeded fan-out.
     fileprivate func loadUserRuleSources() async -> [DiscoverySource] {
         let stack = SourceStack.live
         let rules: [SourceRule]
@@ -815,7 +825,7 @@ actor DiscoverySearchService {
         }
         var sources: [DiscoverySource] = []
         for rule in rules {
-            guard rule.capabilities.supportsSearch else { continue }
+            guard rule.search != nil else { continue }
             let enabled = (try? await stack.preferenceStore.isEnabled(rule.id)) ?? true
             guard enabled else { continue }
             sources.append(DiscoverySource(

@@ -335,6 +335,13 @@ public enum SourceAnalyzer {
         // analyzer is too lossy without one (crawling homepage → a
         // single book is fragile across site layouts).
         if let exampleBook = input.exampleBookURL {
+            // Derive a path constraint from the example URL so the
+            // in-app browser's detection doesn't fire on every page of
+            // the host (e.g., homepage). Digit runs generalize to
+            // `\d+`; everything else is matched literally.
+            if let derived = derivePathPattern(from: exampleBook) {
+                rule.detection.pathPattern = derived
+            }
             let p4 = await analyzeCatalog(
                 exampleBookURL: exampleBook,
                 encoding: rule.encoding,
@@ -468,6 +475,39 @@ public enum SourceAnalyzer {
             out.append(trimmed)
         }
         return out
+    }
+
+    /// Generalize a concrete book-detail URL into a path regex so future
+    /// pages on the same host can be reliably classified as detail pages.
+    /// Digit runs become `\d+`; regex metacharacters are escaped; the
+    /// pattern is anchored with `^…$` so partial matches (e.g., the
+    /// homepage path `/`) don't pass.
+    static func derivePathPattern(from url: URL) -> String? {
+        let path = url.path
+        guard !path.isEmpty, path != "/" else { return nil }
+        let metacharacters: Set<Character> = [
+            ".", "+", "*", "?", "(", ")", "[", "]",
+            "{", "}", "^", "$", "|", "\\"
+        ]
+        var result = "^"
+        var idx = path.startIndex
+        while idx < path.endIndex {
+            let ch = path[idx]
+            if ch.isNumber {
+                while idx < path.endIndex, path[idx].isNumber {
+                    idx = path.index(after: idx)
+                }
+                result += "\\d+"
+            } else {
+                if metacharacters.contains(ch) {
+                    result.append("\\")
+                }
+                result.append(ch)
+                idx = path.index(after: idx)
+            }
+        }
+        result += "$"
+        return result
     }
 
     /// Pull a display name out of `<title>` or `<meta name="description">`.

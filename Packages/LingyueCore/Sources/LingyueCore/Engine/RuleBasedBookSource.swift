@@ -119,6 +119,17 @@ public struct RuleBasedBookSource: BookSource {
         guard det.hostPatterns.isEmpty || det.hostPatterns.contains(where: { match(glob: $0, host: host) }) else {
             return nil
         }
+        // Safety net for rules authored by the URL Analyzer before it
+        // derived a `pathPattern`: with only `hostPatterns` set, every
+        // page of the site (including the homepage) matches. Refuse to
+        // claim a detection on root-like paths when no path or
+        // confirm-selector disambiguator exists. Seeded rules always
+        // ship a pathPattern, so this branch only catches the
+        // analyzer-built case.
+        if det.pathPattern == nil && det.confirmSelector == nil {
+            let path = page.finalURL.path
+            if path.isEmpty || path == "/" { return nil }
+        }
         var confidence = 0.4
         if let pattern = det.pathPattern {
             let path = page.finalURL.path
@@ -148,11 +159,25 @@ public struct RuleBasedBookSource: BookSource {
         } else {
             canonical = page.finalURL
         }
-        let title = try SelectorEngine.resolveSingle(
+        let rawTitle = try SelectorEngine.resolveSingle(
             rule.detail.titleField,
             scope: document,
             baseURL: page.finalURL
         )
+        // Discard a resolved title that echoes the rule's own display
+        // name — that's the site logo, not the book title (common when
+        // `detail.titleField` is the analyzer's default `h1` and the
+        // page header carries the site name in an `<h1>` of its own).
+        // The browser's fallback chain (page `<title>` → source name)
+        // produces a better user-facing label.
+        let trimmed = rawTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let title: String?
+        if let trimmed, !trimmed.isEmpty,
+           trimmed.caseInsensitiveCompare(rule.name) != .orderedSame {
+            title = trimmed
+        } else {
+            title = nil
+        }
         return BookDetection(
             confidence: min(confidence, 1.0),
             detailURL: canonical,
@@ -168,7 +193,14 @@ public struct RuleBasedBookSource: BookSource {
             let suffix = glob.dropFirst(2)
             return host == suffix || host.hasSuffix("." + suffix)
         }
-        return false
+        // `SourceAnalyzer.uniqueHosts` strips `www.` from stored patterns —
+        // it treats `www.` as a no-op subdomain. Mirror that here so a
+        // pattern like `xbanxia.cc` matches a live page at `www.xbanxia.cc`
+        // without forcing the analyzer to author both variants. Seeded
+        // rules that list both explicitly still hit the equality branch
+        // above, so this is purely additive.
+        let strippedHost = host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
+        return glob == strippedHost
     }
 
     // MARK: - Detail
