@@ -316,6 +316,19 @@ public struct RuleBasedBookSource: BookSource {
                 ), let chapterURL = URL(string: urlString) else {
                     continue
                 }
+                // Universal nav-link filter — drops entries that look
+                // like site navigation rather than book chapters. Common
+                // when the rule's `chaptersSelector` is loose enough to
+                // also match a header menu or footer list (e.g.,
+                // analyzer picked `ul > li` and the page's only such
+                // list is the genre menu).
+                if Self.looksLikeNavLink(
+                    title: nonEmpty,
+                    chapterURL: chapterURL,
+                    catalogURL: snapshot.finalURL
+                ) {
+                    continue
+                }
                 allChapters.append(ChapterLink(
                     title: nonEmpty,
                     url: chapterURL,
@@ -458,6 +471,94 @@ public struct RuleBasedBookSource: BookSource {
             referer: rule.homepage
         )
     }
+
+    /// Heuristic for catalog rows that resolved to site-nav links
+    /// rather than real chapters. Universal across sources — fires
+    /// only on shapes that can't be a chapter:
+    /// - cross-host anchors,
+    /// - self-links back to the catalog page itself,
+    /// - empty / root paths,
+    /// - well-known nav titles (`首页`, `登录`, etc.),
+    /// - paths with no segment overlap with the catalog URL (after
+    ///   stripping generic directory tokens like `book` / `read`).
+    ///   A real chapter on `/books/12345.html` lives at
+    ///   `/books/12345/N.html` or `/read/12345/N` — either way it
+    ///   carries the `12345` segment; nav like `/sort/3` or `/` does
+    ///   not. Chapter title text is too noisy to gate on, but title
+    ///   blocklist + URL shape together drop the obvious cases.
+    static func looksLikeNavLink(
+        title: String,
+        chapterURL: URL,
+        catalogURL: URL
+    ) -> Bool {
+        // Different host → not a chapter of this book.
+        if let chapHost = chapterURL.host, let catHost = catalogURL.host,
+           chapHost.caseInsensitiveCompare(catHost) != .orderedSame {
+            return true
+        }
+        let chapPath = chapterURL.path
+        if chapPath.isEmpty || chapPath == "/" { return true }
+        // Self-link back to the catalog page.
+        if chapterURL.absoluteString == catalogURL.absoluteString { return true }
+        if chapPath == catalogURL.path { return true }
+
+        // Title blocklist: anchors whose visible text is one of the
+        // well-known navigation labels found in nearly every Chinese
+        // book-site header/footer. Conservative — only fires on exact
+        // matches to short, unambiguous nav strings.
+        let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        if navTitleBlocklist.contains(trimmedTitle) { return true }
+
+        // Path-segment overlap. A real chapter shares at least one
+        // non-generic segment with the catalog URL (the book ID or
+        // slug). Nav links target unrelated paths.
+        let generic: Set<String> = [
+            "book", "books", "novel", "novels", "read", "reading",
+            "info", "list", "index", "home", "main", "html", "htm",
+            "php", "asp", "jsp"
+        ]
+        func meaningfulSegments(_ path: String) -> Set<String> {
+            var out: Set<String> = []
+            for raw in path.split(separator: "/") {
+                let seg = String(raw)
+                let stem: String
+                if let dot = seg.lastIndex(of: ".") {
+                    stem = String(seg[..<dot])
+                } else {
+                    stem = seg
+                }
+                let lower = stem.lowercased()
+                guard !lower.isEmpty, !generic.contains(lower) else { continue }
+                out.insert(lower)
+            }
+            return out
+        }
+        let catSegments = meaningfulSegments(catalogURL.path)
+        let chapSegments = meaningfulSegments(chapPath)
+        if !catSegments.isEmpty, catSegments.isDisjoint(with: chapSegments) {
+            return true
+        }
+        return false
+    }
+
+    /// Title-only blocklist of well-known navigation labels. Both
+    /// simplified and traditional variants are included so the filter
+    /// works across mainland and HK/TW mirrors of the same site.
+    private static let navTitleBlocklist: Set<String> = [
+        "首页", "首頁", "网站首页", "網站首頁", "主页", "主頁",
+        "登录", "登錄", "注册", "註冊", "退出", "登出",
+        "书架", "書架", "我的书架", "我的書架",
+        "排行", "排行榜", "分类", "分類", "完本", "完結",
+        "推荐", "推薦", "热门", "熱門", "最新", "全本",
+        "男生", "女生", "男频", "男頻", "女频", "女頻",
+        "帮助", "幫助", "客服", "反馈", "反饋",
+        "关于", "關於", "关于我们", "關於我們",
+        "联系", "聯繫", "联系我们", "聯繫我們",
+        "公告", "投稿", "招聘", "友情链接", "友情鏈接",
+        "简体", "簡體", "繁体", "繁體",
+        "移动版", "移動版", "手机版", "手機版", "电脑版", "電腦版",
+        "设置", "設置"
+    ]
 }
 
 // MARK: -

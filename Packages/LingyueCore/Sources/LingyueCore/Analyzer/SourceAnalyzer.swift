@@ -1157,6 +1157,23 @@ public enum SourceAnalyzer {
         }
 
         guard !clusters.isEmpty else { return nil }
+        // Drop clusters whose first anchor looks like site navigation
+        // rather than a chapter (e.g. the genre menu on a detail page).
+        // The same heuristic is applied at fetch time, but rejecting
+        // bad clusters here lets a smaller-but-correct chapter list
+        // beat a larger-but-bogus nav list on row count.
+        let filtered = clusters.filter { cluster in
+            guard let anchorURL = URL(
+                string: cluster.firstAnchorHref,
+                relativeTo: snapshot.finalURL
+            )?.absoluteURL else { return false }
+            return !RuleBasedBookSource.looksLikeNavLink(
+                title: "",
+                chapterURL: anchorURL,
+                catalogURL: snapshot.finalURL
+            )
+        }
+        clusters = filtered.isEmpty ? clusters : filtered
         clusters.sort { $0.rowCount > $1.rowCount }
         let winner = clusters[0]
 
