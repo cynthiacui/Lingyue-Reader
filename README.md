@@ -1,69 +1,90 @@
 # 灵阅书屋 (Lingyue)
 
-A polished, theme-rich Chinese-language novel reader for iOS. Browse 16 source sites, import full books with one tap, organize them in a wallet-stacked library, and read with typography that matches the platform — five page tints, five fonts, three page-turn animations, and Apple Books-style reveal of the status bar and chrome.
-
-iOS 17+ · SwiftUI · Single-window app · Bundle id `com.lingyue.reader`
-
----
-
-一款专为中文小说打造的精致 iOS 阅读器。聚合 16 个书源，一键导入整本书，用钱包式堆叠分类管理书库；五种页面底色、五种字体、三种翻页动画，状态栏和工具栏的显隐遵循 Apple Books 的交互习惯。
+一款专为中文小说打造的精致 iOS 阅读器。聚合多个书源，一键导入整本书，用钱包式堆叠分类管理书库；五种页面底色、五种字体、三种翻页动画，状态栏和工具栏的显隐遵循 Apple Books 的交互习惯。
 
 iOS 17+ · SwiftUI · 单窗口应用 · 包名 `com.lingyue.reader`
 
-## Features / 功能
+---
 
-### Library / 书架
+## 使用指南
+
+App Store 上架的灵阅是一个「空壳」阅读器——不自带任何书源，需要你导入一份书源配置文件后才能搜索和下载小说。
+
+### 下载书源文件
+
+直接下载下面的 JSON 文件，并把它保存到 iPhone 的「文件」App（iCloud Drive、本机或任意位置都可以）：
+
+- **JSON 文件**：[`docs/lingyue-sources.json`](./docs/lingyue-sources.json)
+- **Raw 直链**（iPhone Safari 长按可「下载链接的文件」）：
+  `https://raw.githubusercontent.com/cynthiacui/Lingyue-Reader/main/docs/lingyue-sources.json`
+
+> 该文件包含若干公开书源的解析规则。规则只描述「如何解析网页」，不包含任何受版权保护的小说内容。
+
+### 在 App 内导入
+
+1. 打开灵阅，切到底部「**发现**」标签
+2. 点击右上角的「**地球**」图标进入「**书源**」页面
+3. 点击右上角的「**＋**」，选择「**从 JSON 导入**」
+4. 在文件选择器里找到刚刚保存的 `lingyue-sources.json`
+5. 确认对话框会提示「新增 / 覆盖 / 未变更」的条数，点击「**导入**」完成
+
+导入完成后，「**发现**」页的搜索框就能跨所有已启用的书源搜索小说了。
+
+### 常见问题
+
+**Q：为什么 App Store 版本不自带书源？**
+A：为了把「阅读器」和「书源规则」解耦——书源规则在第三方网站结构变化时需要频繁更新，独立放在 GitHub 上更新更快，也让 App 本身保持「干净」。
+
+**Q：可以自定义书源吗？**
+A：可以。同样在「书源」页面，点击「＋」选择「**从 URL 分析**」或「**手动新建**」，按照向导填写解析规则即可。导出自己的书源也是同一个 JSON 格式，可以分享给他人。
+
+**Q：导入失败 / 搜索没结果？**
+A：网站结构变更可能让旧规则失效。请来 [Issues](https://github.com/cynthiacui/Lingyue-Reader/issues) 反馈具体的书源名称和搜索关键词，仓库会更新 `docs/lingyue-sources.json`，重新导入即可。
+
+---
+
+## 功能
+
+### 书架
 
 <p>
-  <img src="docs/screenshots/library.png" alt="Library" width="280">
-  <img src="docs/screenshots/download-manager.png" alt="Download manager" width="280">
+  <img src="docs/screenshots/library.png" alt="书架" width="280">
+  <img src="docs/screenshots/download-manager.png" alt="下载管理" width="280">
 </p>
-
-The Library tab uses a wallet-stacked categorized layout: each shelf collapses to a stack of cover spines, tap to fan out, tap again to collapse. A 最近阅读 strip is pinned at the top with the most-recently-opened books and their progress, and a navigation-drawer search box matches across every imported book by title or author. Mail-style swipes expose 下载 and 清理缓存 on the left, 删除 on the right; long-press a book to assign it to a category. The toolbar's download button opens a 下载管理 sheet that lists every active or paused chapter download.
 
 书架采用「钱包堆叠」式分类布局：每个分类默认收成一叠书脊，轻点展开，再点收回。顶部固定「最近阅读」横排，按打开时间倒序展示当前阅读进度；导航栏下方的搜索框可跨分类按书名或作者搜索全部书籍。书本左滑展示「下载 / 清理缓存」，右滑展示「删除」；长按可指定或调整分类。右上角的下载按钮可调出「下载管理」弹层，集中查看正在下载或已暂停的章节任务。
 
-### Discovery / 发现
+### 发现
 
 <p>
-  <img src="docs/screenshots/discovery.png" alt="Discovery sources" width="280">
-  <img src="docs/screenshots/discovery-results.png" alt="Aggregated search results" width="280">
+  <img src="docs/screenshots/discovery.png" alt="发现书源" width="280">
+  <img src="docs/screenshots/discovery-results.png" alt="搜索结果" width="280">
 </p>
 
-Discovery aggregates **16 source sites** behind a single search box: results stream in as each source replies, and a single book that exists on multiple sources is grouped under one row with the matched sources listed as chips. A 历史记录 strip remembers recent queries for one-tap re-run, and tapping any source tile opens its homepage in the in-app browser. Sources include 破万卷小说, 大尾笔趣阁, ESJ轻小说, 思兔閱讀, 就爱读小说, 同人圈, 笔趣阁小说, 52书库, 努努书坊, 宙斯小说, 同人小说网, 台灣小說網, 黄金屋中文, 半夏小说, 52书库2, and 无忧书城.
+「发现」页用同一个搜索框聚合所有已启用的书源：每个书源返回结果后即刻流式展示，多个书源同时收录的同一本书会合并成一行，并以小标签列出来源。「历史记录」保留最近搜索词，可一键重搜；点击任意书源磁贴可在内置浏览器中打开其首页。右上角的「地球」按钮进入书源管理页面，可启用 / 禁用、导入、导出书源。
 
-「发现」页用同一个搜索框聚合 **16 个书源**：每个书源返回结果后即刻流式展示，多个书源同时收录的同一本书会合并成一行，并以小标签列出来源。「历史记录」保留最近搜索词，可一键重搜；点击任意书源磁贴可在内置浏览器中打开其首页。已接入书源：破万卷小说、大尾笔趣阁、ESJ轻小说、思兔閱讀、就爱读小说、同人圈、笔趣阁小说、52书库、努努书坊、宙斯小说、同人小说网、台灣小說網、黄金屋中文、半夏小说、52书库2、无忧书城。
-
-### Reader / 阅读器
-
-The reader offers five page themes (纸张, 米黄, 护眼, 雅蓝, 夜读 — the night theme can follow the system appearance), five Chinese fonts (苹方, 宋体, 楷体 via the bundled LXGW WenKai Screen, 黑体, 圆体), and three page-turn animations (无动画 / 滑动 / 仿真翻页). Tap the page once to reveal the top and bottom bars together with the status bar in Apple Books style — and the body text stays pinned across the reveal so paragraphs never reflow. Auto-scroll, in-reader live preferences, a 简/繁 conversion toggle, and a chapter list overlay with progress are all one tap away.
+### 阅读器
 
 阅读器提供 5 种页面底色（纸张 / 米黄 / 护眼 / 雅蓝 / 夜读，夜读可跟随系统深色模式自动切换）、5 种字体（苹方、宋体、楷体（内置 LXGW 文楷 Screen）、黑体、圆体）、以及 3 种翻页动画（无动画 / 滑动 / 仿真翻页）。轻点页面即可仿照 Apple Books 同时显示顶部与底部工具栏及状态栏，正文位置在显隐切换时保持不动，不会重新分页。自动滚读、阅读页内的实时偏好弹层、简繁切换以及带进度条的章节列表都触手可及。
 
-### In-app browser / 内置浏览器
+### 统计
 
-Open any source homepage in the built-in browser; it auto-detects book pages and offers a one-tap 导入到书架 import. The chrome and background follow the selected app theme, and the web view itself is transparent so the theme reads through during loading.
+「统计」页用日历热力图展示连续阅读天数，按时段、按书籍汇总阅读时长，并把最近读完的章节和总阅读量做成可分享的小卡片。
+
+### 内置浏览器
 
 可在内置浏览器中打开任一书源首页，自动识别书籍页并提供「导入到书架」一键导入。浏览器的顶栏、底部控制栏与背景跟随当前外观主题；网页本身使用透明背景，加载过程中也能透出主题色。
 
-### Settings / 设置
+### 我
 
 <p>
-  <img src="docs/screenshots/settings-reader.png" alt="Settings — reader preferences" width="280">
-  <img src="docs/screenshots/settings-theme-storage.png" alt="Settings — app theme and storage" width="280">
+  <img src="docs/screenshots/settings-reader.png" alt="阅读偏好" width="280">
+  <img src="docs/screenshots/settings-theme-storage.png" alt="外观主题与缓存" width="280">
 </p>
 
-Settings opens with a live typography preview rendering a sample passage in the current 字号 / 行距 / 字体 / 翻页效果 / 背景颜色, plus a one-line summary so each change is visible without leaving the screen. Below the preview, three sections cover **阅读偏好** (font, size, line spacing, page transition, background color, follow-system-dark, traditional Chinese, auto-scroll), **外观主题** (the five app-wide themes — 纸张, 樱粉, 叶绿, 水墨, 星夜 — with their own follow-system-dark toggle), and **离线与缓存** (auto-preload upcoming chapters, total download size, and a bulk-clear button).
+顶部是「阅读身份卡」，显示当前连续阅读天数和累计读完字数，轻点即可跳到「统计」标签；下方依次是「阅读偏好」（字号、行距、字体、翻页效果、背景颜色、跟随系统深色模式、繁体中文、自动滚读）、「外观主题」（5 套全局主题：纸张 / 樱粉 / 叶绿 / 水墨 / 星夜）、「数据与缓存」（自动预载、累计下载数据、一键清理），以及「关于」（版本号、使用指南、GitHub 链接）。
 
-设置页顶部是排版实时预览：用当前的字号 / 行距 / 字体 / 翻页效果 / 背景颜色渲染一段示例文字，并附上一行参数摘要，调整时即刻可见。下方分三个板块：「阅读偏好」（字号、行距、字体、翻页效果、背景颜色、跟随系统深色模式、繁体中文显示、自动滚读）、「外观主题」（5 套全局主题：纸张 / 樱粉 / 叶绿 / 水墨 / 星夜，并提供独立的跟随系统深色模式开关）、以及「离线与缓存」（自动预载后续章节、累计下载数据大小、一键清理全部下载数据）。
-
-## Tech / 技术栈
-
-- **Language / UI**: Swift, SwiftUI, with UIKit interop where it matters (a custom `UIPageViewController` for the page-curl animation, `WKWebView` for the in-app browser).
-- **Persistence**: `@AppStorage` for preferences, file-system JSON for the library and downloaded chapters.
-- **Theming**: an `AppTheme` environment value drives a single `ThemeBackgroundView` that every top-level scene layers content over; the reader has its own `ReadingTheme` for page tints.
-- **Fonts**: bundles `LXGWWenKaiScreen.ttf` (open-source) registered via `UIAppFonts`; other faces resolve to on-device Hiragino fallbacks.
-- **Deployment target**: iOS 17.0.
+## 技术栈
 
 - **语言 / UI**：Swift、SwiftUI，必要处与 UIKit 互通（仿真翻页基于自定义 `UIPageViewController`，内置浏览器基于 `WKWebView`）。
 - **持久化**：偏好用 `@AppStorage`；书库与下载章节落到本地 JSON 文件。
@@ -71,18 +92,54 @@ Settings opens with a live typography preview rendering a sample passage in the 
 - **字体**：内置开源 `LXGWWenKaiScreen.ttf`，通过 `UIAppFonts` 注册；其余字体回退到系统 Hiragino 字族。
 - **部署目标**：iOS 17.0。
 
-## Build / 构建
+## 构建
 
 ```bash
 open lingyue.xcodeproj
 ```
 
-Build the `lingyue` scheme against an iOS 17 simulator or device. No external dependencies, no package manager — everything is in-tree.
+打开 `lingyue.xcodeproj`，选择 `LingyueAppStore` scheme，针对 iOS 17 模拟器或真机构建即可。无第三方依赖，无包管理工具，所有源码均在仓库内。
 
 ```bash
 xcodebuild -project lingyue.xcodeproj \
-           -scheme lingyue -configuration Debug -sdk iphonesimulator \
+           -scheme LingyueAppStore -configuration Debug -sdk iphonesimulator \
            -destination 'generic/platform=iOS Simulator' build
 ```
 
-打开 `lingyue.xcodeproj`，选择 `lingyue` scheme，针对 iOS 17 模拟器或真机构建即可。无第三方依赖，无包管理工具，所有源码均在仓库内。
+---
+
+# Lingyue Reader (English Overview)
+
+A polished, theme-rich Chinese-language novel reader for iOS. The App Store build ships as a "thin shell" — bring your own source-rules JSON (see [使用指南](#使用指南) above), then aggregate-search and import books from multiple sites.
+
+iOS 17+ · SwiftUI · Bundle id `com.lingyue.reader`
+
+## Tabs at a glance
+
+- **Library (书架)** — wallet-stacked categorized shelves: collapse to spines, tap to fan out. A pinned 最近阅读 row tracks recently opened books; mail-style swipes expose download / cache-clear / delete; long-press to reassign category. A toolbar download-manager sheet centralizes active and paused chapter downloads.
+
+- **Discovery (发现)** — one search box aggregates every enabled source; results stream in as each source replies, and the same book found on multiple sources collapses into one row with provenance chips. The toolbar's globe icon opens **Sources** for enable/disable, JSON import/export, URL-analyze, and from-scratch rule editing.
+
+- **Stats (统计)** — calendar heatmap of consecutive reading days, time-spent breakdowns by book and by hour, and shareable cards for recently finished chapters and lifetime totals.
+
+- **Me (我)** — reading-identity hero card (streak + lifetime characters read, taps over to Stats), plus reading preferences, app themes, data & cache management, and the About page (version, usage guide, GitHub).
+
+## Reader
+
+Five page tints (纸张 / 米黄 / 护眼 / 雅蓝 / 夜读, with optional system-dark follow), five Chinese typefaces (苹方 / 宋体 / 楷体 via bundled LXGW WenKai Screen / 黑体 / 圆体), three page-turn animations (none / slide / page-curl). Apple-Books-style reveal of status bar and chrome on tap, with the body text pinned across the reveal so paragraphs never reflow. Auto-scroll, an in-reader preferences popover, 简↔繁 toggle, and a progress-aware chapter list overlay are all one tap away.
+
+## In-app browser
+
+Opens any source homepage with theme-matched chrome; auto-detects book pages and offers a one-tap **导入到书架** action.
+
+## Tech
+
+Swift + SwiftUI with selective UIKit interop (`UIPageViewController` for page-curl, `WKWebView` for the in-app browser). Preferences via `@AppStorage`; library and downloaded chapters persisted as on-disk JSON. Theming flows through an `AppTheme` environment value plus a single `ThemeBackgroundView`. Bundles `LXGWWenKaiScreen.ttf` (open-source) via `UIAppFonts`; other faces resolve to system Hiragino fallbacks. iOS 17.0 deployment target. No package manager, no external dependencies — everything is in-tree.
+
+## Build
+
+```bash
+xcodebuild -project lingyue.xcodeproj \
+           -scheme LingyueAppStore -configuration Debug -sdk iphonesimulator \
+           -destination 'generic/platform=iOS Simulator' build
+```

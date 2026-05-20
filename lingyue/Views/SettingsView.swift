@@ -846,6 +846,7 @@ struct AboutSettingsView: View {
                     diagnosticsNavRow
 #endif
                     aboutVersionRow
+                    usageGuideRow
                     githubLinkRow
                 }
                 .listRowBackground(theme.cardBackground)
@@ -875,6 +876,20 @@ struct AboutSettingsView: View {
             Spacer()
             Text(appVersionString)
                 .foregroundStyle(theme.secondaryText)
+        }
+    }
+
+    private var usageGuideRow: some View {
+        Link(destination: URL(string: "https://github.com/cynthiacui/Lingyue-Reader#使用指南")!) {
+            HStack {
+                Label("使用指南", systemImage: "book.closed")
+                    .font(.headline)
+                    .foregroundStyle(theme.primaryText)
+                Spacer()
+                Image(systemName: "arrow.up.right.square")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(theme.secondaryText.opacity(0.7))
+            }
         }
     }
 
