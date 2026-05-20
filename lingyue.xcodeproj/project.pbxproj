@@ -57,6 +57,7 @@
 		010000000000000000000133 /* DiscoverySearchBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000035 /* DiscoverySearchBar.swift */; };
 		010000000000000000000134 /* DiscoveryRecentSearches.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000036 /* DiscoveryRecentSearches.swift */; };
 		010000000000000000000135 /* DiscoveryInternalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000037 /* DiscoveryInternalView.swift */; };
+		010000000000000000000136 /* SourceImportService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000038 /* SourceImportService.swift */; };
 		010000000000000000000703 /* LingyueCore in Frameworks */ = {isa = PBXBuildFile; productRef = 010000000000000000000702 /* LingyueCore */; };
 		010000000000000000000705 /* LingyueInternalSources in Frameworks */ = {isa = PBXBuildFile; productRef = 010000000000000000000704 /* LingyueInternalSources */; };
 		64AE67FC2FB6C76D004058EE /* LingyueApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000001 /* LingyueApp.swift */; };
@@ -95,6 +96,7 @@
 		64AE68F52FB6C76D004058EE /* DiscoverySearchBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000035 /* DiscoverySearchBar.swift */; };
 		64AE68F62FB6C76D004058EE /* DiscoveryRecentSearches.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000036 /* DiscoveryRecentSearches.swift */; };
 		64AE68F72FB6C76D004058EE /* DiscoveryInternalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000037 /* DiscoveryInternalView.swift */; };
+		64AE68F82FB6C76D004058EE /* SourceImportService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000038 /* SourceImportService.swift */; };
 		64AE68182FB6C76D004058EE /* CustomAlertView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000011 /* CustomAlertView.swift */; };
 		64AE68192FB6C76D004058EE /* ModalContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000012 /* ModalContainer.swift */; };
 		64AE681A2FB6C76D004058EE /* InputModalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000013 /* InputModalView.swift */; };
@@ -165,6 +167,7 @@
 		010000000000000000000035 /* DiscoverySearchBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiscoverySearchBar.swift; sourceTree = "<group>"; };
 		010000000000000000000036 /* DiscoveryRecentSearches.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiscoveryRecentSearches.swift; sourceTree = "<group>"; };
 		010000000000000000000037 /* DiscoveryInternalView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiscoveryInternalView.swift; sourceTree = "<group>"; };
+		010000000000000000000038 /* SourceImportService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SourceImportService.swift; sourceTree = "<group>"; };
 		64AE682D2FB6C76D004058EE /* LingyueAppStore.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = LingyueAppStore.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		64AE682E2FB6C76D004058EE /* Info-AppStore.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "Info-AppStore.plist"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -241,6 +244,7 @@
 				010000000000000000000029 /* FileSourcePreferenceStore.swift */,
 				01000000000000000000002F /* FileSourceValidationStore.swift */,
 				010000000000000000000030 /* BackupService.swift */,
+				010000000000000000000038 /* SourceImportService.swift */,
 				010000000000000000000026 /* AppStoreSourceRegistry.swift */,
 				010000000000000000000027 /* SourceStack.swift */,
 				010000000000000000000015 /* BookDownloadManager.swift */,
@@ -461,6 +465,7 @@
 				01000000000000000000012D /* FileSourceValidationStore.swift in Sources */,
 				01000000000000000000012E /* BackupService.swift in Sources */,
 				01000000000000000000012F /* BackupView.swift in Sources */,
+				010000000000000000000136 /* SourceImportService.swift in Sources */,
 				010000000000000000000130 /* IPAttestationView.swift in Sources */,
 				010000000000000000000131 /* AddSourceFlowView.swift in Sources */,
 				01000000000000000000010F /* CustomAlertView.swift in Sources */,
@@ -514,6 +519,7 @@
 				64AE68172FB6C76D004058EE /* FileSourceValidationStore.swift in Sources */,
 				64AE68F02FB6C76D004058EE /* BackupService.swift in Sources */,
 				64AE68F12FB6C76D004058EE /* BackupView.swift in Sources */,
+				64AE68F82FB6C76D004058EE /* SourceImportService.swift in Sources */,
 				64AE68F22FB6C76D004058EE /* IPAttestationView.swift in Sources */,
 				64AE68F32FB6C76D004058EE /* AddSourceFlowView.swift in Sources */,
 				64AE68182FB6C76D004058EE /* CustomAlertView.swift in Sources */,

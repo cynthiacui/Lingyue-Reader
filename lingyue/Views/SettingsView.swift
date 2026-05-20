@@ -21,22 +21,6 @@ struct SettingsView: View {
     @AppStorage("reader.autoScroll") private var autoScroll = false
     @AppStorage("reader.autoScrollSeconds") private var autoScrollSeconds = 6.0
     @AppStorage("reader.cacheEnabled") private var cacheEnabled = true
-    /// Phase 2.4 shadow-route gate. OFF by default; flipping it on
-    /// makes `BookImportService` try `InternalSourceRegistry` first
-    /// for Biquge/5dxs catalog + Biquge chapter, falling through to
-    /// the legacy implementation on any failure. The toggle only
-    /// surfaces in internal builds — see `labSection`.
-#if LINGYUE_INTERNAL
-    @AppStorage("lingyue.useSourceRegistryForCatalog") private var useSourceRegistryForCatalog = false
-
-    /// Phase 3.3 lab toggle. When on, the Discovery search bar tries each source
-    /// through `InternalSourceRegistry.searchableSources()` before falling back to
-    /// the hand-written parser. Lets internal testers validate that seeded rules
-    /// match the legacy parsers' result quality on live sites before we flip the
-    /// default. Empty / failed registry runs still fall through, so this is purely
-    /// additive — toggling it off restores 100% legacy behaviour.
-    @AppStorage("lingyue.useRegistryForDiscoverySearch") private var useRegistryForDiscoverySearch = false
-#endif
 
     @State private var cacheSizeText = "计算中"
     @State private var cacheNotice: String?
@@ -114,7 +98,6 @@ struct SettingsView: View {
                     previewCard
                     readingControlsSection
                     appThemeSection
-                    storageSection
 #if LINGYUE_INTERNAL
                     // App Store builds reach 我的书源 from the Discovery
                     // tab (see DiscoveryAppStoreView); only the Internal
@@ -125,8 +108,8 @@ struct SettingsView: View {
                     backupSection
 #if LINGYUE_INTERNAL
                     diagnosticsSection
-                    labSection
 #endif
+                    storageSection
                 }
                 .padding(.top, 12)
                 .padding(.bottom, 24)
@@ -476,44 +459,6 @@ struct SettingsView: View {
         }
     }
 
-    /// Internal-only build switches. Currently hosts the Phase 2.4
-    /// shadow-route flag — when on, catalog/chapter imports try the
-    /// rule-engine registry first and fall back to legacy on failure.
-    /// Keep new entries here behind clear copy that names the legacy
-    /// behaviour, so a tester knows what they're comparing against.
-    private var labSection: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            SectionHeader(title: "实验")
-
-            VStack(alignment: .leading, spacing: 8) {
-                Toggle(isOn: $useSourceRegistryForCatalog) {
-                    Label("书源引擎路由", systemImage: "arrow.triangle.branch")
-                }
-                .font(.subheadline)
-                .foregroundStyle(theme.primaryText)
-
-                Text("开启后，导入笔趣阁与就爱读小说时先走规则引擎；遇到错误自动回落旧路径。仅内测可见。")
-                    .font(.caption)
-                    .foregroundStyle(theme.secondaryText)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .readerCard()
-
-            VStack(alignment: .leading, spacing: 8) {
-                Toggle(isOn: $useRegistryForDiscoverySearch) {
-                    Label("发现搜索走规则引擎", systemImage: "magnifyingglass.circle")
-                }
-                .font(.subheadline)
-                .foregroundStyle(theme.primaryText)
-
-                Text("开启后，已迁移到规则引擎的书源在发现页搜索时先用规则结果；空结果或失败时自动回落旧解析。仅内测可见。")
-                    .font(.caption)
-                    .foregroundStyle(theme.secondaryText)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .readerCard()
-        }
-    }
 #endif
 
     @MainActor

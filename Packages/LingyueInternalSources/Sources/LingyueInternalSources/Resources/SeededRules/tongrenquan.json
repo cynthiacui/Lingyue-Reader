@@ -2,7 +2,7 @@
   "id": "00000000-0000-0000-0000-000000005400",
   "schemaVersion": 1,
   "name": "同人圈",
-  "homepage": "https://tongrenquan.org/",
+  "homepage": "https://tongrenguan.cc/",
   "capabilities": {
     "supportsSearch": true,
     "showInSearchBar": true,
@@ -20,13 +20,16 @@
   "encoding": "gb18030",
   "defaultHeaders": {},
   "detection": {
-    "hostPatterns": ["tongrenquan.org"],
-    "pathPattern": "^/tongren/\\d+\\.html$",
-    "confirmSelector": "div.detail h1"
+    "hostPatterns": [
+      "tongrenquan.org", "www.tongrenquan.org",
+      "tongrenguan.cc", "www.tongrenguan.cc"
+    ],
+    "pathPattern": "^/(tongren|trguan)/\\d+\\.html$",
+    "confirmSelector": "div.infos h1, h1"
   },
   "search": {
     "method": "post",
-    "urlTemplate": "https://tongrenquan.org/e/search/indexstart.php",
+    "urlTemplate": "https://tongrenguan.cc/e/search/indexstart.php",
     "bodyTemplate": "show=title&classid=0&keyboard={query}",
     "queryEncoding": "gb18030",
     "resultsSelector": "div.books > div.bk",
@@ -63,17 +66,15 @@
   },
   "detail": {
     "titleField": {
-      "selector": "div.detail h1",
+      "selector": "div.infos h1, h1",
       "transforms": [{ "trim": {} }]
     },
     "catalogURLField": {
-      "selector": "link[rel=canonical]",
-      "attribute": "href",
-      "transforms": [{ "absoluteURL": {} }]
+      "transforms": [{ "useBaseURL": {} }]
     }
   },
   "catalog": {
-    "chaptersSelector": "ul.book_list > li",
+    "chaptersSelector": "div.book_list li",
     "titleField": {
       "selector": "a",
       "transforms": [{ "trim": {} }]
@@ -87,11 +88,11 @@
   },
   "chapter": {
     "titleField": {
-      "selector": "h1",
+      "selector": "div.read_chapterName h1, h1",
       "transforms": [{ "trim": {} }]
     },
     "bodyField": {
-      "selector": "div.content",
+      "selector": "div.read_chapterDetail, div.content",
       "attribute": "html",
       "transforms": [
         { "brToNewline": {} },

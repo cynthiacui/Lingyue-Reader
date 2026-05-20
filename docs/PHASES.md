@@ -1630,6 +1630,247 @@ into App Store Connect's review notes.
 
 ---
 
+## Phase 7 — iCloud user-profile sync
+
+**Goal:** the user's profile (library, reading stats, editable rules,
+source preferences/validations, and synced settings) round-trips
+automatically across the user's Apple devices via iCloud, with no
+app-level account, no backend server, and no third-party SDK. Restoring
+on a fresh install becomes "sign into iCloud, launch, done" instead of
+"locate the `.lingyue-backup` file and tap import."
+
+This un-defers the deferred work flagged in Phase 5.3 ("Adding
+cross-target sync … via iCloud CloudKit … is intentionally deferred").
+Phase 5's manual `.lingyue-backup` export/import stays as the
+escape-hatch for users with iCloud disabled or migrating off Apple
+devices — iCloud sync is additive, not a replacement.
+
+### 7.0 Scope & non-goals
+
+**In scope (synced):**
+- `BackupArchive` content (`lingyue/Data/BackupService.swift:20`):
+  library categories, reading-stats ledger, editable sources, source
+  preferences, source validations.
+- Synced settings (subset of `UserDefaults` / `@AppStorage`): reader
+  font/theme/spacing/transition, follow-system-dark flag, simplified vs
+  traditional toggle, two-column layout, auto-scroll prefs, cache-enabled
+  flag.
+
+**Out of scope (intentionally local-only):**
+- Chapter content cache (`ChapterContentCache`) — regenerable from
+  source, large, not worth sync quota.
+- Web cookies / WKWebView session state — security boundary; sync would
+  leak login state across devices in a way most users don't expect.
+- Debug logs (`DebugLog`) and reader diagnostics — Internal-only,
+  device-local context.
+- Cross-target sync (Internal ↔ AppStore on the same Apple ID) —
+  explicitly out. Each target gets its own iCloud container ID for the
+  same identity-isolation reason the Phase 5 split exists: experimental
+  rules and behaviors should not bleed into the stable profile. Users
+  who want to carry data across targets continue to use the Phase 5
+  `.lingyue-backup` flow.
+
+### 7.1 iCloud capability + container provisioning
+
+Enable the iCloud capability on each target separately. Different
+containers per Phase 5's identity-isolation rationale:
+
+| Target | Container ID |
+|---|---|
+| `LingyueAppStore` | `iCloud.com.lingyue.reader` |
+| `LingyueInternal` | `iCloud.com.lingyue.reader.internal` |
+
+Container IDs must be created in the Apple Developer portal under each
+App ID's iCloud Service capability before they'll resolve at runtime.
+Each target's `.entitlements` file gains
+`com.apple.developer.ubiquity-container-identifiers` and
+`com.apple.developer.icloud-services = [CloudDocuments,
+CloudKit-KVS]` — we use the Documents container for the profile blob
+and the KV store for synced settings.
+
+No CloudKit schema work needed — we are not using CKRecord. The Apple
+Developer portal step is just "enable iCloud, pick container ID,
+provision the profile." Roughly the same friction as registering the
+bundle ID itself.
+
+### 7.2 Blob sync via the ubiquity Documents container
+
+Write the `BackupArchive` JSON to
+`<ubiquity-container>/Documents/profile.json`. iOS handles upload,
+download, and conflict surfacing via `NSFileVersion`. No CloudKit
+record-mapping code; `BackupService.makeArchive` / `restore` are
+reused verbatim as the marshalling layer.
+
+A new `ProfileSyncService` (main-actor, like `BackupService`) owns:
+- a `NSMetadataQuery` watching the ubiquity container for remote
+  changes,
+- a debounced writer that coalesces local-data changes into one upload
+  per ~5s of idle (so flipping ten settings in a row produces one
+  write, not ten),
+- a `FileManager.default.url(forUbiquityContainerIdentifier:)` resolver
+  that returns `nil` when iCloud is unavailable — the sync layer no-ops
+  silently in that case, the local stores stay authoritative.
+
+Slice 7.2 ships **last-write-wins on the whole archive**. That is
+deliberately wrong for the conflicts called out in 7.3, but it is
+shippable to Internal for one to two weeks of dogfooding the plumbing
+(does iCloud actually deliver across devices on tester accounts? does
+the metadata query fire? does the write debounce hold?) before the
+merge layer lands on top.
+
+### 7.3 Merge layer (the hard part)
+
+Last-write-wins on the whole `BackupArchive` corrupts two real-world
+scenarios:
+
+1. **Reading position divergence.** Read to chapter 50 on iPad. iPhone
+   is offline at chapter 45. iPhone comes online → its older archive
+   overwrites the iPad's → chapter-50 progress lost.
+2. **Library divergence.** Add Book A on iPad, Book B on iPhone, both
+   offline. Whichever device syncs second wins → the other device's
+   addition is lost.
+
+Per-field merge policies, baked into the same `BackupArchive` shape so
+the wire format does not change:
+
+| Field | Merge policy | Key |
+|---|---|---|
+| `library: [LibraryCategory]` | Set-union by book ID; preserve local ordering when both contain the same book; deletions tracked via a `tombstones: [BookID: Date]` sidecar (delete wins if the tombstone is newer than the addition on the other side). | book ID |
+| `readingStats: ReadingStatsLedger` | Per-book: max chapter index, then max position-within-chapter at that index; total-time fields summed only if a per-session UUID set proves the sessions are disjoint (else max). | book ID |
+| `editableSources: [SourceRule]` | Per-rule: newest `lastEditedAt` wins; if equal, last-write-wins on full record. Requires adding `lastEditedAt: Date` to `SourceRule` if absent (cheap, additive). | source ID |
+| `sourcePreferences` | Per source: newest `lastEditedAt` wins (same shape as rules). | source ID |
+| `sourceValidations` | Append-only history; merge = union by `(sourceID, runAt)` tuple. | composite |
+
+Tombstones for library deletions: a deleted book leaves a
+`(bookID, deletedAt)` entry in the synced state for 30 days, then is
+purged. Without this, a delete on Device A is silently undone when
+Device B's older archive (which still contains the book) syncs in.
+
+The merge module is pure — it takes `(local: BackupArchive, remote:
+BackupArchive) -> BackupArchive` — so it gets thorough fixture-driven
+unit coverage in the style of Phase 1.3's engine tests.
+
+### 7.4 Settings sync via `NSUbiquitousKeyValueStore`
+
+The synced settings list from 7.0 is well under the KV store's 1MB /
+1024-key budget (settings total <2KB). Adding a thin
+`@iCloudAppStorage` property wrapper that mirrors writes to both
+`UserDefaults` and `NSUbiquitousKeyValueStore.default`, and observes
+`NSUbiquitousKeyValueStore.didChangeExternallyNotification` to apply
+remote updates back to `UserDefaults`, removes any per-call-site
+sync logic. Existing `@AppStorage` declarations migrate to
+`@iCloudAppStorage` one-by-one as we audit which settings should sync.
+
+Settings explicitly NOT synced (device-local UX):
+- Cache notice transient state (it's already `@State`, not stored).
+- Internal lab toggles, if any reappear in the future — synced settings
+  are public-facing only.
+
+### 7.5 UI surface
+
+Settings → new section `iCloud 同步` between `备份与恢复` and `离线与缓存`
+(after the move from the prior turn). Contents:
+
+| Surface | Behaviour |
+|---|---|
+| Status row | `已同步 · 10 分钟前` / `同步中…` / `iCloud 未登录` / `iCloud 容器不可用`. Drives off `ProfileSyncService.publishedStatus`. |
+| Enable toggle | Default ON when iCloud is available. Turning off stops uploads; the local profile keeps working, and a later flip back to ON triggers a merge against whatever is in iCloud. |
+| 立即同步 button | Manual force-push + force-fetch. Useful when a tester wants to verify cross-device behavior on demand. |
+| 上次冲突 (Internal only) | Last N merge events with timestamps and which side won each field. Hidden in App Store builds; debugging aid for the merge-layer rollout. |
+
+First-launch prompt (one-shot per install): if the app launches and
+finds a non-empty `profile.json` in the ubiquity container while the
+local stores are empty, show a sheet — "在 iCloud 上发现既有书库，是否
+恢复？" — with Restore (overwrite local empties) and 暂不 (use empty
+local; the next 7.2 upload will overwrite the iCloud copy).
+
+The status row also acts as the "iCloud not available" affordance —
+users who are signed out of iCloud or on a managed Apple ID see the
+status string and can fall back to the Phase 5 `.lingyue-backup`
+export.
+
+### 7.6 Tests
+
+- **7.3 merge:** fixture-driven unit tests covering each row in the
+  merge-policy table — reading-position max, library set-union with
+  and without tombstones, rule `lastEditedAt` resolution, source-prefs
+  conflict, validation append.
+- **7.4 KV store:** integration test that flipping a synced setting on
+  one in-memory `UserDefaults` instance propagates through a mocked
+  KV-store change notification into a second instance.
+- **7.2 plumbing:** manual checklist in `docs/PHASES.md`-adjacent
+  runbook — install Internal on two simulators booted with the same
+  Apple ID, induce four divergence scenarios (reading position,
+  library add, library delete, rule edit), confirm each resolves
+  per-policy without manual intervention.
+
+### Exit criteria for Phase 7
+
+1. Both targets build green with iCloud capability enabled and the
+   correct container per target.
+2. `ProfileSyncService` round-trips the `BackupArchive` across two
+   devices on the same Apple ID with no user action beyond launching
+   the app on each.
+3. The merge-policy table is fully implemented with fixture coverage;
+   the four divergence scenarios from 7.6 all resolve correctly.
+4. The Settings → `iCloud 同步` section renders the right status string
+   in each of the four states (synced / syncing / signed-out /
+   unavailable), and the manual `立即同步` button completes within 5s
+   on a network-available device.
+5. iCloud-disabled users see no regressions: the app behaves exactly
+   as it did before Phase 7, with the new Settings section showing
+   `iCloud 未登录`.
+
+### Risks for Phase 7
+
+- **Apple ID churn.** A user signs out of iCloud or switches Apple IDs
+  → their ubiquity container disappears mid-session. The metadata
+  query needs to handle `NSUbiquityIdentityDidChangeNotification` and
+  drop in-flight uploads/downloads cleanly. Stop-gap: a banner in the
+  status row when the identity token changes.
+- **First-launch race.** App boot reads from the ubiquity container
+  before iCloud resolves the token → an empty container is seen as
+  "no profile" and the first-launch prompt never fires. Guard with
+  `FileManager.default.ubiquityIdentityToken != nil` before any
+  presence check; retry once the token resolves.
+- **Merge bugs corrupting state.** A bad merge on the synced archive
+  can permanently lose data — the broken merge gets uploaded and then
+  pulled back to every other device. Mitigation: 7.3 ships behind a
+  build flag in Internal first; the merge module is pure and
+  exhaustively fixture-tested before App Store exposure; every device
+  keeps a rolling 7-archive local snapshot in
+  `Application Support/iCloud-snapshots/` so a user (or support)
+  can roll back without an iCloud round trip.
+- **Quota.** The Documents container shares the user's iCloud storage
+  (5GB free tier). `profile.json` is ~tens of KB even for a heavy
+  user; well under the threshold where Apple's `NSFileManagerNoUbiquity`
+  errors fire. No mitigation needed; document the size in the runbook.
+
+### Implementation order
+
+1. **7.1 capability + entitlements.** Both targets gain iCloud
+   capability with their respective container IDs. No behavioural
+   change. Both schemes still build green.
+2. **7.2 plumbing, Internal-only, blob-blind LWW.** `ProfileSyncService`
+   uploads `BackupArchive` and overwrites on the way down. Ship to
+   Internal TestFlight; spend one to two weeks confirming the metadata
+   query, debounce, and signed-out fallback work on real tester
+   devices.
+3. **7.4 KV-store wrapper.** Independent of 7.3, low risk. Migrate a
+   first batch of `@AppStorage` keys to `@iCloudAppStorage`.
+4. **7.3 merge layer.** Pure module + fixture tests land first;
+   integration into `ProfileSyncService` flips Internal from
+   blob-blind LWW to per-field merge.
+5. **7.5 UI surface.** Status row + toggle + first-launch prompt +
+   manual sync button. Depends on 7.2/7.3 being stable enough that
+   the strings don't lie.
+6. **AppStore enablement.** Once 7.2–7.5 have stabilised in Internal
+   for ~one TestFlight cycle, flip the `LingyueAppStore` target to
+   write to its container too. The Phase 5 cross-target isolation
+   guarantees Internal data does not leak into the App Store profile.
+
+---
+
 ## Tracking
 
 Each phase exit is a single PR (Phase 1) or a small stack of PRs

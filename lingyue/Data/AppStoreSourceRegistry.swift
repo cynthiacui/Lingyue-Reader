@@ -47,7 +47,7 @@ public struct AppStoreSourceRegistry: LingyueCore.BookSourceRegistry {
             let rp = preferences[rhs.id]?.priority ?? .max
             return lp != rp ? lp < rp : lhs.name < rhs.name
         }
-        return sorted.map { RuleBasedBookSource(rule: $0, loader: loader) }
+        return sorted.map { $0.makeBookSource(loader: loader) }
     }
 
     public func searchableSources() async throws -> [any BookSource] {

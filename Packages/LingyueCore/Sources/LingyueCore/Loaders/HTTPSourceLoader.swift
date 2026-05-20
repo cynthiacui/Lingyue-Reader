@@ -57,7 +57,12 @@ public struct HTTPSourceLoader: SourceHTMLLoading {
         let httpResponse = response as? HTTPURLResponse
         let finalURL = response.url ?? requestURL
         let encoding = stringEncoding(for: request.encoding, response: httpResponse)
-        guard let html = String(data: data, encoding: encoding) else {
+        let html: String
+        if let decoded = String(data: data, encoding: encoding) {
+            html = decoded
+        } else if let decoded = Self.decodeWithFallbacks(data: data, preferred: encoding) {
+            html = decoded
+        } else {
             throw BookSourceError.loadFailed(
                 reason: "could not decode body as \(request.encoding.rawValue)"
             )
@@ -95,7 +100,7 @@ public struct HTTPSourceLoader: SourceHTMLLoading {
         case .utf8: return .utf8
         case .gb18030: return Self.cf(.GB_18030_2000)
         case .gbk: return Self.cf(.GBK_95)
-        case .big5: return Self.cf(.big5)
+        case .big5: return Self.cf(.big5_HKSCS_1999)
         case .auto:
             if
                 let header = response?.value(forHTTPHeaderField: "Content-Type"),
@@ -106,6 +111,25 @@ public struct HTTPSourceLoader: SourceHTMLLoading {
             }
             return .utf8
         }
+    }
+
+    /// Try common CJK encodings when the declared one fails. Some sites
+    /// mis-declare their charset (e.g. `charset=big5` for an HKSCS-extended
+    /// page, or `charset=utf-8` for a GBK page). Walking a small ordered
+    /// list of candidates is cheaper than reporting failure and is
+    /// invisible when the preferred encoding decodes cleanly.
+    private static func decodeWithFallbacks(data: Data, preferred: String.Encoding) -> String? {
+        let candidates: [String.Encoding] = [
+            .utf8,
+            cf(.big5_HKSCS_1999),
+            cf(.GB_18030_2000),
+            cf(.GBK_95),
+            .isoLatin1,
+        ]
+        for encoding in candidates where encoding != preferred {
+            if let decoded = String(data: data, encoding: encoding) { return decoded }
+        }
+        return nil
     }
 
     private static func cf(_ cf: CFStringEncodings) -> String.Encoding {
@@ -130,7 +154,7 @@ public struct HTTPSourceLoader: SourceHTMLLoading {
         case "utf-8", "utf8": return .utf8
         case "gb2312", "gbk": return cf(.GBK_95)
         case "gb18030": return cf(.GB_18030_2000)
-        case "big5": return cf(.big5)
+        case "big5", "big5-hkscs", "cp950": return cf(.big5_HKSCS_1999)
         case "iso-8859-1", "latin1": return .isoLatin1
         default:
             let raw = CFStringConvertEncodingToNSStringEncoding(

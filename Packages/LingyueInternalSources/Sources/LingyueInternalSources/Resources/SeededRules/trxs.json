@@ -20,9 +20,9 @@
   "encoding": "gb18030",
   "defaultHeaders": {},
   "detection": {
-    "hostPatterns": ["trxs.org", "trxs.cc"],
+    "hostPatterns": ["trxs.org", "www.trxs.org", "trxs.cc", "www.trxs.cc"],
     "pathPattern": "^/tongren/\\d+\\.html$",
-    "confirmSelector": "div.detail h1"
+    "confirmSelector": "div.infos h1, h1"
   },
   "search": {
     "method": "post",
@@ -63,17 +63,15 @@
   },
   "detail": {
     "titleField": {
-      "selector": "div.detail h1",
+      "selector": "div.infos h1, h1",
       "transforms": [{ "trim": {} }]
     },
     "catalogURLField": {
-      "selector": "link[rel=canonical]",
-      "attribute": "href",
-      "transforms": [{ "absoluteURL": {} }]
+      "transforms": [{ "useBaseURL": {} }]
     }
   },
   "catalog": {
-    "chaptersSelector": "ul.book_list > li",
+    "chaptersSelector": "div.book_list li",
     "titleField": {
       "selector": "a",
       "transforms": [{ "trim": {} }]
@@ -87,11 +85,11 @@
   },
   "chapter": {
     "titleField": {
-      "selector": "h1",
+      "selector": "div.read_chapterName h1, h1",
       "transforms": [{ "trim": {} }]
     },
     "bodyField": {
-      "selector": "div.content",
+      "selector": "div.read_chapterDetail, div.content",
       "attribute": "html",
       "transforms": [
         { "brToNewline": {} },

@@ -1,0 +1,142 @@
+{
+  "id": "00000000-0000-0000-0000-000000005B91",
+  "schemaVersion": 1,
+  "name": "笔趣阁",
+  "homepage": "https://m.bqgl.cc/",
+  "capabilities": {
+    "supportsSearch": true,
+    "showInSearchBar": true,
+    "supportsBrowserImport": true,
+    "requiresWebRender": false,
+    "maxConcurrentRequests": 2,
+    "requestIntervalMillis": 250
+  },
+  "enginePerStep": {
+    "search": "http",
+    "detail": "http",
+    "catalog": "http",
+    "chapter": "http"
+  },
+  "encoding": "auto",
+  "defaultHeaders": {},
+  "detection": {
+    "hostPatterns": ["*bqg*", "*bgg*"],
+    "pathPattern": "/(book|look|wapbook)/\\d+(/(\\d+(_\\d+)?\\.html?|index\\.html?)?)?"
+  },
+  "detail": {
+    "titleField": { "selector": "h1", "transforms": [{ "trim": {} }] },
+    "catalogURLField": {
+      "transforms": [{ "useBaseURL": {} }]
+    }
+  },
+  "catalog": {
+    "chaptersSelector": "div.listmain dd a, div.listmain a, dl dd a",
+    "titleField": { "transforms": [{ "trim": {} }] },
+    "urlField": {
+      "attribute": "href",
+      "transforms": [{ "absoluteURL": {} }]
+    },
+    "maxPages": 1
+  },
+  "chapter": {
+    "titleField": { "selector": "h1", "transforms": [{ "trim": {} }] },
+    "bodyField": {
+      "selector": "#chaptercontent, #content, div.content",
+      "attribute": "html",
+      "transforms": [
+        { "brToNewline": {} },
+        { "stripHTML": {} },
+        { "decodeHTMLEntities": {} }
+      ]
+    },
+    "maxBodyPages": 1
+  },
+  "jsonAPI": {
+    "sourceID": "json-api:biquge-api",
+    "idExtractors": {
+      "bookID": [
+        "/(?:book|look|wapbook)/(\\d+)/\\d+(?:_\\d+)?\\.html?$",
+        "/(?:book|look|wapbook)/(\\d+)/?$"
+      ],
+      "chapterID": [
+        "/(?:book|look|wapbook)/\\d+/(\\d+)(?:_\\d+)?\\.html?$"
+      ]
+    },
+    "search": {
+      "endpointTemplates": [
+        "https://apiqu.cc/api/search?q={query}",
+        "https://apige.cc/api/search?q={query}"
+      ],
+      "headers": {
+        "Accept": "application/json,text/plain,*/*"
+      },
+      "itemsPath": "data",
+      "titleField": "title",
+      "detailURLTemplate": "https://9b0.bqg303.xyz/#/book/{id}/",
+      "idField": "id",
+      "authorField": "author",
+      "snippetField": "intro",
+      "titleTransforms": ["decodeEntities", "stripHTML", "collapseWhitespace", "trim"]
+    },
+    "detail": {
+      "endpointTemplates": [
+        "https://{originHost}/api/book?id={bookID}",
+        "https://apiqu.cc/api/book?id={bookID}",
+        "https://apige.cc/api/book?id={bookID}"
+      ],
+      "headers": {
+        "Accept": "application/json,text/plain,*/*"
+      },
+      "titleField": "title",
+      "authorField": "author",
+      "introField": "intro",
+      "categoryField": "sortname",
+      "statusField": "full",
+      "lastChapterField": "lastchapter",
+      "titleTransforms": ["decodeEntities", "stripHTML", "collapseWhitespace", "trim"]
+    },
+    "catalog": {
+      "endpointTemplates": [
+        "https://{originHost}/api/booklist?id={bookID}",
+        "https://apiqu.cc/api/booklist?id={bookID}",
+        "https://apige.cc/api/booklist?id={bookID}"
+      ],
+      "headers": {
+        "Accept": "application/json,text/plain,*/*"
+      },
+      "itemsPath": "list",
+      "urlTemplate": "/book/{bookID}/{index}.html",
+      "titleTransforms": ["decodeEntities", "stripHTML", "collapseWhitespace", "trim"]
+    },
+    "chapter": {
+      "endpointTemplates": [
+        "https://{originHost}/api/chapter?id={bookID}&chapterid={chapterID}",
+        "https://apiqu.cc/api/chapter?id={bookID}&chapterid={chapterID}",
+        "https://apige.cc/api/chapter?id={bookID}&chapterid={chapterID}"
+      ],
+      "headers": {
+        "Accept": "application/json,text/plain,*/*"
+      },
+      "titleField": "chaptername",
+      "bodyField": "txt",
+      "bodyTransforms": [
+        "normalizeLineEndings",
+        "brToNewline",
+        "stripHTML",
+        "decodeEntities",
+        "splitLines",
+        "filterBoilerplate"
+      ],
+      "boilerplateFragments": [
+        "请收藏本站", "請收藏本站", "加入书签", "加入書簽",
+        "返回目录", "返回目錄", "返回书架", "返回書架",
+        "上一章", "下一章", "上一頁", "下一頁",
+        "最新网址", "最新網址", "手机用户", "手機用戶",
+        "本章未完", "点击报错", "點擊報錯",
+        "天才一秒记住", "天才一秒鐘記住",
+        "无弹窗", "無彈窗", "看本书最新章节", "看本書最新章節",
+        "字体大小", "字體大小"
+      ]
+    }
+  }
+}

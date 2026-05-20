@@ -932,6 +932,35 @@ private struct InAppWebView: UIViewRepresentable {
             return nil
         }
 
+        // Several Chinese novel mirrors (powanjuan.cc, daweixs.com, …)
+        // sit behind Cloudflare with a 301 from `https://host/path` to
+        // `http://host/path/` — a trailing-slash canonicalization that
+        // accidentally downgrades the scheme. WebKit silently blocks
+        // mixed-content navigations from a secure origin, so tapping a
+        // book on the HTTPS homepage just no-ops. The same path served
+        // over HTTPS with the trailing slash returns 200, so transparently
+        // re-issuing the request as HTTPS recovers the navigation.
+        func webView(
+            _ webView: WKWebView,
+            decidePolicyFor navigationAction: WKNavigationAction,
+            decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
+        ) {
+            guard let url = navigationAction.request.url,
+                  url.scheme?.lowercased() == "http",
+                  var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+            else {
+                decisionHandler(.allow)
+                return
+            }
+            components.scheme = "https"
+            guard let upgraded = components.url else {
+                decisionHandler(.allow)
+                return
+            }
+            decisionHandler(.cancel)
+            webView.load(URLRequest(url: upgraded))
+        }
+
         private func refresh(from webView: WKWebView) {
             DispatchQueue.main.async { [state] in
                 state.refresh(from: webView)

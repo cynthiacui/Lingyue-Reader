@@ -43,11 +43,14 @@ struct SourceStack: Sendable {
     /// tests can inject their own stack without paying the WebView
     /// renderer's startup cost.
     ///
-    /// The fast-path adapter list grows here as adapters become
-    /// usable. Order matters: registry methods (`source(withID:)`,
-    /// `enabledSources()`) return them in this order, so list the
-    /// most-specific URL recognizer first when two adapters could
-    /// claim the same host.
+    /// Sources whose parsing the rule schema can't express (5dxs catalog
+    /// JSON, biquge-api) ride in through seeded rules with a `jsonAPI`
+    /// config block — the rule's UUID is the persisted identity, and
+    /// `SourceRule.makeBookSource(loader:)` swaps in `JSONAPIBookSource`
+    /// at registry-build time. The engine is fully generic; every URL,
+    /// ID-extraction regex, JSON path, and boilerplate fragment lives
+    /// in the rule JSON, so the App Store target runs the same sources
+    /// the moment the user imports the seeded JSON.
     static let live: SourceStack = {
         let loader = CompositeSourceLoader()
         let store = FileEditableSourceStore()
@@ -58,10 +61,6 @@ struct SourceStack: Sendable {
         registry = InternalSourceRegistry(
             editableStore: store,
             loader: loader,
-            fastPathAdapters: [
-                FivedxsBookSource(loader: loader),
-                BiqugeAPIBookSource(loader: loader)
-            ],
             preferenceStore: preferenceStore
         )
 #else

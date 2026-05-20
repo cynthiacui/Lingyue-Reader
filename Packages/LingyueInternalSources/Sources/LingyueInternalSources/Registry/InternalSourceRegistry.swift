@@ -70,12 +70,8 @@ public struct InternalSourceRegistry: BookSourceRegistry {
         let sortedUser = enabledUserRules.sorted { key($0) < key($1) }
         let sortedBundled = enabledBundled.sorted { key($0) < key($1) }
 
-        let userSources: [any BookSource] = sortedUser.map {
-            RuleBasedBookSource(rule: $0, loader: loader)
-        }
-        let bundledSources: [any BookSource] = sortedBundled.map {
-            RuleBasedBookSource(rule: $0, loader: loader)
-        }
+        let userSources: [any BookSource] = sortedUser.map { $0.makeBookSource(loader: loader) }
+        let bundledSources: [any BookSource] = sortedBundled.map { $0.makeBookSource(loader: loader) }
         return userSources + bundledSources + fastPathAdapters
     }
 

@@ -1,0 +1,106 @@
+{
+  "id": "00000000-0000-0000-0000-000000005D85",
+  "schemaVersion": 1,
+  "name": "就爱读小说",
+  "homepage": "https://m.5dxs.net/",
+  "capabilities": {
+    "supportsSearch": true,
+    "showInSearchBar": true,
+    "supportsBrowserImport": true,
+    "requiresWebRender": false,
+    "maxConcurrentRequests": 2,
+    "requestIntervalMillis": 200
+  },
+  "enginePerStep": {
+    "search": "http",
+    "detail": "http",
+    "catalog": "http",
+    "chapter": "http"
+  },
+  "encoding": "auto",
+  "defaultHeaders": {},
+  "detection": {
+    "hostPatterns": ["5dxs.net", "*.5dxs.net", "adxs.net", "*.adxs.net"],
+    "pathPattern": "^/(info|reader)/\\d+/\\d+(/\\d+)?\\.html?$",
+    "confirmSelector": "meta[property=og:novel:book_name], div.waps_one"
+  },
+  "search": {
+    "method": "get",
+    "urlTemplate": "https://m.5dxs.net/search?key={query}",
+    "resultsSelector": "div.waps_one",
+    "titleField": {
+      "selector": "span.waps_name a",
+      "transforms": [{ "trim": {} }]
+    },
+    "detailURLField": {
+      "selector": "span.waps_name a",
+      "attribute": "href",
+      "transforms": [{ "absoluteURL": {} }]
+    },
+    "snippetField": {
+      "selector": "div.author",
+      "transforms": [
+        { "regexReplace": { "pattern": "^\\s*作者[::]\\s*", "replacement": "" } },
+        { "trim": {} }
+      ]
+    }
+  },
+  "detail": {
+    "titleField": {
+      "selector": "meta[property=og:title], meta[property=og:novel:book_name], h1",
+      "attribute": "content",
+      "transforms": [{ "trim": {} }]
+    },
+    "catalogURLField": {
+      "transforms": [{ "useBaseURL": {} }]
+    }
+  },
+  "catalog": {
+    "chaptersSelector": "ul a, div.book_list a, dl dd a",
+    "titleField": { "transforms": [{ "trim": {} }] },
+    "urlField": {
+      "attribute": "href",
+      "transforms": [{ "absoluteURL": {} }]
+    },
+    "maxPages": 1
+  },
+  "chapter": {
+    "titleField": {
+      "selector": "div#nr_title, div.nr_title, h1",
+      "transforms": [{ "trim": {} }]
+    },
+    "bodyField": {
+      "selector": "div#nr1, div#content, div.content",
+      "attribute": "html",
+      "transforms": [
+        { "brToNewline": {} },
+        { "stripHTML": {} },
+        { "decodeHTMLEntities": {} },
+        { "trim": {} }
+      ]
+    },
+    "maxBodyPages": 1
+  },
+  "jsonAPI": {
+    "sourceID": "json-api:5dxs",
+    "idExtractors": {
+      "bookID": [
+        "^/info/\\d+/(\\d+)\\.html?$",
+        "^/reader/\\d+/(\\d+)/\\d+\\.html?$"
+      ]
+    },
+    "catalog": {
+      "endpointTemplates": [
+        "https://m.5dxs.net/ajaxService?action=chapterlist&articleno={bookID}&index=0&size=20000&sort=1",
+        "https://m.adxs.net/ajaxService?action=chapterlist&articleno={bookID}&index=0&size=20000&sort=1"
+      ],
+      "headers": {
+        "Accept": "application/json,text/plain,*/*"
+      },
+      "itemsPath": "items",
+      "titleField": "chaptername",
+      "urlField": "url",
+      "titleTransforms": ["decodeEntities", "stripHTML", "collapseWhitespace", "trim"]
+    }
+  }
+}

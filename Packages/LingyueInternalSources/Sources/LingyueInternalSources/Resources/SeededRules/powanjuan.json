@@ -56,17 +56,15 @@
   },
   "detail": {
     "titleField": {
-      "selector": "h1, div.title strong",
+      "selector": "div.info h1, div.detail h1, h1, div.title strong",
       "transforms": [{ "trim": {} }]
     },
     "catalogURLField": {
-      "selector": "link[rel=canonical]",
-      "attribute": "href",
-      "transforms": [{ "absoluteURL": {} }]
+      "transforms": [{ "useBaseURL": {} }]
     }
   },
   "catalog": {
-    "chaptersSelector": "ul.book_list > li, div.book_list a, ul.list > li",
+    "chaptersSelector": "div.catalog ul li, div.catalog li, ul.book_list > li, div.book_list a, ul.list > li",
     "titleField": {
       "selector": "a",
       "transforms": [{ "trim": {} }]
@@ -84,7 +82,7 @@
       "transforms": [{ "trim": {} }]
     },
     "bodyField": {
-      "selector": "div#content, div.content, div#text",
+      "selector": "div#mycontent, div#content, div.content, div#text",
       "attribute": "html",
       "transforms": [
         { "brToNewline": {} },

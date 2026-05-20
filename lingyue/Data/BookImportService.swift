@@ -988,13 +988,16 @@ final class BookImportService: Sendable {
 #endif
     }
 
-    /// UserDefaults flag — flipped on in Settings → Lab when we're
-    /// ready to A/B the registry route against legacy in TestFlight.
-    /// Default OFF; the legacy path stays authoritative until the
-    /// flag flips at runtime. Read inline (no caching) so a flip
-    /// during a session takes effect on the next import.
+    /// Build-time gate for the rule-engine catalog/chapter route.
+    /// Internal builds always go through `InternalSourceRegistry`
+    /// first and fall back to legacy on failure; App Store builds
+    /// stay on the legacy hand-written parsers.
     static var useSourceRegistryForCatalog: Bool {
-        UserDefaults.standard.bool(forKey: "lingyue.useSourceRegistryForCatalog")
+#if LINGYUE_INTERNAL
+        return true
+#else
+        return false
+#endif
     }
 
     /// Phase 2.4 routed-Biquge path. Talks to the registry through
@@ -1007,11 +1010,8 @@ final class BookImportService: Sendable {
     /// adapter's job, and going through the throw path keeps the
     /// dispatch layer ignorant of adapter internals.
     private func registryRoutedBiqugeAPICatalogLinks(for sourceURL: URL) async -> [ChapterLink] {
-#if !LINGYUE_INTERNAL
-        return []
-#else
         do {
-            guard let source = try await SourceStack.live.registry.source(withID: "internal:biquge-api") else {
+            guard let source = try await SourceStack.live.registry.source(withID: "json-api:biquge-api") else {
                 return []
             }
             let coreLinks = try await source.fetchCatalog(url: sourceURL)
@@ -1032,7 +1032,6 @@ final class BookImportService: Sendable {
             ])
             return []
         }
-#endif
     }
 
     /// Phase 2.4 routed-5dxs path. Same shadow-route pattern as
@@ -1040,11 +1039,8 @@ final class BookImportService: Sendable {
     /// to legacy, host-mismatch (`unsupportedURL`) is silent, every
     /// other error logs once for the TestFlight ramp.
     private func registryRoutedFivedxsCatalogLinks(for sourceURL: URL) async -> [ChapterLink] {
-#if !LINGYUE_INTERNAL
-        return []
-#else
         do {
-            guard let source = try await SourceStack.live.registry.source(withID: "internal:5dxs") else {
+            guard let source = try await SourceStack.live.registry.source(withID: "json-api:5dxs") else {
                 return []
             }
             let coreLinks = try await source.fetchCatalog(url: sourceURL)
@@ -1063,7 +1059,6 @@ final class BookImportService: Sendable {
             ])
             return []
         }
-#endif
     }
 
     /// 就爱读小说 (5dxs.net / adxs.net) paginates the chapter catalog 10-per-page on the book
@@ -1414,11 +1409,8 @@ final class BookImportService: Sendable {
     /// `NovelChapter`. Host-mismatch is silent; other errors log once
     /// and return nil so the caller falls through.
     private func registryRoutedBiqugeAPIChapter(_ link: ChapterLink) async throws -> NovelChapter? {
-#if !LINGYUE_INTERNAL
-        return nil
-#else
         do {
-            guard let source = try await SourceStack.live.registry.source(withID: "internal:biquge-api") else {
+            guard let source = try await SourceStack.live.registry.source(withID: "json-api:biquge-api") else {
                 return nil
             }
             let chapter = try await source.fetchChapter(url: link.url)
@@ -1445,7 +1437,6 @@ final class BookImportService: Sendable {
             ])
             return nil
         }
-#endif
     }
 
     private func isBiqugeAPISource(_ url: URL) -> Bool {
@@ -2160,6 +2151,14 @@ final class BookImportService: Sendable {
             return chineseNumber(chinese)
         }
 
+        // Some sites drop the 第 prefix for later chapters and write
+        // titles as "222章 后记" or "209章 迷雾中的世界". Anchor to the
+        // start so we don't catch numbers inside titles like "第一章
+        // 1章 vs 2章".
+        if let arabic = firstMatch(#"^\s*(\d+)\s*[章节節回卷]"#, in: title) {
+            return Int(arabic)
+        }
+
         return nil
     }
 
@@ -2169,6 +2168,25 @@ final class BookImportService: Sendable {
             "五": 5, "六": 6, "七": 7, "八": 8, "九": 9
         ]
         let units: [Character: Int] = ["十": 10, "百": 100, "千": 1_000, "万": 10_000]
+
+        // Some sites (e.g., daweixs.com) write chapter numbers ≥100 as
+        // positional digits like "一一零" (110) or "二零二四" (2024)
+        // instead of place-value "一百一十". Detect the absence of any
+        // unit token and parse digit-by-digit. Without this, "一一零"
+        // collapses to its last digit (0), every chapter ending in 零
+        // sorts to the same bucket, and the catalog imports in the wrong
+        // order.
+        let hasUnit = text.contains { units[$0] != nil }
+        if !hasUnit {
+            var value = 0
+            var sawToken = false
+            for char in text {
+                guard let digit = digits[char] else { return nil }
+                value = value * 10 + digit
+                sawToken = true
+            }
+            return sawToken ? value : nil
+        }
 
         var total = 0
         var section = 0

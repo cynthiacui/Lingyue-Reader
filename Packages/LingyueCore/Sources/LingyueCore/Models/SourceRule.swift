@@ -65,6 +65,25 @@ public struct SourceRule: Codable, Sendable, Hashable, Identifiable {
     public var catalog: CatalogStep
     public var chapter: ChapterStep
 
+    /// Routes the rule onto the generic JSON-API engine instead of the
+    /// HTML-selector engine. `nil` (the default for every hand-authored
+    /// or analyzer-produced rule) means "use `RuleBasedBookSource`" and
+    /// the engine consults `detection` / `detail` / `catalog` / `chapter`
+    /// the usual way. A non-nil value carries every site-specific
+    /// detail (endpoint templates, ID-extraction regexes, JSON paths,
+    /// body transforms, boilerplate fragments) — the engine's Swift
+    /// side is fully generic and contains no per-site URLs, which is
+    /// what lets the App Store target run a 笔趣阁-shaped or 5dxs-shaped
+    /// source after the user imports the JSON.
+    ///
+    /// The rule's step fields are still required by the schema when
+    /// `jsonAPI != nil`, but the JSON-API engine ignores them at fetch
+    /// time. Authors typically fill them with the same selectors a
+    /// detail-page HTML scrape would use, so the in-app browser's
+    /// detection step (which still runs against `detection`) keeps
+    /// recognizing the site.
+    public var jsonAPI: JSONAPIConfig?
+
     public init(
         id: UUID = UUID(),
         schemaVersion: Int = SourceRule.currentSchemaVersion,
@@ -78,7 +97,8 @@ public struct SourceRule: Codable, Sendable, Hashable, Identifiable {
         search: SearchStep? = nil,
         detail: DetailStep,
         catalog: CatalogStep,
-        chapter: ChapterStep
+        chapter: ChapterStep,
+        jsonAPI: JSONAPIConfig? = nil
     ) {
         self.id = id
         self.schemaVersion = schemaVersion
@@ -93,6 +113,7 @@ public struct SourceRule: Codable, Sendable, Hashable, Identifiable {
         self.detail = detail
         self.catalog = catalog
         self.chapter = chapter
+        self.jsonAPI = jsonAPI
     }
 
     /// Schema version this binary writes. Bump when a non-backwards-

@@ -42,8 +42,41 @@ public actor FileEditableSourceStore: EditableSourceStore {
             return []
         }
         let rules = try JSONDecoder().decode([SourceRule].self, from: data)
+        let (migrated, didMigrate) = Self.applyMigrations(to: rules)
+        if didMigrate {
+            try persist(migrated)
+            return migrated
+        }
         cache = rules
         return rules
+    }
+
+    /// One-shot rewrites for rules already on disk. Each migration matches
+    /// an exact stale value so we never touch a user's hand-edited copy,
+    /// and re-running the migration on already-migrated data is a no-op.
+    ///
+    /// Currently rewrites: the 笔趣阁 (json-api:biquge-api) search step's
+    /// `detailURLTemplate`, which used to synthesize `bqgl.cc/look/{id}/`
+    /// URLs. Those IDs are apiqu.cc's, not bqgl.cc's — every search-result
+    /// click landed on the wrong book or a 404. The new template points
+    /// at the bqg303.xyz SPA mirror, which shares apiqu's backend.
+    static func applyMigrations(to rules: [SourceRule]) -> ([SourceRule], Bool) {
+        let staleBiqugeTemplate = "https://www.bqgl.cc/look/{id}/"
+        let newBiqugeTemplate = "https://9b0.bqg303.xyz/#/book/{id}/"
+        var didMigrate = false
+        let migrated: [SourceRule] = rules.map { rule in
+            guard var jsonAPI = rule.jsonAPI,
+                  var search = jsonAPI.search,
+                  search.detailURLTemplate == staleBiqugeTemplate
+            else { return rule }
+            search.detailURLTemplate = newBiqugeTemplate
+            jsonAPI.search = search
+            didMigrate = true
+            var copy = rule
+            copy.jsonAPI = jsonAPI
+            return copy
+        }
+        return (migrated, didMigrate)
     }
 
     public func saveEditableSource(_ rule: SourceRule) async throws {

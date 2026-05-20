@@ -209,8 +209,9 @@ struct DiscoverySearchResultsView: View {
 }
 
 enum DiscoverySourceKind: Hashable {
-    /// Hardcoded site with a hand-written parser in this file. Registry routing is opt-in via
-    /// the `lingyue.useRegistryForDiscoverySearch` lab flag; legacy parser otherwise.
+    /// Hardcoded site with a hand-written parser in this file. Registry routing is
+    /// always on for `LINGYUE_INTERNAL` builds and off for App Store; legacy parser
+    /// owns the path when routing is off or when the registry returns empty/failed.
     case seeded
     /// User-created rule from `EditableSourceStore`. No legacy parser exists, so routing MUST
     /// go through `InternalSourceRegistry`; on failure return [] for that source.
@@ -462,12 +463,6 @@ enum DiscoverySourceCatalog {
             fixedParams: [DiscoveryRouteParam(key: "Submit", value: "")]
         ),
         DiscoverySourceSearchRoute(
-            sourceID: "笔趣阁小说",
-            endpoint: "https://m.bqgl.cc/user/search.html",
-            method: .get,
-            queryKey: "q"
-        ),
-        DiscoverySourceSearchRoute(
             sourceID: "宙斯小说",
             endpoint: "https://www.zhswx.com/list/{query}.html",
             method: .get
@@ -534,7 +529,12 @@ enum DiscoverySourceCatalog {
         DiscoverySource(name: "思兔閱讀", tagline: "繁體熱門在線書庫", homepageURLString: "https://sto9.com/", searchRoute: route(for: "思兔閱讀")),
         DiscoverySource(name: "就爱读小说", tagline: "各类网络文学作品齐全", homepageURLString: "https://www.5dxs.net/", searchRoute: route(for: "就爱读小说")),
         DiscoverySource(name: "同人圈", tagline: "各類同人小說齊全", homepageURLString: "https://tongrenquan.org/", searchRoute: route(for: "同人圈")),
-        DiscoverySource(name: "笔趣阁小说", tagline: "知名人气站点繁體版", homepageURLString: "https://m.bqgl.cc/", searchRoute: route(for: "笔趣阁小说")),
+        // 笔趣阁 routes via the registry (JSONAPIBookSource against apiqu.cc/apige.cc).
+        // The legacy `m.bqgl.cc/user/search.html` endpoint stopped returning useful
+        // payloads — desktop hits get a 1-byte anti-bot stub, mobile hits get `[]`.
+        // `.userRule` kind forces the registry path; the name must match the
+        // seeded rule's `displayName` so `registrySourcesByName[name]` resolves.
+        DiscoverySource(name: "笔趣阁", tagline: "知名人气站点繁體版", homepageURLString: "https://www.bqgl.cc/", kind: .userRule),
         DiscoverySource(name: "52书库", tagline: "快穿甜宠文小说书库", searchRoute: route(for: "52书库")),
         DiscoverySource(name: "努努书坊", tagline: "国内外各类作品，速度快", homepageURLString: "https://www.nunucom.com/", searchRoute: route(for: "努努书坊")),
         DiscoverySource(name: "宙斯小说", tagline: "各类热门小说，速度快", homepageURLString: "https://www.zhswx.com/", searchRoute: route(for: "宙斯小说")),
@@ -605,12 +605,16 @@ actor DiscoverySearchService {
     // changes require a relaunch to take effect on this path.
     private var cachedRegistrySourcesByName: [String: any BookSource]?
 
-    /// Lab flag mirroring `lingyue.useSourceRegistryForCatalog`. Internal-only toggle that
-    /// routes the Discovery search bar through `InternalSourceRegistry` for sources backed by
-    /// a seeded/editable rule. Off by default — legacy hand-written parsers still own the
-    /// search path for everyone else until the rule engine has shown parity on live sites.
+    /// Build-time gate for the rule-engine Discovery search route.
+    /// Internal builds always try `InternalSourceRegistry.searchableSources()`
+    /// first and fall through to legacy on empty/failed results; App Store
+    /// builds stay on the legacy hand-written parsers.
     fileprivate static var useRegistryForDiscoverySearch: Bool {
-        UserDefaults.standard.bool(forKey: "lingyue.useRegistryForDiscoverySearch")
+#if LINGYUE_INTERNAL
+        return true
+#else
+        return false
+#endif
     }
 
     private init() {
@@ -832,7 +836,10 @@ actor DiscoverySearchService {
         }
         var sources: [DiscoverySource] = []
         for rule in rules {
-            guard rule.search != nil else { continue }
+            // Accept rules that ship either an HTML `search` block or a
+            // `jsonAPI.search` block — both are valid fan-out paths. Skip
+            // only when neither is configured (e.g., chapter-only mirror).
+            guard rule.search != nil || rule.jsonAPI?.search != nil else { continue }
             let enabled = (try? await stack.preferenceStore.isEnabled(rule.id)) ?? true
             guard enabled else { continue }
             sources.append(DiscoverySource(

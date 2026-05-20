@@ -1,5 +1,8 @@
 import SwiftUI
 import LingyueCore
+#if LINGYUE_INTERNAL
+import LingyueInternalSources
+#endif
 
 /// Phase 3.3 — Review screen. Lands after `AddSourceURLView` and shows
 /// the analyzer's per-block confidence as the user's primary mental
@@ -51,6 +54,16 @@ struct SourceReviewView: View {
     @State private var canDelete = false
     @State private var pendingDelete = false
     @State private var isDeleting = false
+    /// True when the rule lives in `editableStore`. Drives `canDelete`
+    /// (the delete button only surfaces for editable rows).
+    @State private var isEditableRule = false
+    /// True when the rule's id matches a bundled (seeded) rule. The
+    /// bundle vouches for the rule's authored capabilities, so the
+    /// Review pills trust those claims rather than reporting 需要检查
+    /// for every block. This holds even if the user imported the same
+    /// rule into `editableStore` via JSON import — the curated bundle
+    /// is still the source of truth for whether the rule should work.
+    @State private var isSeededOriginal = false
 
     /// Wrapper for `navigationDestination(item:)`. Carries both the
     /// rule snapshot the editor opens against and the deep-link target
@@ -171,12 +184,16 @@ struct SourceReviewView: View {
     }
 
     private var detectionSection: some View {
-        Section {
-            if report.detectedHosts.isEmpty {
+        // Row-tap entries come with an empty AnalysisReport — the analyzer
+        // only runs on Add-via-URL. Fall back to the rule's persisted
+        // hostPatterns so seeded sources don't display "未能识别域名".
+        let hosts = report.detectedHosts.isEmpty ? draft.detection.hostPatterns : report.detectedHosts
+        return Section {
+            if hosts.isEmpty {
                 Text("未能识别域名")
                     .foregroundStyle(.secondary)
             } else {
-                ForEach(report.detectedHosts, id: \.self) { host in
+                ForEach(hosts, id: \.self) { host in
                     HStack {
                         Image(systemName: "globe")
                             .foregroundStyle(.secondary)
@@ -198,8 +215,15 @@ struct SourceReviewView: View {
     }
 
     private var blocksSection: some View {
-        Section {
-            ForEach(SourceBlock.allCases, id: \.self) { block in
+        // Hide the 搜索 row when the rule has no search step — biquge,
+        // 5dxs and similar browser-import-only sources don't search, so
+        // surfacing 需要检查 there reads as "broken" when there's nothing
+        // to test in the first place.
+        let visibleBlocks = SourceBlock.allCases.filter { block in
+            block != .search || draft.search != nil
+        }
+        return Section {
+            ForEach(visibleBlocks, id: \.self) { block in
                 blockRow(block)
             }
         } header: {
@@ -350,7 +374,32 @@ struct SourceReviewView: View {
         if let recorded = blockStatuses[block], recorded != .notRun {
             return recorded
         }
+        // Seeded rules ship through the curated bundle — the per-block
+        // pills should trust their authored capabilities rather than
+        // demanding a live test for blocks the bundle vouches for.
+        // Without this every seeded source opens with all rows at 需要检查
+        // because the validation store has no records for bundle rules.
+        // Also covers the case where the user has an editable copy of a
+        // bundled rule (e.g., imported via JSON) — the bundle still
+        // vouches for it.
+        if isSeededOriginal, let trusted = seededTrustedStatus(for: block) {
+            return trusted
+        }
         return analyzerSoftStatus(for: block)
+    }
+
+    /// Returns `.passed` when the bundle's authored capabilities vouch
+    /// for the block — search relies on `supportsSearch`; detail / catalog
+    /// / chapter ride on `supportsBrowserImport` (the minimum browse
+    /// bar). Returns nil when the capability is off, in which case the
+    /// caller falls through to the analyzer soft-status path.
+    private func seededTrustedStatus(for block: SourceBlock) -> BlockTestStatus? {
+        switch block {
+        case .search:
+            return draft.capabilities.supportsSearch ? .passed : nil
+        case .detail, .catalog, .chapter:
+            return draft.capabilities.supportsBrowserImport ? .passed : nil
+        }
     }
 
     private func analyzerSoftStatus(for block: SourceBlock) -> BlockTestStatus {
@@ -388,7 +437,19 @@ struct SourceReviewView: View {
             // the next refresh, and a freshly-analyzed-but-not-saved
             // draft isn't on disk yet so there's nothing to remove.
             let editable = try await sourceStack.editableStore.loadEditableSources()
-            canDelete = editable.contains { $0.id == draft.id }
+            let editableHit = editable.contains { $0.id == draft.id }
+            canDelete = editableHit
+            isEditableRule = editableHit
+            // Compute seeded-original membership from the bundled rule
+            // list. Used by `effectiveStatus` to trust authored
+            // capabilities for bundle rules regardless of whether an
+            // editable copy also exists.
+#if LINGYUE_INTERNAL
+            let bundledIDs = Set(LingyueInternalSources.bundledRules().map(\.id))
+            isSeededOriginal = bundledIDs.contains(draft.id)
+#else
+            isSeededOriginal = false
+#endif
         } catch {
             saveError = String(describing: error)
         }

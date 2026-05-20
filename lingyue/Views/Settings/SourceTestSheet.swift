@@ -127,7 +127,10 @@ struct SourceTestSheet: View {
     private func run() async {
         isRunning = true
         outcome = nil
-        let source = RuleBasedBookSource(rule: rule, loader: sourceStack.loader)
+        // Route through the rule's own factory so jsonAPI rules reach
+        // `JSONAPIBookSource`. The HTML scraper would hit the API
+        // endpoint and parse JSON as HTML, which fails every block.
+        let source = rule.makeBookSource(loader: sourceStack.loader)
         let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
         let result: Outcome
         do {

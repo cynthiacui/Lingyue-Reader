@@ -8,8 +8,8 @@
     "showInSearchBar": true,
     "supportsBrowserImport": true,
     "requiresWebRender": false,
-    "maxConcurrentRequests": 3,
-    "requestIntervalMillis": 0
+    "maxConcurrentRequests": 1,
+    "requestIntervalMillis": 250
   },
   "enginePerStep": {
     "search": "http",
@@ -21,8 +21,8 @@
   "defaultHeaders": {},
   "detection": {
     "hostPatterns": ["xsw.tw", "www.xsw.tw", "m.xsw.tw"],
-    "pathPattern": "^/(?:book/)?\\d+(?:/|\\.html)?$",
-    "confirmSelector": "h1, div.title h2"
+    "pathPattern": "^/(?:book/)?\\d+(?:/(?:page-\\d+\\.html)?|\\.html)?$",
+    "confirmSelector": "div.block_txt2 h2, div.liebiao, h1.f20h, h1, div.title h2"
   },
   "search": {
     "method": "get",
@@ -36,7 +36,7 @@
       "selector": "div.title h2 a",
       "attribute": "href",
       "transforms": [
-        { "regexReplace": { "pattern": "^/book/(\\d+)\\.html$", "replacement": "/$1/" } },
+        { "regexReplace": { "pattern": "^/book/(\\d+)\\.html$", "replacement": "https://m.xsw.tw/$1/" } },
         { "absoluteURL": {} }
       ]
     },
@@ -58,33 +58,48 @@
   },
   "detail": {
     "titleField": {
-      "selector": "h1, div.title h2",
-      "transforms": [{ "trim": {} }]
+      "selector": "div.block_txt2 h2, h1.f20h, h1",
+      "transforms": [
+        { "regexReplace": { "pattern": "作者(?:：|:).*$", "replacement": "" } },
+        { "trim": {} }
+      ]
     },
     "catalogURLField": {
-      "selector": "link[rel=canonical]",
-      "attribute": "href",
-      "transforms": [{ "absoluteURL": {} }]
+      "transforms": [
+        { "useBaseURL": {} },
+        { "regexReplace": { "pattern": "^https?://[^/]+/(?:book/)?(\\d+)(?:\\.html)?/?$", "replacement": "https://www.xsw.tw/book/$1/" } }
+      ]
     }
   },
   "catalog": {
-    "chaptersSelector": "ul.read li a, div.chapter-list a",
+    "chaptersSelector": "div.liebiao > ul > li > a",
     "titleField": {
-      "transforms": [{ "trim": {} }]
+      "transforms": [
+        { "stripHTML": {} },
+        { "collapseWhitespace": {} },
+        { "trim": {} }
+      ]
     },
     "urlField": {
       "attribute": "href",
-      "transforms": [{ "absoluteURL": {} }]
+      "transforms": [
+        { "absoluteURL": {} },
+        { "regexReplace": { "pattern": "^https?://[^/]+/book/(\\d+)/(\\d+)\\.html$", "replacement": "https://m.xsw.tw/$1/$2.html" } }
+      ]
     },
     "maxPages": 1
   },
   "chapter": {
     "titleField": {
-      "selector": "h1",
-      "transforms": [{ "trim": {} }]
+      "selector": "div.nr_title, #nr_title",
+      "transforms": [
+        { "stripHTML": {} },
+        { "collapseWhitespace": {} },
+        { "trim": {} }
+      ]
     },
     "bodyField": {
-      "selector": "div#content, div.content",
+      "selector": "div#nr1",
       "attribute": "html",
       "transforms": [
         { "brToNewline": {} },

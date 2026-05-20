@@ -137,12 +137,15 @@ public struct RuleBasedBookSource: BookSource {
         // ship a pathPattern, so this branch only catches the
         // analyzer-built case.
         if det.pathPattern == nil && det.confirmSelector == nil {
-            let path = page.finalURL.path
+            let path = Self.routePath(from: page.finalURL)
             if path.isEmpty || path == "/" { return nil }
         }
         var confidence = 0.4
         if let pattern = det.pathPattern {
-            let path = page.finalURL.path
+            // SPA mirrors (e.g. bqg303.xyz) keep the route in the URL
+            // fragment, so `url.path` is just "/". `routePath` falls back
+            // to the fragment in that case; normal URLs are unaffected.
+            let path = Self.routePath(from: page.finalURL)
             let regex = try? NSRegularExpression(pattern: pattern, options: [])
             let range = NSRange(path.startIndex..., in: path)
             guard regex?.firstMatch(in: path, options: [], range: range) != nil else {
@@ -207,10 +210,31 @@ public struct RuleBasedBookSource: BookSource {
         for candidate in candidates {
             let trimmed = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else { continue }
-            if trimmed.caseInsensitiveCompare(rule.name) == .orderedSame { continue }
+            if Self.looksLikeSiteBanner(trimmed, siteName: rule.name) { continue }
             return trimmed
         }
         return nil
+    }
+
+    /// Heuristic: does `candidate` look like the site's banner rather than
+    /// a book title? Used to skip h1 candidates that echo the rule's
+    /// display name, including the common tagline shape
+    /// `<siteName><separator><tagline>` (e.g., `笔趣阁-免费小说阅读`).
+    /// SPA mirrors render that as the visible h1 after their JS bootstraps;
+    /// without this check the engine accepts it as the "book title",
+    /// poisoning the import banner and downstream catalog title.
+    static func looksLikeSiteBanner(_ candidate: String, siteName: String) -> Bool {
+        let normalized = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
+        let site = siteName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !site.isEmpty else { return false }
+        if normalized.caseInsensitiveCompare(site) == .orderedSame { return true }
+        guard normalized.lowercased().hasPrefix(site.lowercased()) else { return false }
+        let suffix = normalized.dropFirst(site.count)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let first = suffix.first else { return false }
+        // Common title separators in the wild: ASCII hyphen, en/em dash,
+        // pipe, colon, full-width variants.
+        return "-–—|:_·~：｜".contains(first)
     }
 
     private func match(glob: String, host: String) -> Bool {
@@ -219,6 +243,15 @@ public struct RuleBasedBookSource: BookSource {
         if glob.hasPrefix("*.") {
             let suffix = glob.dropFirst(2)
             return host == suffix || host.hasSuffix("." + suffix)
+        }
+        // Substring glob: `*foo*` matches any host containing `foo`. Lets
+        // rules cover a constellation of numbered mirrors (笔趣阁's
+        // bqg99/bqg128/bqgl/…) with one pattern instead of enumerating
+        // every variant. Bare `*` or empty interiors fall through to
+        // the equality branches below — never match-all.
+        if glob.count > 2, glob.hasPrefix("*"), glob.hasSuffix("*") {
+            let needle = String(glob.dropFirst().dropLast())
+            if !needle.isEmpty { return host.contains(needle) }
         }
         // `SourceAnalyzer.uniqueHosts` strips `www.` from stored patterns —
         // it treats `www.` as a no-op subdomain. Mirror that here so a
@@ -438,10 +471,15 @@ public struct RuleBasedBookSource: BookSource {
         }
 
         let joined = bodyPieces.joined(separator: "\n\n")
-        let paragraphs = joined
+        let raw = joined
             .split(omittingEmptySubsequences: true, whereSeparator: { $0.isNewline })
             .map { String($0).trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
+
+        let paragraphs = ChapterBodySanitizer.sanitize(
+            paragraphs: raw,
+            title: titleSeed
+        )
 
         return ChapterContent(
             title: titleSeed ?? "",
@@ -501,9 +539,12 @@ public struct RuleBasedBookSource: BookSource {
         chapterURL: URL,
         catalogURL: URL
     ) -> Bool {
-        // Different host → not a chapter of this book.
+        // Different site → not a chapter of this book. Compare registrable
+        // domain rather than exact host so rules can mix subdomains —
+        // common when desktop catalog (www.xsw.tw) links chapters that
+        // only render server-side on a mobile mirror (m.xsw.tw).
         if let chapHost = chapterURL.host, let catHost = catalogURL.host,
-           chapHost.caseInsensitiveCompare(catHost) != .orderedSame {
+           !Self.sameSite(chapHost, catHost) {
             return true
         }
         let chapPath = chapterURL.path
@@ -540,6 +581,18 @@ public struct RuleBasedBookSource: BookSource {
                 let lower = stem.lowercased()
                 guard !lower.isEmpty, !generic.contains(lower) else { continue }
                 out.insert(lower)
+                // Several legacy CMS templates encode chapter URLs as
+                // `<bookID>_<chapterID>.html` rather than nesting the
+                // chapter under the book directory (e.g. zhswx's
+                // `/read/58860_19603916.html` against `/chapter/58860.html`).
+                // Splitting on `_` lets the bookID overlap with the
+                // catalog's segments so the path-overlap check doesn't
+                // false-positive every real chapter as a nav link.
+                for part in lower.split(whereSeparator: { $0 == "_" || $0 == "-" }) {
+                    let str = String(part)
+                    guard !str.isEmpty, !generic.contains(str) else { continue }
+                    out.insert(str)
+                }
             }
             return out
         }
@@ -549,6 +602,32 @@ public struct RuleBasedBookSource: BookSource {
             return true
         }
         return false
+    }
+
+    /// SPA-style mirrors (e.g. `9b0.bqg303.xyz/#/book/<id>/`) keep the
+    /// route in the URL fragment; everyone else uses `url.path`. Falls
+    /// back to the fragment only when path is empty/`"/"`, so normal URLs
+    /// are untouched. Mirrors the helper in `JSONAPIBookSource`.
+    static func routePath(from url: URL) -> String {
+        let rawPath = url.path
+        let rawFragment = url.fragment(percentEncoded: false) ?? ""
+        guard (rawPath.isEmpty || rawPath == "/"), !rawFragment.isEmpty else {
+            return rawPath
+        }
+        return rawFragment.hasPrefix("/") ? rawFragment : "/" + rawFragment
+    }
+
+    /// Treat two hosts as the same site when they share the last two
+    /// DNS labels. Lets a rule mix `www.xsw.tw` and `m.xsw.tw` without
+    /// the nav-link filter rejecting cross-subdomain chapter URLs. Not
+    /// PSL-aware, but the catalog/chapter case only needs to recognize
+    /// sibling subdomains of a single book site.
+    static func sameSite(_ a: String, _ b: String) -> Bool {
+        if a.caseInsensitiveCompare(b) == .orderedSame { return true }
+        let aLabels = a.lowercased().split(separator: ".")
+        let bLabels = b.lowercased().split(separator: ".")
+        guard aLabels.count >= 2, bLabels.count >= 2 else { return false }
+        return aLabels.suffix(2) == bLabels.suffix(2)
     }
 
     /// Title-only blocklist of well-known navigation labels. Both
