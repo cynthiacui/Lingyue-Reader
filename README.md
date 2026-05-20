@@ -14,7 +14,10 @@ iOS 17+ · SwiftUI · 单窗口应用 · 包名 `com.lingyue.reader`
 
 ### Library / 书架
 
-| ![Library](docs/screenshots/library.png) | ![Download manager](docs/screenshots/download-manager.png) |
+<p>
+  <img src="docs/screenshots/library.png" alt="Library" width="280">
+  <img src="docs/screenshots/download-manager.png" alt="Download manager" width="280">
+</p>
 
 The Library tab uses a wallet-stacked categorized layout: each shelf collapses to a stack of cover spines, tap to fan out, tap again to collapse. A 最近阅读 strip is pinned at the top with the most-recently-opened books and their progress, and a navigation-drawer search box matches across every imported book by title or author. Mail-style swipes expose 下载 and 清理缓存 on the left, 删除 on the right; long-press a book to assign it to a category. The toolbar's download button opens a 下载管理 sheet that lists every active or paused chapter download.
 
@@ -22,7 +25,10 @@ The Library tab uses a wallet-stacked categorized layout: each shelf collapses t
 
 ### Discovery / 发现
 
-![Discovery sources](docs/screenshots/discovery.png) ![Aggregated search results](docs/screenshots/discovery-results.png)
+<p>
+  <img src="docs/screenshots/discovery.png" alt="Discovery sources" width="280">
+  <img src="docs/screenshots/discovery-results.png" alt="Aggregated search results" width="280">
+</p>
 
 Discovery aggregates **16 source sites** behind a single search box: results stream in as each source replies, and a single book that exists on multiple sources is grouped under one row with the matched sources listed as chips. A 历史记录 strip remembers recent queries for one-tap re-run, and tapping any source tile opens its homepage in the in-app browser. Sources include 破万卷小说, 大尾笔趣阁, ESJ轻小说, 思兔閱讀, 就爱读小说, 同人圈, 笔趣阁小说, 52书库, 努努书坊, 宙斯小说, 同人小说网, 台灣小說網, 黄金屋中文, 半夏小说, 52书库2, and 无忧书城.
 
@@ -42,9 +48,10 @@ Open any source homepage in the built-in browser; it auto-detects book pages and
 
 ### Settings / 设置
 
-| Reader preferences | App theme & storage |
-| --- | --- |
-| ![Settings — reader preferences](docs/screenshots/settings-reader.png) | ![Settings — app theme and storage](docs/screenshots/settings-theme-storage.png) |
+<p>
+  <img src="docs/screenshots/settings-reader.png" alt="Settings — reader preferences" width="280">
+  <img src="docs/screenshots/settings-theme-storage.png" alt="Settings — app theme and storage" width="280">
+</p>
 
 Settings opens with a live typography preview rendering a sample passage in the current 字号 / 行距 / 字体 / 翻页效果 / 背景颜色, plus a one-line summary so each change is visible without leaving the screen. Below the preview, three sections cover **阅读偏好** (font, size, line spacing, page transition, background color, follow-system-dark, traditional Chinese, auto-scroll), **外观主题** (the five app-wide themes — 纸张, 樱粉, 叶绿, 水墨, 星夜 — with their own follow-system-dark toggle), and **离线与缓存** (auto-preload upcoming chapters, total download size, and a bulk-clear button).
 
