@@ -8,6 +8,7 @@ struct SettingsView: View {
     @StateObject private var systemAppearance = SystemAppearance()
     @EnvironmentObject private var themeManager: AppThemeManager
     @EnvironmentObject private var downloadManager: BookDownloadManager
+    @EnvironmentObject private var libraryStore: LibraryStore
 
     @AppStorage("reader.fontSize") private var fontSize = 18.0
     @AppStorage("reader.lineSpacing") private var lineSpacing = 8.0
@@ -98,7 +99,8 @@ struct SettingsView: View {
             ThemeBackgroundView()
 
             List {
-                snapshotSection
+                heroSection
+                metricsSection
                 appearanceSection
                 dataSection
                 aboutSection
@@ -122,34 +124,122 @@ struct SettingsView: View {
 
     // MARK: - Sections
 
-    /// 阅读快照 — single nav link to the same destination as the bottom 统计 tab.
-    /// Kept intentionally light: the deep view lives in the tab, this row is just
-    /// the entry point from inside 我.
-    private var snapshotSection: some View {
+    /// 我 hero — bookmark-shaped reading-identity card. Extends the wallet-stacked
+    /// metaphor from 书架 into 我 by carrying the user's reading streak, this-week
+    /// minutes, and the cover/progress of the book they're currently in. The whole
+    /// card is the tap target that pushes `ReadingStatsView`, so it doubles as the
+    /// snapshot row that previously lived here.
+    ///
+    /// Rendered edge-to-edge with a transparent list row background so the card's
+    /// own warm-paper gradient reads cleanly against the chrome theme.
+    private var heroSection: some View {
         Section {
             NavigationLink {
                 ReadingStatsView()
             } label: {
-                HStack(spacing: 14) {
-                    Image(systemName: "chart.bar.xaxis")
-                        .font(.title2)
-                        .foregroundStyle(theme.accent)
-                        .frame(width: 30, alignment: .center)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("阅读数据")
-                            .font(.headline)
-                            .foregroundStyle(theme.primaryText)
-                        Text("查看每日时长、本周节奏与连读天数")
-                            .font(.caption)
-                            .foregroundStyle(theme.secondaryText)
-                    }
-                }
-                .padding(.vertical, 4)
+                ReadingIdentityCard(
+                    streak: currentStreak,
+                    weeklyMinutes: weeklyMinutes,
+                    currentBook: mostRecentlyOpenedBook
+                )
             }
-        } header: {
-            Text("阅读快照")
+            .buttonStyle(.plain)
+            .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+            .listRowBackground(Color.clear)
+            .listRowSeparator(.hidden)
         }
-        .listRowBackground(theme.cardBackground)
+    }
+
+    /// Three-up mini metrics under the hero: 已读 / 正在读 / 已读字数. Reads from the
+    /// same `readingStats.books` ledger the 统计 tab uses, so the numbers stay in
+    /// sync without re-deriving from raw events.
+    private var metricsSection: some View {
+        Section {
+            HStack(spacing: 10) {
+                MetricChip(value: booksFinishedLabel, label: "已读")
+                MetricChip(value: booksInProgressLabel, label: "正在读")
+                MetricChip(value: totalCharactersLabel, label: "已读字数")
+            }
+            .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 16, trailing: 16))
+            .listRowBackground(Color.clear)
+            .listRowSeparator(.hidden)
+        }
+    }
+
+    // MARK: - Hero data
+
+    /// Most recently opened novel across all categories — drives the "current book"
+    /// row inside the hero card. Returns `nil` for a freshly installed library so
+    /// the hero can fall back to a "尚未开卷" empty state.
+    private var mostRecentlyOpenedBook: Novel? {
+        libraryStore.allNovels
+            .filter { $0.lastOpenedAt != nil }
+            .max(by: { ($0.lastOpenedAt ?? .distantPast) < ($1.lastOpenedAt ?? .distantPast) })
+    }
+
+    /// Consecutive reading-streak length counted back from today. Mirrors the logic
+    /// in `ReadingStatsView.currentStreak(days:)` so the badge inside the hero card
+    /// matches the streak shown on the 统计 tab.
+    private var currentStreak: Int {
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        let activeDays = Set(libraryStore.readingStats.events.map { calendar.startOfDay(for: $0.timestamp) })
+        var streak = 0
+        var cursor = today
+        while activeDays.contains(cursor) {
+            streak += 1
+            guard let prev = calendar.date(byAdding: .day, value: -1, to: cursor) else { break }
+            cursor = prev
+        }
+        // If today is empty but yesterday was active, fall through with the
+        // running streak counted from yesterday so the badge doesn't blink to 0
+        // first thing each morning.
+        if streak == 0, let yesterday = calendar.date(byAdding: .day, value: -1, to: today) {
+            cursor = yesterday
+            while activeDays.contains(cursor) {
+                streak += 1
+                guard let prev = calendar.date(byAdding: .day, value: -1, to: cursor) else { break }
+                cursor = prev
+            }
+        }
+        return streak
+    }
+
+    /// Reading minutes accumulated within the last 7 days (rolling, not calendar
+    /// week) — keeps the hero responsive without making "本周" reset abruptly at
+    /// midnight on Sunday.
+    private var weeklyMinutes: Int {
+        let cutoff = Date().addingTimeInterval(-7 * 24 * 60 * 60)
+        let seconds = libraryStore.readingStats.events
+            .filter { $0.timestamp >= cutoff }
+            .reduce(0.0) { $0 + $1.durationSeconds }
+        return max(Int(seconds / 60), 0)
+    }
+
+    private var booksFinishedLabel: String {
+        let count = libraryStore.readingStats.books.filter { !$0.isDeleted && $0.currentProgress >= 0.99 }.count
+        return "\(count)"
+    }
+
+    private var booksInProgressLabel: String {
+        let count = libraryStore.readingStats.books.filter {
+            !$0.isDeleted && $0.currentProgress > 0 && $0.currentProgress < 0.99
+        }.count
+        return "\(count)"
+    }
+
+    /// Total characters read across the entire ledger, condensed into `万/亿` units
+    /// so the chip never overflows. Mirrors the format used elsewhere in 统计.
+    private var totalCharactersLabel: String {
+        let total = libraryStore.readingStats.events.reduce(0) { $0 + $1.characterCount }
+        if total < 10_000 { return "\(total)" }
+        if total < 100_000_000 {
+            let wan = Double(total) / 10_000
+            if wan < 10 { return String(format: "%.1f万", wan) }
+            return "\(Int(wan.rounded()))万"
+        }
+        let yi = Double(total) / 100_000_000
+        return String(format: "%.1f亿", yi)
     }
 
     private var appearanceSection: some View {
@@ -716,5 +806,262 @@ private struct SettingsPreviewParagraph: UIViewRepresentable {
             .foregroundColor: color,
             .paragraphStyle: paragraphStyle
         ]
+    }
+}
+
+// MARK: - 我 hero
+
+/// Bookmark-card hero shown at the top of the 我 tab. Carries the user's reading
+/// streak, this-week minutes, and a thumbnail + progress bar for the most recently
+/// opened novel. The whole card is wrapped in a `NavigationLink` by the parent so
+/// tapping anywhere pushes `ReadingStatsView`.
+private struct ReadingIdentityCard: View {
+    @Environment(\.appTheme) private var theme
+    @AppStorage("reader.usesTraditionalChinese") private var usesTraditionalChinese = false
+
+    let streak: Int
+    let weeklyMinutes: Int
+    let currentBook: Novel?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            headerRow
+            streakRow
+                .padding(.top, 16)
+            divider
+                .padding(.top, 16)
+            currentBookRow
+                .padding(.top, 12)
+        }
+        .padding(.horizontal, 18)
+        .padding(.top, 16)
+        .padding(.bottom, 16)
+        .background(
+            LinearGradient(
+                colors: theme.heroGradientStops,
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+        )
+        .overlay(
+            // Subtle 1-pt inner ring in the seal color at low opacity — gives the
+            // card a "stamped document" edge without competing with the seal badge.
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(theme.seal.opacity(0.18), lineWidth: 0.5)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .shadow(color: theme.cardShadow.opacity(1.4), radius: 14, x: 0, y: 8)
+    }
+
+    private var headerRow: some View {
+        HStack(alignment: .top) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("READING JOURNAL")
+                    .font(.system(size: 10, weight: .semibold))
+                    .tracking(3.5)
+                    .foregroundStyle(theme.seal.opacity(0.85))
+                Text(lunarLikeDateString)
+                    .font(.system(size: 13, weight: .regular, design: .serif))
+                    .foregroundStyle(cardSecondaryText)
+            }
+            Spacer()
+            sealBadge
+        }
+    }
+
+    /// Square 印章-style badge. Rendered as a tilted red square with 灵阅 inside —
+    /// matches the visual mark used on the README hero and the Library wallet card.
+    private var sealBadge: some View {
+        Text("灵阅")
+            .font(.system(size: 13, weight: .bold, design: .serif))
+            .foregroundStyle(Color(red: 0.97, green: 0.94, blue: 0.86))
+            .frame(width: 42, height: 42)
+            .background(theme.seal)
+            .overlay(
+                RoundedRectangle(cornerRadius: 4, style: .continuous)
+                    .inset(by: 3)
+                    .stroke(Color(red: 0.97, green: 0.94, blue: 0.86).opacity(0.35), lineWidth: 0.8)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+            .rotationEffect(.degrees(2))
+            .shadow(color: theme.seal.opacity(0.30), radius: 4, x: 0, y: 2)
+    }
+
+    private var streakRow: some View {
+        HStack(alignment: .lastTextBaseline, spacing: 12) {
+            Text("\(streak)")
+                .font(.system(size: 56, weight: .bold, design: .serif))
+                .foregroundStyle(cardPrimaryText)
+                .monospacedDigit()
+                .lineLimit(1)
+                .minimumScaleFactor(0.6)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(streakTitle)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(cardPrimaryText)
+                Text(weeklyMinutesText)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(cardSecondaryText)
+            }
+            Spacer()
+        }
+    }
+
+    private var divider: some View {
+        Rectangle()
+            .fill(theme.seal.opacity(0.30))
+            .frame(height: 0.5)
+    }
+
+    @ViewBuilder
+    private var currentBookRow: some View {
+        if let book = currentBook {
+            HStack(spacing: 12) {
+                miniCover(for: book)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(displayed(book.title))
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(cardPrimaryText)
+                        .lineLimit(1)
+                    Text(progressLine(for: book))
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(cardSecondaryText)
+                    progressBar(progress: book.progress)
+                        .padding(.top, 4)
+                }
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(cardSecondaryText.opacity(0.7))
+            }
+        } else {
+            HStack(spacing: 12) {
+                RoundedRectangle(cornerRadius: 3, style: .continuous)
+                    .fill(cardSecondaryText.opacity(0.15))
+                    .frame(width: 32, height: 44)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("尚未开卷")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(cardPrimaryText)
+                    Text("打开书架，挑一本开始阅读")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(cardSecondaryText)
+                }
+                Spacer()
+            }
+        }
+    }
+
+    private func miniCover(for book: Novel) -> some View {
+        ZStack {
+            LinearGradient(
+                colors: [book.coverColor.opacity(0.96), book.coverColor.opacity(0.62)],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            Text(displayed(book.title))
+                .font(.system(size: 8, weight: .semibold, design: .serif))
+                .foregroundStyle(.white)
+                .lineLimit(3)
+                .minimumScaleFactor(0.7)
+                .padding(.horizontal, 3)
+        }
+        .frame(width: 32, height: 44)
+        .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 3, style: .continuous)
+                .stroke(.white.opacity(0.18), lineWidth: 0.6)
+        )
+        .shadow(color: Color.black.opacity(0.20), radius: 3, x: 0, y: 1)
+    }
+
+    private func progressBar(progress: Double) -> some View {
+        GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                Capsule()
+                    .fill(theme.seal.opacity(0.10))
+                Capsule()
+                    .fill(theme.seal)
+                    .frame(width: max(0, min(1, progress)) * geo.size.width)
+            }
+        }
+        .frame(height: 3)
+    }
+
+    // MARK: card typography helpers
+
+    /// Hero text reads against the cream gradient on light themes and against the
+    /// deep slate gradient on starryNight; route both through the theme palette so
+    /// adding a future dark theme doesn't require touching this view.
+    private var cardPrimaryText: Color {
+        theme == .starryNight ? theme.primaryText : Color(red: 0.13, green: 0.10, blue: 0.07)
+    }
+
+    private var cardSecondaryText: Color {
+        theme == .starryNight ? theme.secondaryText : Color(red: 0.42, green: 0.35, blue: 0.27)
+    }
+
+    private var streakTitle: String {
+        streak > 0 ? "连读 \(streak) 天" : "新的一卷"
+    }
+
+    private var weeklyMinutesText: String {
+        if weeklyMinutes <= 0 { return "本周 0 分钟" }
+        if weeklyMinutes < 60 { return "本周 \(weeklyMinutes) 分钟" }
+        let hours = weeklyMinutes / 60
+        let mins = weeklyMinutes % 60
+        if mins == 0 { return "本周 \(hours) 小时" }
+        return "本周 \(hours) 小时 \(mins) 分"
+    }
+
+    private func progressLine(for book: Novel) -> String {
+        let pct = Int((book.progress * 100).rounded())
+        let chapter = book.lastChapter.isEmpty ? "尚未开始" : book.lastChapter
+        if pct <= 0 { return chapter }
+        return "\(chapter) · 已读 \(pct)%"
+    }
+
+    /// Friendly date in the Chinese chrome the rest of the chrome uses — e.g.
+    /// "五月二十日 · 周三". We keep it civil/Gregorian rather than running an actual
+    /// lunar calendar conversion so the line stays low-cost to render and matches
+    /// the date format users already see in 统计.
+    private var lunarLikeDateString: String {
+        let now = Date()
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.dateFormat = "M月d日 · EEEE"
+        return formatter.string(from: now)
+    }
+
+    private func displayed(_ text: String) -> String {
+        ChineseTextConverter.display(text, usesTraditionalChinese: usesTraditionalChinese)
+    }
+}
+
+/// Three-up mini metric chip used in the row directly under the hero card.
+/// Reuses the chrome theme's card surface so it visually anchors to the rest of
+/// the list (vs the hero's standalone warm-paper gradient).
+private struct MetricChip: View {
+    @Environment(\.appTheme) private var theme
+
+    let value: String
+    let label: String
+
+    var body: some View {
+        VStack(spacing: 2) {
+            Text(value)
+                .font(.system(size: 20, weight: .semibold, design: .serif))
+                .foregroundStyle(theme.primaryText)
+                .lineLimit(1)
+                .minimumScaleFactor(0.6)
+            Text(label)
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(theme.secondaryText)
+                .tracking(0.5)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 12)
+        .background(theme.cardBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .shadow(color: theme.cardShadow, radius: 6, x: 0, y: 3)
     }
 }

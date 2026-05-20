@@ -137,6 +137,36 @@ enum AppTheme: String, CaseIterable, Identifiable, Hashable {
         }
     }
 
+    /// Classical 印章-red used for the 我 hero card's seal badge and streak emphasis.
+    /// Dark theme swaps to the gold accent so the seal still reads warm rather than
+    /// glaring red against the deep night sky.
+    var seal: Color {
+        switch self {
+        case .paperGreen, .pink, .leafGreen, .ink:
+            return Color(red: 0.60, green: 0.24, blue: 0.18)
+        case .starryNight:
+            return accent
+        }
+    }
+
+    /// Top → bottom stops for the 我 hero card surface. A warm rice-paper gradient on
+    /// every light theme (the card is meant to feel like an actual bookmark/library
+    /// card, not a re-skinned chrome surface), and a deep slate band for night mode.
+    var heroGradientStops: [Color] {
+        switch self {
+        case .starryNight:
+            return [
+                Color(red: 0.14, green: 0.16, blue: 0.22),
+                Color(red: 0.10, green: 0.12, blue: 0.17)
+            ]
+        case .paperGreen, .pink, .leafGreen, .ink:
+            return [
+                Color(red: 0.973, green: 0.949, blue: 0.871),
+                Color(red: 0.945, green: 0.910, blue: 0.800)
+            ]
+        }
+    }
+
     /// Primary copy: titles, body text in chrome.
     var primaryText: Color {
         switch self {
