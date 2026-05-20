@@ -846,7 +846,9 @@ struct AboutSettingsView: View {
                     diagnosticsNavRow
 #endif
                     aboutVersionRow
+#if !LINGYUE_INTERNAL
                     usageGuideRow
+#endif
                     githubLinkRow
                 }
                 .listRowBackground(theme.cardBackground)
@@ -879,6 +881,7 @@ struct AboutSettingsView: View {
         }
     }
 
+#if !LINGYUE_INTERNAL
     private var usageGuideRow: some View {
         Link(destination: URL(string: "https://github.com/cynthiacui/Lingyue-Reader#使用指南")!) {
             HStack {
@@ -892,6 +895,7 @@ struct AboutSettingsView: View {
             }
         }
     }
+#endif
 
     private var githubLinkRow: some View {
         Link(destination: URL(string: "https://github.com/cynthiacui/Lingyue-Reader")!) {
