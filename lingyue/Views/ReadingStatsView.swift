@@ -471,7 +471,6 @@ struct ReadingStatsView: View {
     @Environment(\.appTheme) private var theme
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var selectedRange: StatsRange = .day
-    @State private var selectedTrendPointID: String?
     @State private var selectedHeatmapDay: Date?
     @State private var selectedTopBooksRange: TopBooksRange = .week
     @State private var displayedCalendarMonth: Date = {
@@ -599,7 +598,6 @@ struct ReadingStatsView: View {
                     globalMetrics
                     rangePicker
                     periodSummary
-                    trendCard
                     streakCalendarCard
                     heatmapCard
                     topBooksCard
@@ -623,11 +621,7 @@ struct ReadingStatsView: View {
                 .accessibilityLabel("浏览记录")
             }
         }
-        .sensoryFeedback(.selection, trigger: selectedTrendPointID)
         .sensoryFeedback(.selection, trigger: selectedHeatmapDay)
-        .onChange(of: selectedRange) { _, _ in
-            selectedTrendPointID = nil
-        }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { dayTick = Date() }
         }
@@ -905,33 +899,6 @@ struct ReadingStatsView: View {
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
         .statsCard()
-    }
-
-    private var trendCard: some View {
-        let points = trendPoints(for: selectedRange)
-
-        return VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 8) {
-                Text("时段轨迹")
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundStyle(palette.primaryText)
-                Text(selectedRange.trendExplanation)
-                    .font(.system(size: 12, weight: .regular))
-                    .foregroundStyle(palette.secondaryText)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
-                Spacer()
-            }
-
-            StatsTrendChart(
-                points: points,
-                selectedPointID: $selectedTrendPointID,
-                hasReadingData: hasAnyReadingData
-            )
-        }
-        .padding(16)
-        .statsCard()
-        .animation(.easeInOut(duration: 0.18), value: selectedTrendPointID)
     }
 
     private var streakCalendarCard: some View {
@@ -1271,55 +1238,6 @@ struct ReadingStatsView: View {
         return max(1, Int(ceil(Double(daysToMonthEnd) / 7.0)))
     }
 
-    private func trendPoints(for range: StatsRange) -> [TrendPoint] {
-        switch range {
-        case .day:
-            return (0..<24).map { hour in
-                let seconds = periodEvents
-                    .filter { calendar.component(.hour, from: $0.timestamp) == hour }
-                    .reduce(0) { $0 + $1.durationSeconds }
-                return TrendPoint(
-                    id: "hour-\(hour)",
-                    label: hour % 4 == 0 ? "\(hour) 点" : "",
-                    title: "\(hour):00",
-                    date: Date(),
-                    durationSeconds: seconds
-                )
-            }
-        case .month:
-            let start = range.interval(containing: Date(), calendar: calendar).start
-            let dayCount = calendar.range(of: .day, in: .month, for: start)?.count ?? 30
-            return (0..<dayCount).map { offset in
-                let date = calendar.date(byAdding: .day, value: offset, to: start) ?? start
-                let seconds = periodEvents
-                    .filter { calendar.isDate($0.timestamp, inSameDayAs: date) }
-                    .reduce(0) { $0 + $1.durationSeconds }
-                return TrendPoint(
-                    id: "day-\(offset + 1)",
-                    label: offset % 5 == 0 ? "\(offset + 1)日" : "",
-                    title: dayTitle(date),
-                    date: date,
-                    durationSeconds: seconds
-                )
-            }
-        case .year:
-            let start = range.interval(containing: Date(), calendar: calendar).start
-            return (0..<12).map { offset in
-                let date = calendar.date(byAdding: .month, value: offset, to: start) ?? start
-                let seconds = periodEvents
-                    .filter { calendar.component(.month, from: $0.timestamp) == offset + 1 }
-                    .reduce(0) { $0 + $1.durationSeconds }
-                return TrendPoint(
-                    id: "month-\(offset + 1)",
-                    label: offset.isMultiple(of: 2) ? "\(offset + 1)月" : "",
-                    title: "\(offset + 1)月",
-                    date: date,
-                    durationSeconds: seconds
-                )
-            }
-        }
-    }
-
     private func weeklyHeatmapSummaries() -> [DailyReadingSummary] {
         let today = calendar.startOfDay(for: Date())
         let currentWeekStart = calendar.dateInterval(of: .weekOfYear, for: today)?.start ?? today
@@ -1558,14 +1476,6 @@ private enum StatsRange: String, CaseIterable, Identifiable {
         }
     }
 
-    var trendExplanation: String {
-        switch self {
-        case .day: return "当日阅读分布"
-        case .month: return "本月每日分布"
-        case .year: return "全年每月分布"
-        }
-    }
-
     var systemImage: String {
         switch self {
         case .day: return "sun.max.fill"
@@ -1611,14 +1521,6 @@ private enum TopBooksRange: String, CaseIterable, Identifiable {
         return calendar.dateInterval(of: component, for: date)
             ?? DateInterval(start: date, duration: 7 * 24 * 60 * 60)
     }
-}
-
-private struct TrendPoint: Identifiable {
-    let id: String
-    let label: String
-    let title: String
-    let date: Date
-    let durationSeconds: TimeInterval
 }
 
 private struct DailyReadingSummary: Identifiable {
@@ -1784,164 +1686,6 @@ private struct StatsSegmentedControl<Value: Hashable & Identifiable>: View {
             .frame(height: trackHeight)
         }
         .frame(height: 34)
-    }
-}
-
-private struct StatsTrendChart: View {
-    @Environment(\.statsPalette) private var palette
-    let points: [TrendPoint]
-    @Binding var selectedPointID: String?
-    var hasReadingData: Bool = true
-
-    private let topInset: CGFloat = 28
-    private let plotHeight: CGFloat = 108
-    private let axisLabelHeight: CGFloat = 24
-
-    var body: some View {
-        GeometryReader { proxy in
-            let width = max(proxy.size.width, 1)
-            let axisY = topInset + plotHeight
-            let maxValue = max(points.map(\.durationSeconds).max() ?? 1, 1)
-
-            ZStack(alignment: .topLeading) {
-                if hasReadingData {
-                    // Three airy gridlines that quietly mark the plot rhythm without
-                    // boxing the bars in. Baseline gets ~1.6x opacity so the chart
-                    // still reads as a real chart when only one bar is visible.
-                    Rectangle()
-                        .fill(palette.chartGridLine.opacity(0.35))
-                        .frame(height: 0.5)
-                        .position(x: width / 2, y: topInset + plotHeight * 0.33)
-                    Rectangle()
-                        .fill(palette.chartGridLine.opacity(0.35))
-                        .frame(height: 0.5)
-                        .position(x: width / 2, y: topInset + plotHeight * 0.66)
-                    Rectangle()
-                        .fill(palette.chartGridLine.opacity(0.65))
-                        .frame(height: 0.6)
-                        .position(x: width / 2, y: axisY)
-
-                    ForEach(Array(points.enumerated()), id: \.element.id) { index, point in
-                        if !point.label.isEmpty {
-                            let x = xPosition(for: index, width: width)
-                            Text(point.label)
-                                .font(.system(size: 10, weight: selectedPointID == point.id ? .bold : .semibold, design: .rounded))
-                                .foregroundStyle(selectedPointID == point.id ? palette.readingTime : palette.secondaryText)
-                                .frame(width: 46)
-                                .position(x: clamped(x, minimum: 23, maximum: width - 23), y: axisY + 15)
-                        }
-                    }
-                }
-
-                ForEach(Array(points.enumerated()), id: \.element.id) { index, point in
-                    // Bars render only for buckets that show as ≥1 minute. Otherwise a few-second
-                    // bucket would display as "0 分钟" in the tooltip yet still draw a visible
-                    // bar (and, because the 8pt floor doesn't apply to slightly-larger sub-minute
-                    // values, two "0 分钟" buckets could even render at different heights).
-                    if hasReadingData && Int(point.durationSeconds / 60) >= 1 {
-                        let x = xPosition(for: index, width: width)
-                        let height = barHeight(for: point.durationSeconds, maxValue: maxValue)
-                        let isSelected = selectedPointID == point.id
-                        let top = palette.chartGradient.first ?? palette.readingTime
-                        let bottom = palette.chartGradient.last ?? palette.readingTime
-
-                        Button {
-                            withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
-                                selectedPointID = point.id
-                            }
-                        } label: {
-                            RoundedRectangle(cornerRadius: 3, style: .continuous)
-                                .fill(
-                                    LinearGradient(
-                                        colors: [
-                                            top.opacity(isSelected ? 1 : 0.92),
-                                            bottom.opacity(isSelected ? 0.88 : 0.70)
-                                        ],
-                                        startPoint: .top,
-                                        endPoint: .bottom
-                                    )
-                                )
-                                .frame(width: barWidth, height: height)
-                                // Cinematic, blurred glow: every bar carries a quiet
-                                // ambient halo so the trend feels luminous; selected
-                                // bar lifts into a stronger, tighter aura.
-                                .shadow(
-                                    color: isSelected
-                                        ? palette.glow.opacity(0.42)
-                                        : palette.glow.opacity(0.14),
-                                    radius: isSelected ? 7 : 4,
-                                    x: 0,
-                                    y: isSelected ? 2 : 1
-                                )
-                                .frame(width: tapWidth, height: plotHeight, alignment: .bottom)
-                                .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .position(x: x, y: topInset + plotHeight / 2)
-                        .accessibilityLabel("\(point.title) \(compactDuration(point.durationSeconds))")
-                    }
-                }
-
-                if let selected = selectedPoint(in: points),
-                   let index = points.firstIndex(where: { $0.id == selected.id }),
-                   Int(selected.durationSeconds / 60) >= 1 {
-                    let x = xPosition(for: index, width: width)
-                    let height = barHeight(for: selected.durationSeconds, maxValue: maxValue)
-                    Text(compactDuration(selected.durationSeconds))
-                        .font(.system(size: 10, weight: .bold, design: .rounded))
-                        .foregroundStyle(palette.readingTime)
-                        .padding(.horizontal, 7)
-                        .padding(.vertical, 3)
-                        .background(Capsule().fill(palette.surfaceElevated))
-                        .overlay(Capsule().stroke(palette.border, lineWidth: 0.6))
-                        .shadow(color: palette.shadow, radius: 5, x: 0, y: 2)
-                        .fixedSize()
-                        .position(
-                            x: clamped(x, minimum: 28, maximum: width - 28),
-                            y: max(10, topInset + plotHeight - height - 13)
-                        )
-                        .transition(.opacity.combined(with: .scale(scale: 0.96)))
-                }
-            }
-        }
-        .frame(height: topInset + plotHeight + axisLabelHeight)
-    }
-
-    private var barWidth: CGFloat {
-        if points.count <= 12 { return 11 }
-        if points.count <= 24 { return 7 }
-        return 4
-    }
-
-    private var tapWidth: CGFloat {
-        max(barWidth + 14, 22)
-    }
-
-    private func barHeight(for value: TimeInterval, maxValue: TimeInterval) -> CGFloat {
-        max(CGFloat(value / maxValue) * plotHeight, 8)
-    }
-
-    private func xPosition(for index: Int, width: CGFloat) -> CGFloat {
-        guard points.count > 1 else { return width / 2 }
-        let sideInset = max(tapWidth / 2, 8)
-        let usableWidth = max(width - sideInset * 2, 1)
-        return sideInset + usableWidth * CGFloat(index) / CGFloat(points.count - 1)
-    }
-
-    private func selectedPoint(in points: [TrendPoint]) -> TrendPoint? {
-        points.first { $0.id == selectedPointID }
-    }
-
-    private func clamped(_ value: CGFloat, minimum: CGFloat, maximum: CGFloat) -> CGFloat {
-        min(max(value, minimum), max(minimum, maximum))
-    }
-
-    private func compactDuration(_ seconds: TimeInterval) -> String {
-        let minutes = max(Int(seconds / 60), 0)
-        if minutes < 60 { return "\(minutes) 分钟" }
-        let hours = minutes / 60
-        let remainder = minutes % 60
-        return remainder == 0 ? "\(hours) 小时" : "\(hours) 小时 \(remainder) 分钟"
     }
 }
 

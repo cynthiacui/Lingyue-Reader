@@ -30,11 +30,6 @@ struct SettingsView: View {
     他披衣起身，推开木窗，江风拂面，带着早春未散的寒意。
     """
 
-    private var horizontalMargin: CGFloat {
-        if dynamicTypeSize.isAccessibilitySize { return 14 }
-        return horizontalSizeClass == .compact ? 16 : 24
-    }
-
     /// Theme actually used to render the preview — respects follow-system when on.
     private var selectedTheme: ReadingTheme {
         ReadingTheme.effective(
@@ -89,33 +84,27 @@ struct SettingsView: View {
         )
     }
 
+    /// "1.4.2 (203)" style version label for the 关于 row. Reads
+    /// CFBundleShortVersionString + CFBundleVersion straight from the
+    /// active bundle so internal vs App Store builds each show their own.
+    private var appVersionString: String {
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
+        let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "?"
+        return "\(version) (\(build))"
+    }
+
     var body: some View {
         ZStack {
             ThemeBackgroundView()
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: 24) {
-                    previewCard
-                    readingControlsSection
-                    appThemeSection
-#if LINGYUE_INTERNAL
-                    // App Store builds reach 我的书源 from the Discovery
-                    // tab (see DiscoveryAppStoreView); only the Internal
-                    // build keeps the Settings entry, since its Discovery
-                    // page is busy with the seeded 书库 grid.
-                    sourcesSection
-#endif
-                    backupSection
-#if LINGYUE_INTERNAL
-                    diagnosticsSection
-#endif
-                    storageSection
-                }
-                .padding(.top, 12)
-                .padding(.bottom, 24)
+            List {
+                snapshotSection
+                appearanceSection
+                dataSection
+                aboutSection
             }
-            .contentMargins(.horizontal, horizontalMargin, for: .scrollContent)
-            .safeAreaPadding(.bottom, 12)
+            .listStyle(.insetGrouped)
+            .scrollContentBackground(.hidden)
 
             if let cacheNotice {
                 CenterToast(text: cacheNotice)
@@ -124,22 +113,116 @@ struct SettingsView: View {
             }
         }
         .animation(.easeInOut(duration: 0.22), value: cacheNotice)
-        .navigationTitle("设置")
+        .navigationTitle("我")
         .navigationBarTitleDisplayMode(.large)
         .task {
             await refreshCacheSize()
         }
     }
 
-    private var previewCard: some View {
+    // MARK: - Sections
+
+    /// 阅读快照 — single nav link to the same destination as the bottom 统计 tab.
+    /// Kept intentionally light: the deep view lives in the tab, this row is just
+    /// the entry point from inside 我.
+    private var snapshotSection: some View {
+        Section {
+            NavigationLink {
+                ReadingStatsView()
+            } label: {
+                HStack(spacing: 14) {
+                    Image(systemName: "chart.bar.xaxis")
+                        .font(.title2)
+                        .foregroundStyle(theme.accent)
+                        .frame(width: 30, alignment: .center)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("阅读数据")
+                            .font(.headline)
+                            .foregroundStyle(theme.primaryText)
+                        Text("查看每日时长、本周节奏与连读天数")
+                            .font(.caption)
+                            .foregroundStyle(theme.secondaryText)
+                    }
+                }
+                .padding(.vertical, 4)
+            }
+        } header: {
+            Text("阅读快照")
+        }
+        .listRowBackground(theme.cardBackground)
+    }
+
+    private var appearanceSection: some View {
+        Section {
+            previewRow
+            fontSizeRow
+            lineSpacingRow
+            paragraphSpacingRow
+            fontFamilyPickerRow
+            pageTransitionPickerRow
+            twoColumnRow
+            readingThemeRow
+            appThemeRow
+            traditionalRow
+            autoScrollRow
+            if autoScroll {
+                autoScrollSecondsRow
+            }
+        } header: {
+            Text("外观")
+        }
+        .listRowBackground(theme.cardBackground)
+    }
+
+    private var dataSection: some View {
+        Section {
+#if LINGYUE_INTERNAL
+            // App Store builds reach 我的书源 from the Discovery tab; only
+            // the Internal build keeps the 设置 entry, since its Discovery
+            // page is busy with the seeded 书库 grid.
+            sourcesNavRow
+#endif
+            backupNavRow
+            cachePrefetchRow
+            cacheSizeRow
+            clearCacheRow
+        } header: {
+            Text("数据")
+        }
+        .listRowBackground(theme.cardBackground)
+    }
+
+    private var aboutSection: some View {
+        Section {
+#if LINGYUE_INTERNAL
+            diagnosticsNavRow
+#endif
+            aboutVersionRow
+        } header: {
+            Text("关于")
+        }
+        .listRowBackground(theme.cardBackground)
+    }
+
+    // MARK: - Appearance rows
+
+    /// Live theme/font preview, rendered through the same UITextView path the
+    /// reader uses so on-device font metrics match what the user actually sees
+    /// while reading. Stretches edge-to-edge with `.listRowInsets(.zero)` and
+    /// uses the reading theme's pageBackground for its own card surface, so it
+    /// stays distinct from the list's row background.
+    private var previewRow: some View {
         VStack(alignment: .leading, spacing: 12) {
             VStack(alignment: .leading, spacing: fontSize * paragraphSpacingMultiplier) {
                 ForEach(Array(previewParagraphs.enumerated()), id: \.offset) { _, paragraph in
-                    Text(paragraph)
-                        .font(selectedFontFamily.swiftUIFont(size: fontSize))
-                        .foregroundStyle(selectedTheme.pageForeground)
-                        .lineSpacing(lineSpacing)
-                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                    SettingsPreviewParagraph(
+                        text: paragraph,
+                        fontSize: fontSize,
+                        lineSpacing: lineSpacing,
+                        fontFamily: selectedFontFamily,
+                        color: UIColor(selectedTheme.pageForeground)
+                    )
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
                 }
             }
 
@@ -148,353 +231,62 @@ struct SettingsView: View {
                 .foregroundStyle(selectedTheme.secondaryForeground)
         }
         .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(selectedTheme.pageBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .shadow(color: theme.cardShadow, radius: 12, x: 0, y: 6)
+        .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+        .listRowBackground(Color.clear)
     }
 
-    private var appThemeSection: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            SectionHeader(title: "外观主题")
-
-            VStack(alignment: .leading, spacing: 14) {
-                HStack(alignment: .top, spacing: 6) {
-                    ForEach(AppTheme.allCases) { option in
-                        let isSelected = themeManager.current == option
-                        let isAutoManaged = themeManager.followSystemDark && option == .starryNight
-                        Button {
-                            withAnimation(.easeInOut(duration: 0.2)) {
-                                themeManager.select(option)
-                            }
-                        } label: {
-                            VStack(spacing: 6) {
-                                appThemeSwatch(for: option)
-
-                                Text(option.displayName)
-                                    .font(.caption)
-                                    .foregroundStyle(isSelected ? theme.accent : theme.secondaryText)
-                                    .lineLimit(1)
-                            }
-                            .frame(maxWidth: .infinity)
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel(option.displayName)
-                        // When follow-system is on, the dark theme is auto-managed — block manual
-                        // selection so the swatch reads as informational rather than tappable.
-                        .disabled(isAutoManaged)
-                    }
-                }
-
-                Toggle(isOn: Binding(
-                    get: { themeManager.followSystemDark },
-                    set: { newValue in
-                        withAnimation(.easeInOut(duration: 0.2)) {
-                            themeManager.setFollowSystemDark(newValue)
-                        }
-                    }
-                )) {
-                    Label("跟随系统深色模式", systemImage: "circle.lefthalf.filled")
-                }
-                .font(.subheadline)
-                .foregroundStyle(theme.primaryText)
-
-                if themeManager.followSystemDark {
-                    Text("系统切换深色时自动启用「星夜」，浅色时使用上方所选主题。")
-                        .font(.caption)
-                        .foregroundStyle(theme.secondaryText)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+    private var fontSizeRow: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Label("字号", systemImage: "textformat.size")
+                Spacer()
+                Text("\(Int(fontSize))")
+                    .foregroundStyle(theme.secondaryText)
             }
+            .font(.headline)
+
+            Slider(value: $fontSize, in: 12...35, step: 1)
+                .tint(theme.accent)
         }
     }
 
-    private func appThemeSwatch(for option: AppTheme) -> some View {
-        let isSelected = themeManager.current == option
-        let isAutoManaged = themeManager.followSystemDark && option == .starryNight
-        return ZStack {
-            if let imageName = option.swatchImageName {
-                // Scale past the swatch frame so the white border baked into the source
-                // artwork gets cropped out by the outer .clipShape(RoundedRectangle).
-                Image(imageName)
-                    .resizable()
-                    .scaledToFill()
-                    .scaleEffect(1.8)
-            } else {
-                LinearGradient(
-                    colors: option.swatchGradient,
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-
-                option.swatchOverlay
-                    .allowsHitTesting(false)
+    private var lineSpacingRow: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Label("行距", systemImage: "text.line.first.and.arrowtriangle.forward")
+                Spacer()
+                Text("\(Int(lineSpacing))")
+                    .foregroundStyle(theme.secondaryText)
             }
+            .font(.headline)
 
-            if isAutoManaged {
-                // The swatch is locked to system dark mode — show an "Auto" glyph instead of a
-                // checkmark so the user understands the toggle below controls when it activates.
-                Image(systemName: "circle.lefthalf.filled")
-                    .font(.system(size: 13, weight: .bold))
-                    .foregroundStyle(.white)
-                    .frame(width: 20, height: 20)
-                    .background(Circle().fill(option.accent))
-            } else if isSelected {
-                Image(systemName: "checkmark")
-                    .font(.system(size: 13, weight: .bold))
-                    .foregroundStyle(.white)
-                    .frame(width: 20, height: 20)
-                    .background(Circle().fill(option.accent))
-            }
-        }
-        .frame(width: 44, height: 44)
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .strokeBorder(
-                    isSelected ? theme.accent : theme.secondaryText.opacity(0.22),
-                    lineWidth: isSelected ? 2 : 1
-                )
-        )
-        .opacity(isAutoManaged ? 0.55 : 1.0)
-    }
-
-    private var readingControlsSection: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            SectionHeader(title: "阅读偏好")
-
-            VStack(spacing: 12) {
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        Label("字号", systemImage: "textformat.size")
-                        Spacer()
-                        Text("\(Int(fontSize))")
-                            .foregroundStyle(theme.secondaryText)
-                    }
-                    .font(.headline)
-
-                    Slider(value: $fontSize, in: 12...35, step: 1)
-                        .tint(theme.accent)
-                }
-
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        Label("行距", systemImage: "text.line.first.and.arrowtriangle.forward")
-                        Spacer()
-                        Text("\(Int(lineSpacing))")
-                            .foregroundStyle(theme.secondaryText)
-                    }
-                    .font(.headline)
-
-                    Slider(value: $lineSpacing, in: 0...24, step: 1)
-                        .tint(theme.accent)
-                }
-
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        Label("段距", systemImage: "text.alignleft")
-                        Spacer()
-                        Text(String(format: "%.1f", paragraphSpacingMultiplier))
-                            .foregroundStyle(theme.secondaryText)
-                    }
-                    .font(.headline)
-
-                    Slider(value: $paragraphSpacingMultiplier, in: 0...1.5, step: 0.1)
-                        .tint(theme.accent)
-                }
-
-                fontFamilyPicker
-
-                pageTransitionPicker
-
-                Toggle(isOn: $twoColumnLayout) {
-                    Label("横屏双栏", systemImage: "rectangle.split.2x1")
-                        .font(.headline)
-                }
-                .frame(minHeight: 36)
-
-                // The trailing padding pushes the next toggle far enough below themePicker that
-                // the nested 跟随系统深色模式 row reads as part of the 背景颜色 group, not as the
-                // first of the lower toggles.
-                themePicker
-                    .padding(.bottom, 8)
-
-                Toggle(isOn: $usesTraditionalChinese) {
-                    Label("繁体中文显示", systemImage: "character.book.closed")
-                        .font(.headline)
-                }
-                .frame(minHeight: 36)
-
-                Toggle(isOn: $autoScroll) {
-                    Label("自动滚读", systemImage: "arrow.down.to.line.compact")
-                        .font(.headline)
-                }
-                .frame(minHeight: 36)
-
-                if autoScroll {
-                    HStack {
-                        Label("每页停留", systemImage: "timer")
-                            .font(.headline)
-                        Spacer()
-                        CompactStepper(
-                            value: $autoScrollSeconds,
-                            range: 2...30,
-                            step: 1,
-                            format: { "\(Int($0))秒" }
-                        )
-                    }
-                }
-            }
-            .foregroundStyle(theme.primaryText)
-            .readerCard()
+            Slider(value: $lineSpacing, in: 0...24, step: 1)
+                .tint(theme.accent)
         }
     }
 
-    private var storageSection: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            SectionHeader(title: "离线与缓存")
-
-            VStack(spacing: 14) {
-                Toggle(isOn: $cacheEnabled) {
-                    Label("自动预载后续章节", systemImage: "externaldrive")
-                }
-
-                HStack {
-                    Label("下载数据", systemImage: "internaldrive")
-                    Spacer()
-                    Text(cacheSizeText)
-                        .foregroundStyle(theme.secondaryText)
-                }
-
-                Button(role: .destructive) {
-                    Task {
-                        await clearAllCache()
-                    }
-                } label: {
-                    Label("清理全部下载数据", systemImage: "trash.slash")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.large)
+    private var paragraphSpacingRow: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Label("段距", systemImage: "text.alignleft")
+                Spacer()
+                Text(String(format: "%.1f", paragraphSpacingMultiplier))
+                    .foregroundStyle(theme.secondaryText)
             }
-            .foregroundStyle(theme.primaryText)
-            .readerCard()
+            .font(.headline)
+
+            Slider(value: $paragraphSpacingMultiplier, in: 0...1.5, step: 0.1)
+                .tint(theme.accent)
         }
     }
 
-#if LINGYUE_INTERNAL
-    private var sourcesSection: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            SectionHeader(title: "书源")
-
-            VStack(spacing: 12) {
-                NavigationLink {
-                    SourcesListView()
-                } label: {
-                    HStack {
-                        Label("我的书源", systemImage: "books.vertical")
-                        Spacer()
-                        Image(systemName: "chevron.right")
-                            .font(.footnote.weight(.semibold))
-                            .foregroundStyle(theme.secondaryText)
-                    }
-                    .frame(minHeight: 36)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-            }
-            .foregroundStyle(theme.primaryText)
-            .readerCard()
-        }
-    }
-#endif
-
-    private var backupSection: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            SectionHeader(title: "备份与恢复")
-
-            VStack(spacing: 12) {
-                NavigationLink {
-                    BackupView()
-                } label: {
-                    HStack {
-                        Label("导出与导入数据", systemImage: "externaldrive.badge.timemachine")
-                        Spacer()
-                        Image(systemName: "chevron.right")
-                            .font(.footnote.weight(.semibold))
-                            .foregroundStyle(theme.secondaryText)
-                    }
-                    .frame(minHeight: 36)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-            }
-            .foregroundStyle(theme.primaryText)
-            .readerCard()
-        }
-    }
-
-#if LINGYUE_INTERNAL
-    private var diagnosticsSection: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            SectionHeader(title: "诊断")
-
-            VStack(spacing: 12) {
-                NavigationLink {
-                    ReaderDiagnosticsView()
-                } label: {
-                    HStack {
-                        Label("阅读诊断", systemImage: "doc.text.magnifyingglass")
-                        Spacer()
-                        Image(systemName: "chevron.right")
-                            .font(.footnote.weight(.semibold))
-                            .foregroundStyle(theme.secondaryText)
-                    }
-                    .frame(minHeight: 36)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-            }
-            .foregroundStyle(theme.primaryText)
-            .readerCard()
-        }
-    }
-
-#endif
-
-    @MainActor
-    private func refreshCacheSize() async {
-        let sizeBytes = await ChapterContentCache.shared.cacheSizeBytes()
-        let formatter = ByteCountFormatter()
-        formatter.countStyle = .file
-        formatter.allowsNonnumericFormatting = false
-        cacheSizeText = formatter.string(fromByteCount: sizeBytes)
-    }
-
-    @MainActor
-    private func clearAllCache() async {
-        downloadManager.clearAllStates()
-        await ChapterContentCache.shared.clearAll()
-        await refreshCacheSize()
-        cacheNotice = "已清理全部下载数据"
-        // Auto-dismiss the center toast after a brief read window. Re-tap of
-        // the clear button just resets the same notice, so the latest tap
-        // always controls when it disappears.
-        let dismissedNotice = cacheNotice
-        Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 1_600_000_000)
-            if cacheNotice == dismissedNotice {
-                cacheNotice = nil
-            }
-        }
-    }
-
-    private var fontFamilyPicker: some View {
+    private var fontFamilyPickerRow: some View {
         HStack {
             Label("字体", systemImage: "character.book.closed.fill")
                 .font(.headline)
-
             Spacer()
-
             Picker("字体", selection: fontFamilyBinding) {
                 ForEach(ReaderFontFamily.allCases) { family in
                     Text(family.displayName)
@@ -506,16 +298,13 @@ struct SettingsView: View {
             .labelsHidden()
             .tint(theme.accent)
         }
-        .frame(minHeight: 36)
     }
 
-    private var pageTransitionPicker: some View {
+    private var pageTransitionPickerRow: some View {
         HStack {
             Label("翻页效果", systemImage: "book.pages")
                 .font(.headline)
-
             Spacer()
-
             Picker("翻页效果", selection: pageTransitionBinding) {
                 ForEach(PageTransitionStyle.allCases) { style in
                     Text(style.displayName).tag(style.rawValue)
@@ -525,17 +314,20 @@ struct SettingsView: View {
             .labelsHidden()
             .tint(theme.accent)
         }
-        .frame(minHeight: 36)
     }
 
-    private var themePicker: some View {
+    private var twoColumnRow: some View {
+        Toggle(isOn: $twoColumnLayout) {
+            Label("横屏双栏", systemImage: "rectangle.split.2x1")
+                .font(.headline)
+        }
+    }
+
+    private var readingThemeRow: some View {
         VStack(alignment: .leading, spacing: 10) {
-            // minHeight matches fontFamilyPicker / pageTransitionPicker so the visual rhythm
-            // between the three "row" labels in 阅读偏好 is even — without it, the gap above
-            // 背景颜色 is shorter than the gap above 翻页效果.
             Label("背景颜色", systemImage: "paintpalette")
                 .font(.headline)
-                .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
 
             HStack(alignment: .top, spacing: 6) {
                 ForEach(ReadingTheme.allCases) { readingTheme in
@@ -593,8 +385,6 @@ struct SettingsView: View {
                     }
                 }
             )) {
-                // Stays at .subheadline (lighter than the section's .headline labels) because
-                // this toggle is a sub-option of 背景颜色, not a top-level reading setting.
                 Label("跟随系统深色模式", systemImage: "circle.lefthalf.filled")
                     .font(.subheadline)
             }
@@ -609,6 +399,238 @@ struct SettingsView: View {
         }
     }
 
+    private var appThemeRow: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Label("外观主题", systemImage: "sparkles")
+                .font(.headline)
+
+            HStack(alignment: .top, spacing: 6) {
+                ForEach(AppTheme.allCases) { option in
+                    let isSelected = themeManager.current == option
+                    let isAutoManaged = themeManager.followSystemDark && option == .starryNight
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            themeManager.select(option)
+                        }
+                    } label: {
+                        VStack(spacing: 6) {
+                            appThemeSwatch(for: option)
+
+                            Text(option.displayName)
+                                .font(.caption)
+                                .foregroundStyle(isSelected ? theme.accent : theme.secondaryText)
+                                .lineLimit(1)
+                        }
+                        .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(option.displayName)
+                    // When follow-system is on, the dark theme is auto-managed — block manual
+                    // selection so the swatch reads as informational rather than tappable.
+                    .disabled(isAutoManaged)
+                }
+            }
+
+            Toggle(isOn: Binding(
+                get: { themeManager.followSystemDark },
+                set: { newValue in
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        themeManager.setFollowSystemDark(newValue)
+                    }
+                }
+            )) {
+                Label("跟随系统深色模式", systemImage: "circle.lefthalf.filled")
+                    .font(.subheadline)
+            }
+
+            if themeManager.followSystemDark {
+                Text("系统切换深色时自动启用「星夜」，浅色时使用上方所选主题。")
+                    .font(.caption)
+                    .foregroundStyle(theme.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private var traditionalRow: some View {
+        Toggle(isOn: $usesTraditionalChinese) {
+            Label("繁体中文显示", systemImage: "character.book.closed")
+                .font(.headline)
+        }
+    }
+
+    private var autoScrollRow: some View {
+        Toggle(isOn: $autoScroll) {
+            Label("自动滚读", systemImage: "arrow.down.to.line.compact")
+                .font(.headline)
+        }
+    }
+
+    private var autoScrollSecondsRow: some View {
+        HStack {
+            Label("每页停留", systemImage: "timer")
+                .font(.headline)
+            Spacer()
+            CompactStepper(
+                value: $autoScrollSeconds,
+                range: 2...30,
+                step: 1,
+                format: { "\(Int($0))秒" }
+            )
+        }
+    }
+
+    private func appThemeSwatch(for option: AppTheme) -> some View {
+        let isSelected = themeManager.current == option
+        let isAutoManaged = themeManager.followSystemDark && option == .starryNight
+        return ZStack {
+            if let imageName = option.swatchImageName {
+                // Scale past the swatch frame so the white border baked into the source
+                // artwork gets cropped out by the outer .clipShape(RoundedRectangle).
+                Image(imageName)
+                    .resizable()
+                    .scaledToFill()
+                    .scaleEffect(1.8)
+            } else {
+                LinearGradient(
+                    colors: option.swatchGradient,
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+
+                option.swatchOverlay
+                    .allowsHitTesting(false)
+            }
+
+            if isAutoManaged {
+                // The swatch is locked to system dark mode — show an "Auto" glyph instead of a
+                // checkmark so the user understands the toggle below controls when it activates.
+                Image(systemName: "circle.lefthalf.filled")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(.white)
+                    .frame(width: 20, height: 20)
+                    .background(Circle().fill(option.accent))
+            } else if isSelected {
+                Image(systemName: "checkmark")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(.white)
+                    .frame(width: 20, height: 20)
+                    .background(Circle().fill(option.accent))
+            }
+        }
+        .frame(width: 44, height: 44)
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(
+                    isSelected ? theme.accent : theme.secondaryText.opacity(0.22),
+                    lineWidth: isSelected ? 2 : 1
+                )
+        )
+        .opacity(isAutoManaged ? 0.55 : 1.0)
+    }
+
+    // MARK: - Data rows
+
+#if LINGYUE_INTERNAL
+    private var sourcesNavRow: some View {
+        NavigationLink {
+            SourcesListView()
+        } label: {
+            Label("我的书源", systemImage: "books.vertical")
+                .font(.headline)
+        }
+    }
+#endif
+
+    private var backupNavRow: some View {
+        NavigationLink {
+            BackupView()
+        } label: {
+            Label("导出与导入数据", systemImage: "externaldrive.badge.timemachine")
+                .font(.headline)
+        }
+    }
+
+    private var cachePrefetchRow: some View {
+        Toggle(isOn: $cacheEnabled) {
+            Label("自动预载后续章节", systemImage: "externaldrive")
+                .font(.headline)
+        }
+    }
+
+    private var cacheSizeRow: some View {
+        HStack {
+            Label("下载数据", systemImage: "internaldrive")
+                .font(.headline)
+            Spacer()
+            Text(cacheSizeText)
+                .foregroundStyle(theme.secondaryText)
+        }
+    }
+
+    private var clearCacheRow: some View {
+        Button(role: .destructive) {
+            Task {
+                await clearAllCache()
+            }
+        } label: {
+            Label("清理全部下载数据", systemImage: "trash.slash")
+                .font(.headline)
+        }
+    }
+
+    // MARK: - About rows
+
+#if LINGYUE_INTERNAL
+    private var diagnosticsNavRow: some View {
+        NavigationLink {
+            ReaderDiagnosticsView()
+        } label: {
+            Label("阅读诊断", systemImage: "doc.text.magnifyingglass")
+                .font(.headline)
+        }
+    }
+#endif
+
+    private var aboutVersionRow: some View {
+        HStack {
+            Label("版本", systemImage: "info.circle")
+                .font(.headline)
+            Spacer()
+            Text(appVersionString)
+                .foregroundStyle(theme.secondaryText)
+        }
+    }
+
+    // MARK: - Cache helpers
+
+    @MainActor
+    private func refreshCacheSize() async {
+        let sizeBytes = await ChapterContentCache.shared.cacheSizeBytes()
+        let formatter = ByteCountFormatter()
+        formatter.countStyle = .file
+        formatter.allowsNonnumericFormatting = false
+        cacheSizeText = formatter.string(fromByteCount: sizeBytes)
+    }
+
+    @MainActor
+    private func clearAllCache() async {
+        downloadManager.clearAllStates()
+        await ChapterContentCache.shared.clearAll()
+        await refreshCacheSize()
+        cacheNotice = "已清理全部下载数据"
+        // Auto-dismiss the center toast after a brief read window. Re-tap of
+        // the clear button just resets the same notice, so the latest tap
+        // always controls when it disappears.
+        let dismissedNotice = cacheNotice
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 1_600_000_000)
+            if cacheNotice == dismissedNotice {
+                cacheNotice = nil
+            }
+        }
+    }
 }
 
 /// Transient pill-shaped notice anchored at screen center. Used for one-shot
@@ -633,4 +655,66 @@ private struct CenterToast: View {
 
 #Preview {
     SettingsView()
+}
+
+/// Renders a single preview paragraph through the same UITextView/NSAttributedString
+/// path the reader uses, so the Settings preview reflects the actual on-page font
+/// metrics. Earlier the preview used SwiftUI `Text` with `Font.custom/system`, which
+/// on real hardware rendered noticeably larger than the reader at the same nominal
+/// point size — a UIKit/SwiftUI text-rendering divergence, not Dynamic Type.
+///
+/// Reports its own height to SwiftUI via `sizeThatFits` so the parent VStack can
+/// lay it out within the preview card. Without an explicit width proposal, the
+/// wrapped UITextView would request a single-line width and overflow the screen.
+private struct SettingsPreviewParagraph: UIViewRepresentable {
+    let text: String
+    let fontSize: CGFloat
+    let lineSpacing: CGFloat
+    let fontFamily: ReaderFontFamily
+    let color: UIColor
+
+    func makeUIView(context: Context) -> UITextView {
+        let textView = UITextView()
+        textView.isEditable = false
+        textView.isSelectable = false
+        textView.isScrollEnabled = false
+        textView.backgroundColor = .clear
+        textView.textContainerInset = .zero
+        textView.textContainer.lineFragmentPadding = 0
+        textView.textContainer.maximumNumberOfLines = 0
+        textView.textContainer.lineBreakMode = .byWordWrapping
+        textView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        textView.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
+        textView.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        textView.setContentHuggingPriority(.defaultLow, for: .vertical)
+        return textView
+    }
+
+    func updateUIView(_ textView: UITextView, context: Context) {
+        textView.attributedText = NSAttributedString(string: text, attributes: attributes)
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, uiView: UITextView, context: Context) -> CGSize? {
+        let width = proposal.width ?? UIScreen.main.bounds.width
+        let measured = NSAttributedString(string: text, attributes: attributes)
+            .boundingRect(
+                with: CGSize(width: width, height: .greatestFiniteMagnitude),
+                options: [.usesLineFragmentOrigin],
+                context: nil
+            )
+        return CGSize(width: width, height: ceil(measured.height))
+    }
+
+    private var attributes: [NSAttributedString.Key: Any] {
+        let paragraphStyle = NSMutableParagraphStyle()
+        paragraphStyle.alignment = .justified
+        paragraphStyle.baseWritingDirection = .leftToRight
+        paragraphStyle.lineSpacing = lineSpacing
+        paragraphStyle.lineBreakMode = .byWordWrapping
+        return [
+            .font: fontFamily.uiFont(size: fontSize),
+            .foregroundColor: color,
+            .paragraphStyle: paragraphStyle
+        ]
+    }
 }

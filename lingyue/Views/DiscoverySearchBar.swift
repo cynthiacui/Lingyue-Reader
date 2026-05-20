@@ -24,6 +24,18 @@ struct DiscoverySearchBar: View {
                 .submitLabel(.search)
                 .onSubmit(onSubmit)
 
+            if !text.isEmpty {
+                Button {
+                    text = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.body)
+                        .foregroundStyle(theme.secondaryText)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("清除")
+            }
+
             Button(action: onSubmit) {
                 Text("搜索")
                     .font(.subheadline.weight(.semibold))

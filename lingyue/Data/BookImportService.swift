@@ -943,7 +943,15 @@ final class BookImportService: Sendable {
         // If most titles are numbered, sort by that number — fixes catalogs that show
         // "latest chapters" previews above the actual chapter sequence (e.g., 努努书坊).
         if numberedSlice.count >= max(3, unique.count * 3 / 4) {
-            return numberedSlice.sorted { $0.0 < $1.0 }.map(\.1)
+            // Some catalogs (e.g., daweixs.com) list the chapter sequence twice with
+            // distinct URLs, so URL-based dedup leaves duplicates that the numeric sort
+            // pairs up as adjacent entries. Collapse by parsed chapter number too,
+            // keeping the later occurrence so the catalog body wins over any preview.
+            var byNumber: [Int: ChapterLink] = [:]
+            for (n, link) in numberedSlice {
+                byNumber[n] = link
+            }
+            return byNumber.keys.sorted().map { byNumber[$0]! }
         }
         return orderedChapterLinks(links)
     }

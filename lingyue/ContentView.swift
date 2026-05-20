@@ -52,7 +52,7 @@ struct ContentView: View {
                 SettingsView()
             }
                 .tabItem {
-                    Label("设置", systemImage: "gearshape")
+                    Label("我", systemImage: "person.crop.circle")
                 }
                 .tag(AppTab.settings)
         }

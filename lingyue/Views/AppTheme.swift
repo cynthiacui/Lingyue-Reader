@@ -31,7 +31,9 @@ enum AppTheme: String, CaseIterable, Identifiable, Hashable {
     /// `ThemeBackgroundView()` instead so the theme can opt into a gradient or pattern.
     var background: Color {
         switch self {
-        case .paperGreen:  return Color(red: 0.97, green: 0.96, blue: 0.93)
+        // Lifted slightly off the 纸张 reading theme (≈#F4F1EB) so the Settings
+        // preview card reads as a raised surface instead of melting into the page.
+        case .paperGreen:  return Color(red: 0.985, green: 0.978, blue: 0.948)
         case .pink:        return Color(red: 0.99, green: 0.95, blue: 0.95)
         case .leafGreen:   return Color(red: 0.95, green: 0.96, blue: 0.92)
         case .ink:         return Color(red: 0.96, green: 0.94, blue: 0.89) // warm rice paper
