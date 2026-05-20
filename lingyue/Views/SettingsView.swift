@@ -4,6 +4,7 @@ struct SettingsView: View {
     @Environment(\.appTheme) private var theme
     @EnvironmentObject private var themeManager: AppThemeManager
     @EnvironmentObject private var libraryStore: LibraryStore
+    @EnvironmentObject private var tabSelection: TabSelectionStore
 
     @AppStorage("reader.fontSize") private var fontSize = 18.0
     @AppStorage("reader.fontFamily") private var fontFamilyRaw = ReaderFontFamily.system.rawValue
@@ -25,12 +26,14 @@ struct SettingsView: View {
             ThemeBackgroundView()
 
             List {
-                heroSection
                 metricsSection
                 quickAccessSection
             }
             .listStyle(.insetGrouped)
             .scrollContentBackground(.hidden)
+            .safeAreaInset(edge: .top, spacing: 0) {
+                heroBanner
+            }
         }
         .navigationTitle("我")
         .navigationBarTitleDisplayMode(.large)
@@ -41,25 +44,25 @@ struct SettingsView: View {
 
     // MARK: - Sections
 
-    /// 我 hero — bookmark-shaped reading-identity card. Tapping anywhere on the card
-    /// pushes `ReadingStatsView`, so it doubles as the snapshot row that previously
-    /// lived here.
-    private var heroSection: some View {
-        Section {
-            NavigationLink {
-                ReadingStatsView()
-            } label: {
-                ReadingIdentityCard(
-                    streak: currentStreak,
-                    weeklyMinutes: weeklyMinutes,
-                    currentBook: mostRecentlyOpenedBook
-                )
-            }
-            .buttonStyle(.plain)
-            .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
-            .listRowBackground(Color.clear)
-            .listRowSeparator(.hidden)
+    /// 我 hero — bookmark-shaped reading-identity card pinned above the settings
+    /// list. Lives outside the `List` so the whole card stays tappable as a single
+    /// `Button` (List rows in iOS 26 swallow nested-button hits). Tapping switches
+    /// the bottom tab bar to 统计 instead of pushing a stack inside 我.
+    private var heroBanner: some View {
+        Button {
+            tabSelection.selectedTab = .stats
+        } label: {
+            ReadingIdentityCard(
+                streak: currentStreak,
+                weeklyMinutes: weeklyMinutes,
+                currentBook: mostRecentlyOpenedBook
+            )
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 16)
+        .padding(.top, 8)
+        .padding(.bottom, 4)
     }
 
     private var metricsSection: some View {
@@ -160,32 +163,11 @@ struct SettingsView: View {
             .max(by: { ($0.lastOpenedAt ?? .distantPast) < ($1.lastOpenedAt ?? .distantPast) })
     }
 
-    /// Consecutive reading-streak length counted back from today. Mirrors the logic
-    /// in `ReadingStatsView.currentStreak(days:)` so the badge inside the hero card
-    /// matches the streak shown on the 统计 tab.
+    /// Same source of truth as the 统计 tab so the streak badge stays consistent
+    /// across surfaces. `ReadingStatsLedger.currentStreak()` weighs days by their
+    /// total reading duration (not just event presence) and grace-permits today.
     private var currentStreak: Int {
-        let calendar = Calendar.current
-        let today = calendar.startOfDay(for: Date())
-        let activeDays = Set(libraryStore.readingStats.events.map { calendar.startOfDay(for: $0.timestamp) })
-        var streak = 0
-        var cursor = today
-        while activeDays.contains(cursor) {
-            streak += 1
-            guard let prev = calendar.date(byAdding: .day, value: -1, to: cursor) else { break }
-            cursor = prev
-        }
-        // If today is empty but yesterday was active, fall through with the
-        // running streak counted from yesterday so the badge doesn't blink to 0
-        // first thing each morning.
-        if streak == 0, let yesterday = calendar.date(byAdding: .day, value: -1, to: today) {
-            cursor = yesterday
-            while activeDays.contains(cursor) {
-                streak += 1
-                guard let prev = calendar.date(byAdding: .day, value: -1, to: cursor) else { break }
-                cursor = prev
-            }
-        }
-        return streak
+        libraryStore.readingStats.currentStreak()
     }
 
     /// Rolling 7-day minutes — keeps "本周" responsive without an abrupt midnight reset.

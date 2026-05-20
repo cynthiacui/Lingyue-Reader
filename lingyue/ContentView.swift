@@ -5,7 +5,7 @@ struct ContentView: View {
     @StateObject private var themeManager = AppThemeManager()
     @StateObject private var downloadManager = BookDownloadManager()
     @StateObject private var overlayManager = OverlayManager()
-    @State private var selectedTab: AppTab = .library
+    @StateObject private var tabSelection = TabSelectionStore()
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.colorScheme) private var systemColorScheme
 
@@ -19,7 +19,7 @@ struct ContentView: View {
         let chromeOverride: ColorScheme? = themeManager.followSystemDark
             ? nil
             : themeManager.current.preferredColorScheme
-        TabView(selection: $selectedTab) {
+        TabView(selection: $tabSelection.selectedTab) {
             NavigationStack {
                 LibraryView()
             }
@@ -76,6 +76,7 @@ struct ContentView: View {
         .environmentObject(themeManager)
         .environmentObject(downloadManager)
         .environmentObject(overlayManager)
+        .environmentObject(tabSelection)
         .environment(\.appTheme, effectiveTheme)
         .environment(\.sourceStack, .live)
         .onChange(of: scenePhase) { _, newPhase in
@@ -107,11 +108,19 @@ struct ContentView: View {
     }
 }
 
-private enum AppTab: Hashable {
+enum AppTab: Hashable {
     case stats
     case library
     case discovery
     case settings
+}
+
+/// Holds the active tab so deep links inside one tab (e.g. tapping the 我 hero card
+/// to jump to 统计) can drive the `TabView` selection without threading a binding
+/// through every intermediate view. Injected as `@EnvironmentObject` at the root.
+@MainActor
+final class TabSelectionStore: ObservableObject {
+    @Published var selectedTab: AppTab = .library
 }
 
 #Preview {

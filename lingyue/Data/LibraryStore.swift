@@ -70,6 +70,34 @@ struct ReadingStatsLedger: Hashable, Codable, Sendable {
         books.reduce(0) { $0 + $1.characterCount }
     }
 
+    /// Days the user has read consecutively, counted back from today (or the
+    /// reference date). An empty *today* is grace-permitted — the streak survives
+    /// until you skip an earlier day. Single source of truth for the streak badge
+    /// shown on both the 我 hero card and the 统计 tab.
+    func currentStreak(reference: Date = Date(), calendar: Calendar = .current) -> Int {
+        let today = calendar.startOfDay(for: reference)
+        var perDayDuration: [Date: TimeInterval] = [:]
+        for event in events {
+            let day = calendar.startOfDay(for: event.timestamp)
+            perDayDuration[day, default: 0] += event.durationSeconds
+        }
+        var streak = 0
+        var cursor = today
+        var safety = 0
+        while safety < 366 {
+            let duration = perDayDuration[cursor] ?? 0
+            if duration > 0 {
+                streak += 1
+            } else if !calendar.isDate(cursor, inSameDayAs: today) {
+                break
+            }
+            guard let prev = calendar.date(byAdding: .day, value: -1, to: cursor) else { break }
+            cursor = prev
+            safety += 1
+        }
+        return streak
+    }
+
     mutating func rememberBook(_ novel: Novel, at date: Date = Date(), deletedAt: Date? = nil) {
         let progress = min(max(novel.progress, 0), 1)
         if let index = books.firstIndex(where: { $0.id == novel.id }) {

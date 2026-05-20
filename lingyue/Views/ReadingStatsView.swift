@@ -648,7 +648,7 @@ struct ReadingStatsView: View {
     }
 
     private var heroCard: some View {
-        let streak = currentStreak(days: dailySummaries(days: 120))
+        let streak = libraryStore.readingStats.currentStreak(calendar: calendar)
         let minutes = max(Int(totalDuration / 60), 0)
         let todaySeconds = libraryStore.readingStats.events
             .filter { calendar.isDateInToday($0.timestamp) }
@@ -904,7 +904,7 @@ struct ReadingStatsView: View {
     private var streakCalendarCard: some View {
         let monthStart = calendar.dateInterval(of: .month, for: displayedCalendarMonth)?.start ?? displayedCalendarMonth
         let summaries = monthlySummaries(containing: monthStart)
-        let streak = currentStreak(days: dailySummaries(days: 120))
+        let streak = libraryStore.readingStats.currentStreak(calendar: calendar)
         let longestStreak = longestStreak()
         let activeDays = summaries.filter { summary in
             calendar.isDate(summary.day, equalTo: monthStart, toGranularity: .month) && summary.durationSeconds > 0
@@ -1322,18 +1322,6 @@ struct ReadingStatsView: View {
             }
             return $0.pageTurns > $1.pageTurns
         }
-    }
-
-    private func currentStreak(days: [DailyReadingSummary]) -> Int {
-        var streak = 0
-        for summary in days.reversed() {
-            if summary.durationSeconds > 0 {
-                streak += 1
-            } else if !calendar.isDateInToday(summary.day) {
-                break
-            }
-        }
-        return streak
     }
 
     private func longestStreak() -> Int {
