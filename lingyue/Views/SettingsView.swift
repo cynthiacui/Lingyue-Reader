@@ -846,6 +846,7 @@ struct AboutSettingsView: View {
                     diagnosticsNavRow
 #endif
                     aboutVersionRow
+                    githubLinkRow
                 }
                 .listRowBackground(theme.cardBackground)
             }
@@ -874,6 +875,20 @@ struct AboutSettingsView: View {
             Spacer()
             Text(appVersionString)
                 .foregroundStyle(theme.secondaryText)
+        }
+    }
+
+    private var githubLinkRow: some View {
+        Link(destination: URL(string: "https://github.com/cynthiacui/Lingyue-Reader")!) {
+            HStack {
+                Label("GitHub", systemImage: "chevron.left.forwardslash.chevron.right")
+                    .font(.headline)
+                    .foregroundStyle(theme.primaryText)
+                Spacer()
+                Image(systemName: "arrow.up.right.square")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(theme.secondaryText.opacity(0.7))
+            }
         }
     }
 }
