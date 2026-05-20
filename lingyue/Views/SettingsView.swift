@@ -25,14 +25,15 @@ struct SettingsView: View {
         ZStack {
             ThemeBackgroundView()
 
-            List {
-                metricsSection
-                quickAccessSection
-            }
-            .listStyle(.insetGrouped)
-            .scrollContentBackground(.hidden)
-            .safeAreaInset(edge: .top, spacing: 0) {
-                heroBanner
+            ScrollView {
+                VStack(spacing: 16) {
+                    heroBanner
+                    metricsRow
+                    quickAccessGroup
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
+                .padding(.bottom, 24)
             }
         }
         .navigationTitle("我")
@@ -44,10 +45,11 @@ struct SettingsView: View {
 
     // MARK: - Sections
 
-    /// 我 hero — bookmark-shaped reading-identity card pinned above the settings
-    /// list. Lives outside the `List` so the whole card stays tappable as a single
-    /// `Button` (List rows in iOS 26 swallow nested-button hits). Tapping switches
-    /// the bottom tab bar to 统计 instead of pushing a stack inside 我.
+    /// 我 hero — bookmark-shaped reading-identity card. The whole card is one
+    /// `Button` that switches the bottom tab bar to 统计 (rather than pushing
+    /// stats onto the 我 nav stack). Lives in a `ScrollView` so the card
+    /// scrolls with the rest of the page; List rows swallow nested-button
+    /// hits in iOS 26, so we don't use one here.
     private var heroBanner: some View {
         Button {
             tabSelection.selectedTab = .stats
@@ -60,99 +62,102 @@ struct SettingsView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .padding(.horizontal, 16)
-        .padding(.top, 8)
-        .padding(.bottom, 4)
     }
 
-    private var metricsSection: some View {
-        Section {
-            HStack(spacing: 10) {
-                MetricChip(value: booksFinishedLabel, label: "已读")
-                MetricChip(value: booksInProgressLabel, label: "正在读")
-                MetricChip(value: totalCharactersLabel, label: "已读字数")
-            }
-            .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 16, trailing: 16))
-            .listRowBackground(Color.clear)
-            .listRowSeparator(.hidden)
+    private var metricsRow: some View {
+        HStack(spacing: 10) {
+            MetricChip(value: booksFinishedLabel, label: "已读")
+            MetricChip(value: booksInProgressLabel, label: "正在读")
+            MetricChip(value: totalCharactersLabel, label: "已读字数")
         }
     }
 
     /// Four drill-in rows that replace the long inline sections this page used to
     /// carry. Keeps the 我 tab to a single screen of content and lets each detail
-    /// page own its own state + navigation title.
-    private var quickAccessSection: some View {
-        Section {
-            NavigationLink {
+    /// page own its own state + navigation title. Hand-rolled inset-grouped look
+    /// because the page is a `ScrollView` rather than a `List` — see `heroBanner`.
+    private var quickAccessGroup: some View {
+        VStack(spacing: 0) {
+            categoryLink(
+                icon: "textformat",
+                title: "阅读偏好",
+                subtitle: "\(selectedFontFamily.displayName) · \(Int(fontSize))"
+            ) {
                 ReadingPreferencesView()
-            } label: {
-                settingsCategoryRow(
-                    icon: "textformat",
-                    title: "阅读偏好",
-                    subtitle: "\(selectedFontFamily.displayName) · \(Int(fontSize))"
-                )
             }
-
-            NavigationLink {
+            categoryDivider
+            categoryLink(
+                icon: "paintpalette.fill",
+                title: "外观主题",
+                subtitle: themeManager.current.displayName
+            ) {
                 AppearanceThemeView()
-            } label: {
-                settingsCategoryRow(
-                    icon: "paintpalette.fill",
-                    title: "外观主题",
-                    subtitle: themeManager.current.displayName
-                )
             }
-
-            NavigationLink {
+            categoryDivider
+            categoryLink(
+                icon: "internaldrive.fill",
+                title: "数据与缓存",
+                subtitle: cacheSizeText
+            ) {
                 DataStorageView()
-            } label: {
-                settingsCategoryRow(
-                    icon: "internaldrive.fill",
-                    title: "数据与缓存",
-                    subtitle: cacheSizeText
-                )
             }
-
-            NavigationLink {
+            categoryDivider
+            categoryLink(
+                icon: "info.circle.fill",
+                title: "关于",
+                subtitle: appVersionString
+            ) {
                 AboutSettingsView()
-            } label: {
-                settingsCategoryRow(
-                    icon: "info.circle.fill",
-                    title: "关于",
-                    subtitle: appVersionString
-                )
             }
         }
-        .listRowBackground(theme.cardBackground)
+        .background(theme.cardBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
-    private func settingsCategoryRow(
+    private var categoryDivider: some View {
+        Divider()
+            .padding(.leading, 58)
+    }
+
+    private func categoryLink<Destination: View>(
         icon: String,
         title: String,
-        subtitle: String
+        subtitle: String,
+        @ViewBuilder destination: () -> Destination
     ) -> some View {
-        HStack(spacing: 12) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .fill(theme.accent)
-                Image(systemName: icon)
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(.white)
+        NavigationLink {
+            destination()
+        } label: {
+            HStack(spacing: 12) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .fill(theme.accent)
+                    Image(systemName: icon)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(.white)
+                }
+                .frame(width: 30, height: 30)
+
+                Text(title)
+                    .font(.headline)
+                    .foregroundStyle(theme.primaryText)
+
+                Spacer(minLength: 8)
+
+                Text(subtitle)
+                    .font(.subheadline)
+                    .foregroundStyle(theme.secondaryText)
+                    .lineLimit(1)
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(theme.secondaryText.opacity(0.6))
             }
-            .frame(width: 30, height: 30)
-
-            Text(title)
-                .font(.headline)
-                .foregroundStyle(theme.primaryText)
-
-            Spacer()
-
-            Text(subtitle)
-                .font(.subheadline)
-                .foregroundStyle(theme.secondaryText)
-                .lineLimit(1)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .contentShape(Rectangle())
         }
-        .padding(.vertical, 2)
+        .buttonStyle(.plain)
     }
 
     // MARK: - Hero data
