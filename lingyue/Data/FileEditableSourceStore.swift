@@ -34,11 +34,13 @@ public actor FileEditableSourceStore: EditableSourceStore {
         if let cache { return cache }
         guard FileManager.default.fileExists(atPath: fileURL.path) else {
             cache = []
+            Self.publishDisplayNames(from: [])
             return []
         }
         let data = try Data(contentsOf: fileURL)
         if data.isEmpty {
             cache = []
+            Self.publishDisplayNames(from: [])
             return []
         }
         let rules = try JSONDecoder().decode([SourceRule].self, from: data)
@@ -48,6 +50,7 @@ public actor FileEditableSourceStore: EditableSourceStore {
             return migrated
         }
         cache = rules
+        Self.publishDisplayNames(from: rules)
         return rules
     }
 
@@ -108,6 +111,21 @@ public actor FileEditableSourceStore: EditableSourceStore {
         let data = try encoder.encode(rules)
         try data.write(to: fileURL, options: .atomic)
         cache = rules
+        Self.publishDisplayNames(from: rules)
+    }
+
+    /// Mirror each rule's `name` + `detection.hostPatterns` into the legacy
+    /// `BookSourceRegistry` cache so the Library and Reader can resolve a
+    /// source name synchronously from a `sourceURLString` host. Required for
+    /// the App Store build, where the hardcoded legacy list is empty and the
+    /// editable store is the only display-name source of truth.
+    private static func publishDisplayNames(from rules: [SourceRule]) {
+        let entries = rules.flatMap { rule in
+            rule.detection.hostPatterns.map {
+                BookSourceRegistry.RuleEntry(pattern: $0, name: rule.name)
+            }
+        }
+        BookSourceRegistry.registerRuleDisplayNames(entries)
     }
 
     private func ensureDirectoryExists() throws {

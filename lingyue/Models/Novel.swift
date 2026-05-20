@@ -220,15 +220,70 @@ enum BookSourceRegistry {
     }
 
     static func displayName(forHost host: String) -> String? {
-        if let source = matchedSource(forHost: host) {
-            return source.name
+        if let name = matchedSource(forHost: host)?.name {
+            return name
         }
-        return normalize(host)
+        return matchedRuleName(forHost: normalize(host))
     }
 
     static func isKnownHost(_ url: URL) -> Bool {
         guard let host = url.host(percentEncoded: false) else { return false }
-        return matchedSource(forHost: host) != nil
+        if matchedSource(forHost: host) != nil { return true }
+        return matchedRuleName(forHost: normalize(host)) != nil
+    }
+
+    /// User-rule cache. The legacy hardcoded `sources` list is empty in the App Store
+    /// build (Phase 5 gates it), so a book imported via a user-authored `SourceRule`
+    /// would otherwise have no displayable source name. We mirror each rule's
+    /// `name` + `detection.hostPatterns` into this cache at launch and on every
+    /// rule mutation, so cards and the reader header can resolve names sync.
+    private static let ruleCacheLock = NSLock()
+    private static var ruleEntries: [RuleEntry] = []
+
+    struct RuleEntry: Sendable {
+        let pattern: String
+        let name: String
+    }
+
+    static func registerRuleDisplayNames(_ entries: [RuleEntry]) {
+        ruleCacheLock.lock()
+        ruleEntries = entries
+        ruleCacheLock.unlock()
+    }
+
+    private static func matchedRuleName(forHost normalizedHost: String) -> String? {
+        ruleCacheLock.lock()
+        let snapshot = ruleEntries
+        ruleCacheLock.unlock()
+        for entry in snapshot
+        where hostMatches(host: normalizedHost, pattern: entry.pattern.lowercased()) {
+            return entry.name
+        }
+        return nil
+    }
+
+    /// Mirrors the glob semantics used by the rule engine (`JSONAPIBookSource.hostMatches`):
+    /// plain patterns match exact host or subdomain suffix; `*` wildcards may appear anywhere.
+    /// Strips a leading `www.` from plain patterns so users entering `www.example.com` and
+    /// `example.com` both resolve subdomains symmetrically.
+    private static func hostMatches(host: String, pattern: String) -> Bool {
+        if !pattern.contains("*") {
+            let cleaned = pattern.hasPrefix("www.") ? String(pattern.dropFirst(4)) : pattern
+            return host == cleaned || host.hasSuffix(".\(cleaned)")
+        }
+        let parts = pattern.split(separator: "*", omittingEmptySubsequences: false).map(String.init)
+        var searchStart = host.startIndex
+        for (i, fragment) in parts.enumerated() where !fragment.isEmpty {
+            let isPrefix = (i == 0 && !pattern.hasPrefix("*"))
+            let isSuffix = (i == parts.count - 1 && !pattern.hasSuffix("*"))
+            guard let range = host.range(of: fragment, range: searchStart..<host.endIndex) else {
+                return false
+            }
+            if isPrefix && range.lowerBound != host.startIndex { return false }
+            if isSuffix && range.upperBound != host.endIndex { return false }
+            searchStart = range.upperBound
+        }
+        return true
     }
 
     private static func matchedSource(forHost host: String) -> SourcePattern? {
