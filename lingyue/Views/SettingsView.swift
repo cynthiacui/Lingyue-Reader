@@ -881,9 +881,17 @@ struct AboutSettingsView: View {
     private var githubLinkRow: some View {
         Link(destination: URL(string: "https://github.com/cynthiacui/Lingyue-Reader")!) {
             HStack {
-                Label("GitHub", systemImage: "chevron.left.forwardslash.chevron.right")
-                    .font(.headline)
-                    .foregroundStyle(theme.primaryText)
+                Label {
+                    Text("GitHub")
+                        .font(.headline)
+                        .foregroundStyle(theme.primaryText)
+                } icon: {
+                    Image("GithubMark")
+                        .renderingMode(.template)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 20, height: 20)
+                }
                 Spacer()
                 Image(systemName: "arrow.up.right.square")
                     .font(.system(size: 13, weight: .semibold))
