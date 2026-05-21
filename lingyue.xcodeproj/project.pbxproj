@@ -13,7 +13,7 @@
 		010000000000000000000105 /* ReaderStyle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000005 /* ReaderStyle.swift */; };
 		010000000000000000000106 /* LibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000006 /* LibraryView.swift */; };
 		010000000000000000000107 /* DiscoveryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000007 /* DiscoveryView.swift */; };
-		010000000000000000000108 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000008 /* SettingsView.swift */; };
+		010000000000000000000108 /* MeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000008 /* MeView.swift */; };
 		010000000000000000000109 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000009 /* Assets.xcassets */; };
 		01000000000000000000010A /* ReaderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01000000000000000000000C /* ReaderView.swift */; };
 		01000000000000000000010B /* InAppBrowserView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01000000000000000000000D /* InAppBrowserView.swift */; };
@@ -71,7 +71,7 @@
 		64AE68012FB6C76D004058EE /* ReadingStatsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01000000000000000000001B /* ReadingStatsView.swift */; };
 		64AE68022FB6C76D004058EE /* ReadingHistoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01000000000000000000001C /* ReadingHistoryView.swift */; };
 		64AE68032FB6C76D004058EE /* DiscoveryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000007 /* DiscoveryView.swift */; };
-		64AE68042FB6C76D004058EE /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000008 /* SettingsView.swift */; };
+		64AE68042FB6C76D004058EE /* MeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000008 /* MeView.swift */; };
 		64AE68052FB6C76D004058EE /* ReaderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01000000000000000000000C /* ReaderView.swift */; };
 		64AE68062FB6C76D004058EE /* PageCurlPager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000018 /* PageCurlPager.swift */; };
 		64AE68072FB6C76D004058EE /* TabBarVisibility.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01000000000000000000001A /* TabBarVisibility.swift */; };
@@ -127,7 +127,7 @@
 		010000000000000000000005 /* ReaderStyle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReaderStyle.swift; sourceTree = "<group>"; };
 		010000000000000000000006 /* LibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryView.swift; sourceTree = "<group>"; };
 		010000000000000000000007 /* DiscoveryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiscoveryView.swift; sourceTree = "<group>"; };
-		010000000000000000000008 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		010000000000000000000008 /* MeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeView.swift; sourceTree = "<group>"; };
 		010000000000000000000009 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		01000000000000000000000A /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		01000000000000000000000B /* LingyueInternal.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = LingyueInternal.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -275,7 +275,7 @@
 				010000000000000000000034 /* DiscoveryAppStoreView.swift */,
 				010000000000000000000035 /* DiscoverySearchBar.swift */,
 				010000000000000000000036 /* DiscoveryRecentSearches.swift */,
-				010000000000000000000008 /* SettingsView.swift */,
+				010000000000000000000008 /* MeView.swift */,
 				010000000000000000000309 /* Settings */,
 				01000000000000000000000C /* ReaderView.swift */,
 				010000000000000000000018 /* PageCurlPager.swift */,
@@ -461,7 +461,7 @@
 				010000000000000000000132 /* DiscoveryAppStoreView.swift in Sources */,
 				010000000000000000000133 /* DiscoverySearchBar.swift in Sources */,
 				010000000000000000000134 /* DiscoveryRecentSearches.swift in Sources */,
-				010000000000000000000108 /* SettingsView.swift in Sources */,
+				010000000000000000000108 /* MeView.swift in Sources */,
 				01000000000000000000010A /* ReaderView.swift in Sources */,
 				010000000000000000000116 /* PageCurlPager.swift in Sources */,
 				010000000000000000000118 /* TabBarVisibility.swift in Sources */,
@@ -515,7 +515,7 @@
 				64AE68F42FB6C76D004058EE /* DiscoveryAppStoreView.swift in Sources */,
 				64AE68F52FB6C76D004058EE /* DiscoverySearchBar.swift in Sources */,
 				64AE68F62FB6C76D004058EE /* DiscoveryRecentSearches.swift in Sources */,
-				64AE68042FB6C76D004058EE /* SettingsView.swift in Sources */,
+				64AE68042FB6C76D004058EE /* MeView.swift in Sources */,
 				64AE68052FB6C76D004058EE /* ReaderView.swift in Sources */,
 				64AE68062FB6C76D004058EE /* PageCurlPager.swift in Sources */,
 				64AE68072FB6C76D004058EE /* TabBarVisibility.swift in Sources */,

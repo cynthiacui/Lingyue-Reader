@@ -1,6 +1,6 @@
 import SwiftUI
 
-struct SettingsView: View {
+struct MeView: View {
     @Environment(\.appTheme) private var theme
     @EnvironmentObject private var themeManager: AppThemeManager
     @EnvironmentObject private var libraryStore: LibraryStore
@@ -237,7 +237,7 @@ private struct CenterToast: View {
 }
 
 #Preview {
-    SettingsView()
+    MeView()
 }
 
 // MARK: - Reading preferences

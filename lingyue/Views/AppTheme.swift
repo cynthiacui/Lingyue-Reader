@@ -208,7 +208,7 @@ enum AppTheme: String, CaseIterable, Identifiable, Hashable {
     /// Only consulted when `swatchImageName` is `nil`.
     /// Decorative overlay drawn on top of the gradient swatch in Settings (only used
     /// when `swatchImageName` is `nil`). Each theme owns its own decoration so adding a
-    /// new themed glyph doesn't grow a switch in `SettingsView`.
+    /// new themed glyph doesn't grow a switch in `MeView`.
     @ViewBuilder
     var swatchOverlay: some View {
         switch self {
