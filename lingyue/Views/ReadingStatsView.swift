@@ -1,4 +1,65 @@
 import SwiftUI
+import UIKit
+
+// MARK: - Editorial type system
+//
+// Mirrors the HTML mockup's `font-family: 'DM Serif Display', 'Noto Serif SC',
+// serif` cascade. CSS picks DM Serif Display per-glyph for Latin/digits and
+// falls through to Noto Serif SC for CJK; SwiftUI's `Font.custom(...)` doesn't
+// fall back per-glyph on its own, so we build a UIFontDescriptor with an
+// explicit `.cascadeList` that does the same thing — DM Serif Display draws
+// "47", "32", "38", Roman numerals; Source Han Serif SC (思源宋体 = Noto Serif
+// SC, already bundled for the reader) draws the Chinese glyphs in the same
+// line. The result is one cohesive serif line where the didone Western digits
+// pair with the matching CJK stroke axis the HTML mock has.
+
+private enum LiteraryWeight {
+    case light, regular, bold
+}
+
+private enum LiteraryFont {
+    static func uiFont(latin: String, fallback: String, size: CGFloat, bold: Bool) -> UIFont {
+        let primary = UIFontDescriptor(fontAttributes: [.name: latin])
+        let secondary = UIFontDescriptor(fontAttributes: [.name: fallback])
+        var descriptor = primary.addingAttributes([
+            UIFontDescriptor.AttributeName.cascadeList: [secondary]
+        ])
+        if bold, let bolded = descriptor.withSymbolicTraits([.traitBold]) {
+            descriptor = bolded
+        }
+        return UIFont(descriptor: descriptor, size: size)
+    }
+}
+
+extension Font {
+    /// Literary serif cascade — DM Serif Display (Latin / digits) backed by
+    /// Source Han Serif SC (CJK). Drop-in for any focal numeral + Chinese-unit
+    /// pair on the Stats tab (hero figure, period figure, stat columns, Roman
+    /// numerals, section ordinals, book titles). The weight switch keeps the
+    /// API surface identical for callers; .bold relies on SwiftUI's synthesized
+    /// bold since neither bundled face ships heavier variants.
+    fileprivate static func literarySerif(size: CGFloat, weight: LiteraryWeight = .regular) -> Font {
+        Font(LiteraryFont.uiFont(
+            latin: "DMSerifDisplay-Regular",
+            fallback: "SourceHanSerifSC-Regular",
+            size: size,
+            bold: weight == .bold
+        ))
+    }
+
+    /// Italic literary serif — DM Serif Display Italic for Latin/digits with
+    /// the same Source Han Serif SC fallback. SwiftUI's `.italic()` synthesizes
+    /// a slant on the fallback for any CJK glyphs in the run, matching the
+    /// HTML's `font-style: italic` on Noto Serif SC commentary lines.
+    fileprivate static func literarySerifItalic(size: CGFloat) -> Font {
+        Font(LiteraryFont.uiFont(
+            latin: "DMSerifDisplay-Italic",
+            fallback: "SourceHanSerifSC-Regular",
+            size: size,
+            bold: false
+        )).italic()
+    }
+}
 
 // MARK: - Stats visual system
 //
@@ -64,6 +125,20 @@ private struct StatsPalette {
     let segmentedTrack: Color
     let segmentedActive: Color
 
+    /// Deep editorial accent used for the "壹/贰/叁/肆" section markers, the 印章
+    /// streak seal on the hero card, and rank-1 Roman numerals in the leaderboard.
+    /// Tuned to be one shade deeper than `gold` so section openings register as a
+    /// "stamped" mark on the page (literary, not decorative). Theme-aware so Sakura
+    /// reads as deep rose, Forest as deep moss, Ink as warm sepia.
+    let sectionAccent: Color
+
+    /// Color for the page's monumental serif figures — the hero "0 分钟" and the
+    /// period card's 40pt duration. Normally tracks `primaryText` (a near-black
+    /// editorial ink), but for the Sakura theme it's painted in the cinnabar seal
+    /// red so the focal numerals read as 印章 (data seals) pressed onto the blush
+    /// page rather than yet-more warm-brown type lost in a monotone wash.
+    let heroFigure: Color
+
     /// Rotating accent for the top-books leaderboard rank circles. Gold for #1,
     /// then dusty blue / sage / clay / rose so each rank reads as its own role
     /// without rainbow chaos.
@@ -75,6 +150,8 @@ private struct StatsPalette {
         let chart = lightChartGradient(for: theme)
         let achievement = lightAchievement(for: theme)
         let surfaces = lightSurfaces(for: theme)
+        let textPrimary = lightPrimaryText(for: theme)
+        let textSecondary = lightSecondaryText(for: theme)
         return StatsPalette(
             // Surfaces are theme-aware so Sakura escapes the warm-cream cast.
             // Sakura → airy blush white (#FDF7F8); Ink / Forest stay on warm paper.
@@ -85,9 +162,11 @@ private struct StatsPalette {
             shadow:           Color.black.opacity(0.05),
             divider:          Color.black.opacity(0.07),
             // Strong near-black main text + a darker, less misty secondary so
-            // labels stay legible against the warm paper.
-            primaryText:      Color(red: 0.105, green: 0.098, blue: 0.086),
-            secondaryText:    Color(red: 0.355, green: 0.325, blue: 0.275),
+            // labels stay legible against the warm paper. Sakura pushes one shade
+            // deeper than the other light themes so body type sits more firmly
+            // against the blush wash instead of softening into the rose mid-tones.
+            primaryText:      textPrimary,
+            secondaryText:    textSecondary,
             // `gold` is the streak/achievement/rank-1 accent — theme-aware so Sakura
             // never resolves to a mustard yellow on a pink page. Kept the field name
             // for compatibility with downstream callers.
@@ -110,7 +189,9 @@ private struct StatsPalette {
             glow:             lightGlow(for: theme),
             lowerCardGradient: lightLowerCardGradient(for: theme),
             segmentedTrack:    lightSegmentedTrack(for: theme),
-            segmentedActive:   Color.white.opacity(0.92)
+            segmentedActive:   Color.white.opacity(0.92),
+            sectionAccent:     lightSectionAccent(for: theme),
+            heroFigure:        lightHeroFigure(for: theme, primaryText: textPrimary)
         )
     }
 
@@ -157,7 +238,9 @@ private struct StatsPalette {
                 Color(red: 0.094, green: 0.118, blue: 0.196)
             ],
             segmentedTrack:    Color(red: 0.086, green: 0.106, blue: 0.173).opacity(0.78),
-            segmentedActive:   Color(red: 0.165, green: 0.196, blue: 0.298)
+            segmentedActive:   Color(red: 0.165, green: 0.196, blue: 0.298),
+            sectionAccent:     Color(red: 0.784, green: 0.643, blue: 0.416), // #C8A46A ripe champagne — deeper than gold for stronger seal-stamp presence
+            heroFigure:        Color(red: 0.96, green: 0.94, blue: 0.88)     // = primaryText; dark theme already has high contrast
         )
     }
 
@@ -184,6 +267,65 @@ private struct StatsPalette {
         case .ink:                             return Color(red: 0.776, green: 0.690, blue: 0.541) // #C6B08A muted paper gold
         case .paperGreen, .leafGreen:          return Color(red: 0.333, green: 0.455, blue: 0.353) // #55745A deep moss
         case .starryNight:                     return Color(red: 0.878, green: 0.769, blue: 0.561) // #E0C48F
+        }
+    }
+
+    /// Editorial contrast accent — the cinnabar "印章" seal stamp role. This is
+    /// intentionally NOT a deeper shade of each theme's own color (that gave
+    /// every section marker the same green-on-green / rose-on-rose monotone
+    /// the old version suffered from); it's a true complementary contrast.
+    ///
+    /// • paperGreen / leafGreen → 朱砂红 cinnabar — the classic Chinese book
+    ///   triad of cream paper + green calligraphy + red seal stamp.
+    /// • ink → 朱砂红 cinnabar — same warm-paper-and-seal combination.
+    /// • pink → 胭脂深 deep rouge — reuses the app's existing 印章 seal red
+    ///   (the same hue used by the 我-tab streak badge). Reading as deep
+    ///   rouge-red on the blush page gives proper paper+seal contrast where
+    ///   the previous warm-ink choice sat too close to body-text tone.
+    /// • starryNight → 月华金 champagne — warm luminance against deep navy.
+    private static func lightSectionAccent(for theme: AppTheme) -> Color {
+        switch theme {
+        case .pink:                            return Color(red: 0.600, green: 0.240, blue: 0.180) // #992F2E 胭脂深 deep rouge (app seal)
+        case .ink:                             return Color(red: 0.722, green: 0.227, blue: 0.227) // #B83A3A 朱砂红 cinnabar
+        case .paperGreen, .leafGreen:          return Color(red: 0.722, green: 0.227, blue: 0.227) // #B83A3A 朱砂红 cinnabar
+        case .starryNight:                     return Color(red: 0.878, green: 0.769, blue: 0.561) // #E0C48F 月华金 champagne
+        }
+    }
+
+    /// Body / heading ink. Sakura pushes one shade deeper because its blush wash
+    /// reflects more light than the warm-cream surfaces the other light themes
+    /// sit on — without this, the warm near-black softens into the rose mid-tones
+    /// and the whole page reads monotone. Other themes keep the editorial
+    /// warm-near-black that pairs with the cream paper aesthetic.
+    private static func lightPrimaryText(for theme: AppTheme) -> Color {
+        switch theme {
+        case .pink:                            return Color(red: 0.075, green: 0.060, blue: 0.055) // #131011 deeper near-black
+        case .ink, .paperGreen, .leafGreen, .starryNight:
+                                               return Color(red: 0.105, green: 0.098, blue: 0.086) // #1B1916 warm editorial ink
+        }
+    }
+
+    /// Secondary text — same per-theme push as primaryText: Sakura goes one
+    /// shade deeper so kicker labels and commentary stay legible against the
+    /// brighter blush page rather than blending into the rose family.
+    private static func lightSecondaryText(for theme: AppTheme) -> Color {
+        switch theme {
+        case .pink:                            return Color(red: 0.298, green: 0.265, blue: 0.232) // #4C443B deeper warm grey
+        case .ink, .paperGreen, .leafGreen, .starryNight:
+                                               return Color(red: 0.355, green: 0.325, blue: 0.275) // #5B5346 warm grey-brown
+        }
+    }
+
+    /// The monumental serif figure color — used by the hero "0 分钟" and the
+    /// period card's 40pt duration. Sakura swaps in the cinnabar seal red so the
+    /// page's focal numerals read as 印章 pressed onto the blush page; other
+    /// themes keep their primary ink (they already have plenty of figure/ground
+    /// contrast against warm cream or deep indigo).
+    private static func lightHeroFigure(for theme: AppTheme, primaryText: Color) -> Color {
+        switch theme {
+        case .pink:                            return lightSectionAccent(for: .pink) // cinnabar 数据印章
+        case .ink, .paperGreen, .leafGreen, .starryNight:
+                                               return primaryText
         }
     }
 
@@ -596,10 +738,14 @@ struct ReadingStatsView: View {
                 VStack(alignment: .leading, spacing: bodySpacing) {
                     heroCard
                     globalMetrics
+                    sectionHeader(num: "壹", title: "节奏", sub: "RHYTHM · NO.01")
                     rangePicker
                     periodSummary
+                    sectionHeader(num: "贰", title: "日历", sub: "CALENDAR · NO.02")
                     streakCalendarCard
+                    sectionHeader(num: "叁", title: "热力", sub: "HEATMAP · NO.03")
                     heatmapCard
+                    sectionHeader(num: "肆", title: "旅程", sub: "JOURNEY · NO.04")
                     topBooksCard
                 }
                 .padding(.horizontal, horizontalSizeClass == .compact ? 14 : 22)
@@ -647,6 +793,44 @@ struct ReadingStatsView: View {
         }
     }
 
+    /// Editorial section opener: a large serif Chinese ordinal (壹/贰/叁/肆) in the
+    /// theme's deep section accent, paired with a serif title and a tracked
+    /// monospaced/rounded sub-label. The hairline rule on the right gives each
+    /// section a "chapter break" silhouette, replacing the flat repeating 17pt
+    /// semibold headers the old design used (which had no inter-section emphasis).
+    @ViewBuilder
+    private func sectionHeader(num: String, title: String, sub: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            Text(num)
+                .font(.literarySerif(size: 30))
+                .foregroundStyle(palette.sectionAccent)
+                .baselineOffset(-2)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.literarySerif(size: 18, weight: .bold))
+                    .foregroundStyle(palette.primaryText)
+                Text(sub)
+                    .font(.system(size: 9.5, weight: .semibold, design: .rounded))
+                    .tracking(1.6)
+                    .foregroundStyle(palette.secondaryText.opacity(0.75))
+            }
+            Spacer(minLength: 12)
+            Rectangle()
+                .fill(palette.sectionAccent.opacity(0.42))
+                .frame(width: 28, height: 0.8)
+                .padding(.bottom, 4)
+        }
+        .padding(.top, 2)
+        .padding(.bottom, 2)
+        .padding(.horizontal, 2)
+    }
+
+    /// Variant A "editorial" hero: kicker → 60pt serif total figure → italic serif
+    /// commentary → 印章 streak seal + inline goal progress. Drops the rounded
+    /// system numerals + gradient card chrome the old hero used, in favor of one
+    /// monumental serif figure that anchors the page typographically (the old
+    /// 31pt rounded figure shared the same weight as section headers, so nothing
+    /// dominated). Card chrome is replaced by a hairline rule under the hero.
     private var heroCard: some View {
         let streak = libraryStore.readingStats.currentStreak(calendar: calendar)
         let minutes = max(Int(totalDuration / 60), 0)
@@ -658,155 +842,132 @@ struct ReadingStatsView: View {
         let dailyProgress = hasGoal ? min(Double(todayMinutes) / Double(dailyGoalMinutes), 1) : 0
         let goalReached = hasGoal && todayMinutes >= dailyGoalMinutes
 
-        return VStack(alignment: .leading, spacing: 16) {
-            HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("阅读投入")
-                        .font(.system(size: 11, weight: .medium, design: .rounded))
-                        .tracking(1.2)
-                        .foregroundStyle(palette.secondaryText.opacity(0.85))
-                    Text(formatDuration(totalDuration))
-                        .font(.system(size: 31, weight: .semibold, design: .rounded))
-                        .foregroundStyle(palette.primaryText)
-                    HStack(spacing: 8) {
-                        if streak > 0 {
-                            HStack(spacing: 4) {
-                                Image(systemName: "flame.fill")
-                                    .font(.system(size: 11, weight: .bold))
-                                Text("连读 \(streak) 天")
-                                    .font(.system(size: 12, weight: .bold, design: .rounded))
-                            }
-                            .foregroundStyle(palette.gold)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 5)
-                            .background(
-                                Capsule()
-                                    .fill(
-                                        LinearGradient(
-                                            colors: [
-                                                palette.gold.opacity(0.28),
-                                                palette.gold.opacity(0.14)
-                                            ],
-                                            startPoint: .top,
-                                            endPoint: .bottom
-                                        )
-                                    )
-                            )
-                            .overlay(Capsule().stroke(palette.gold.opacity(0.42), lineWidth: 0.7))
-                            // Layered glow: a soft theme-tinted aura + a tighter inner
-                            // shadow for depth. Stays atmospheric, never harsh.
-                            .shadow(color: palette.glow.opacity(0.30), radius: 8, x: 0, y: 2)
-                            .shadow(color: palette.glow.opacity(0.18), radius: 2, x: 0, y: 1)
-                        }
-                        Text(heroSubtitle(minutes: minutes, streak: streak))
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(palette.secondaryText.opacity(0.92))
-                            .lineLimit(2)
-                    }
-                }
-
+        return VStack(alignment: .leading, spacing: 12) {
+            // Kicker row — small accent label + hairline rule, no big icon chip.
+            HStack(spacing: 8) {
+                Text("阅读投入")
+                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                    .tracking(1.8)
+                    .foregroundStyle(palette.sectionAccent)
+                Rectangle()
+                    .fill(palette.sectionAccent.opacity(0.5))
+                    .frame(width: 18, height: 1)
+                Text("TOTAL TIME")
+                    .font(.system(size: 9.5, weight: .semibold, design: .rounded))
+                    .tracking(1.6)
+                    .foregroundStyle(palette.secondaryText.opacity(0.7))
                 Spacer()
-
-                ZStack {
-                    Circle()
-                        .fill(
-                            RadialGradient(
-                                colors: [
-                                    palette.readingTime.opacity(0.32),
-                                    palette.readingTime.opacity(0.06)
-                                ],
-                                center: .center,
-                                startRadius: 4,
-                                endRadius: 32
-                            )
-                        )
-                    Circle()
-                        .stroke(palette.readingTime.opacity(0.18), lineWidth: 0.6)
-                    Image(systemName: "chart.line.uptrend.xyaxis")
-                        .font(.system(size: 26, weight: .semibold))
-                        .foregroundStyle(palette.readingTime)
-                }
-                .frame(width: 58, height: 58)
             }
 
-            if hasGoal {
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack(spacing: 6) {
-                        Menu {
-                            dailyGoalMenuItems
-                        } label: {
-                            HStack(spacing: 4) {
-                                Text("今日 \(todayMinutes) / \(dailyGoalMinutes) 分钟")
-                                    .font(.system(size: 11, weight: .semibold))
-                                Image(systemName: "chevron.down")
-                                    .font(.system(size: 8, weight: .bold))
-                            }
-                            .foregroundStyle(palette.secondaryText)
-                        }
-                        Spacer()
-                        if goalReached {
-                            HStack(spacing: 3) {
-                                Image(systemName: "checkmark.seal.fill")
-                                    .font(.system(size: 11, weight: .bold))
-                                Text("已达成")
-                                    .font(.system(size: 11, weight: .bold, design: .rounded))
-                            }
-                            .foregroundStyle(palette.sage)
-                        }
+            // The hero figure: a single 60pt serif glyph string. New York / Noto
+            // Serif via SwiftUI's `.serif` design — the only place on the page
+            // that uses this size, so it's unambiguously the focal point.
+            Text(formatDuration(totalDuration))
+                .font(.literarySerif(size: 60, weight: .light))
+                .foregroundStyle(palette.heroFigure)
+                .lineLimit(1)
+                .minimumScaleFactor(0.5)
+                .padding(.top, 2)
+
+            // Kaiti SC sub-line — Chinese cursive script reads as a hand-set
+            // editor's note rather than UI copy. `fixedSize` lets it wrap.
+            Text(heroSubtitle(minutes: minutes, streak: streak))
+                .font(.literarySerifItalic(size: 13))
+                .foregroundStyle(palette.secondaryText)
+                .fixedSize(horizontal: false, vertical: true)
+
+            // 印章 streak seal + goal section. The streak is rendered as a small
+            // squared "seal" stamp in the section accent — visually a chop mark
+            // pressed onto the page, not a candy capsule.
+            HStack(alignment: .center, spacing: 10) {
+                if streak > 0 {
+                    HStack(spacing: 4) {
+                        Image(systemName: "flame.fill")
+                            .font(.system(size: 10, weight: .bold))
+                        Text("连读 \(streak) 天")
+                            .font(.system(size: 11, weight: .bold, design: .rounded))
+                            .tracking(0.4)
                     }
-                    // Custom progress rail: theme-tinted track + warm reading-time
-                    // fill. SwiftUI's default ProgressView track rendered as a
-                    // cold grey bar on the ink theme — explicit colors fix that.
-                    // The fill carries a subtle theme-tinted glow that reinforces
-                    // the same accent without lighting up like a status bar.
-                    GeometryReader { proxy in
-                        ZStack(alignment: .leading) {
-                            Capsule()
-                                .fill(palette.progressTrack)
-                            Capsule()
-                                .fill(palette.readingTime)
-                                .frame(width: max(0, proxy.size.width * dailyProgress))
-                                .shadow(color: palette.glow.opacity(0.32), radius: 4, x: 0, y: 1)
-                        }
-                    }
-                    .frame(height: 6)
-                }
-            } else {
-                Menu {
-                    dailyGoalMenuItems
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "target")
-                            .font(.system(size: 11, weight: .bold))
-                        Text("设定今日目标")
-                            .font(.system(size: 12, weight: .semibold, design: .rounded))
-                    }
-                    .foregroundStyle(palette.readingTime)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 7)
-                    .background(Capsule().fill(palette.readingTime.opacity(0.16)))
-                    .overlay(Capsule().stroke(palette.readingTime.opacity(0.28), lineWidth: 0.7))
-                }
-            }
-        }
-        .padding(18)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(
-                    LinearGradient(
-                        colors: palette.heroGradient,
-                        startPoint: .top,
-                        endPoint: .bottom
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 5)
+                    .background(
+                        RoundedRectangle(cornerRadius: 3, style: .continuous)
+                            .fill(palette.sectionAccent)
                     )
-                )
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(palette.border, lineWidth: 0.6)
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .shadow(color: palette.shadow, radius: 14, x: 0, y: 7)
+                    .shadow(color: palette.glow.opacity(0.22), radius: 6, x: 0, y: 2)
+                }
+
+                if hasGoal {
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 6) {
+                            Menu {
+                                dailyGoalMenuItems
+                            } label: {
+                                HStack(spacing: 4) {
+                                    Text("今日 \(todayMinutes) / \(dailyGoalMinutes) 分钟")
+                                        .font(.system(size: 10.5, weight: .semibold))
+                                        .tracking(0.2)
+                                    Image(systemName: "chevron.down")
+                                        .font(.system(size: 7.5, weight: .bold))
+                                }
+                                .foregroundStyle(palette.secondaryText)
+                            }
+                            Spacer(minLength: 6)
+                            if goalReached {
+                                HStack(spacing: 3) {
+                                    Image(systemName: "checkmark.seal.fill")
+                                        .font(.system(size: 10, weight: .bold))
+                                    Text("已达成")
+                                        .font(.system(size: 10, weight: .bold, design: .rounded))
+                                }
+                                .foregroundStyle(palette.sage)
+                            }
+                        }
+                        GeometryReader { proxy in
+                            ZStack(alignment: .leading) {
+                                Capsule()
+                                    .fill(palette.progressTrack)
+                                Capsule()
+                                    .fill(palette.readingTime)
+                                    .frame(width: max(0, proxy.size.width * dailyProgress))
+                                    .shadow(color: palette.glow.opacity(0.30), radius: 4, x: 0, y: 1)
+                            }
+                        }
+                        .frame(height: 4)
+                    }
+                    .frame(maxWidth: .infinity)
+                } else {
+                    Menu {
+                        dailyGoalMenuItems
+                    } label: {
+                        HStack(spacing: 5) {
+                            Image(systemName: "target")
+                                .font(.system(size: 10, weight: .bold))
+                            Text("设定今日目标")
+                                .font(.system(size: 11, weight: .semibold, design: .rounded))
+                                .tracking(0.2)
+                        }
+                        .foregroundStyle(palette.readingTime)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(Capsule().fill(palette.readingTime.opacity(0.14)))
+                        .overlay(Capsule().stroke(palette.readingTime.opacity(0.28), lineWidth: 0.7))
+                    }
+                    Spacer()
+                }
+            }
+            .padding(.top, 4)
+
+            // Bottom hairline rule — separates the hero block from the global
+            // metric strip without the heavy card border the old design used.
+            Rectangle()
+                .fill(palette.divider.opacity(0.85))
+                .frame(height: 0.6)
+                .padding(.top, 6)
+        }
+        .padding(.horizontal, 2)
+        .padding(.top, 2)
     }
 
     @ViewBuilder
@@ -830,14 +991,29 @@ struct ReadingStatsView: View {
         }
     }
 
+    /// Sits directly under the hero hairline as a slim editorial stat strip:
+    /// 读过/读完 and 翻页数 expressed as serif figures with a thin vertical rule
+    /// between them. The old version was a chunky 3-column card that competed
+    /// visually with the hero; 总时长 moved into the hero figure, leaving these
+    /// two complementary totals that frame the journey at the top of the page.
     private var globalMetrics: some View {
-        StatMetricStrip(
-            metrics: [
-                StatMetric(title: "总时长", value: formatMetricDuration(totalDuration), icon: "clock.fill", tint: palette.readingTime),
-                StatMetric(title: "读过/读完", value: "\(readBookCount)本/\(finishedBookCount)本", icon: "books.vertical.fill", tint: palette.clay),
-                StatMetric(title: "翻页数", value: formatCount(totalPages), icon: "arrow.turn.up.right", tint: palette.sage)
-            ]
-        )
+        HStack(alignment: .top, spacing: 14) {
+            EditorialFigure(
+                kicker: "读过 · 读完",
+                value: "\(readBookCount) / \(finishedBookCount)",
+                unit: "本"
+            )
+            Rectangle()
+                .fill(palette.divider.opacity(0.85))
+                .frame(width: 0.6, height: 36)
+                .padding(.top, 12)
+            EditorialFigure(
+                kicker: "翻页数",
+                value: formatCount(totalPages),
+                unit: "页"
+            )
+        }
+        .padding(.horizontal, 2)
     }
 
     private var rangePicker: some View {
@@ -849,6 +1025,12 @@ struct ReadingStatsView: View {
         .pickerStyle(.segmented)
     }
 
+    /// Variant A period card: a 40pt serif figure dominates, with the report
+    /// title as a small italic serif kicker line. Below it, an italic serif
+    /// commentary line and a hairline-divided 3-column stat row (步调 / 字数 /
+    /// 翻页). The 17pt header + chunky duration tag the old card used made
+    /// every range card read identically — the serif figure here gives each
+    /// 日/月/年 view a real editorial focal point.
     private var periodSummary: some View {
         let duration = periodEvents.reduce(0) { $0 + $1.durationSeconds }
         let pages = periodEvents.reduce(0) { $0 + $1.pageTurns }
@@ -856,47 +1038,68 @@ struct ReadingStatsView: View {
         let speed: Double = duration >= 60 ? Double(pages) / (duration / 60) : 0
         let hasPeriodData = duration > 0 || pages > 0 || characters > 0
 
-        // Always render the pill row — even with no data, fall back to "—" so the
-        // 日/月/年 cards keep the same three-row layout (header / pills / commentary)
-        // and end up at identical heights regardless of which range is selected.
-        // The icon is in a fixed-size frame because SF Symbols like `sun.max.fill`,
-        // `calendar`, and `chart.bar.xaxis` have slightly different intrinsic heights —
-        // letting `Label` size itself causes a few-pixel header-height drift between ranges.
         return VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 8) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Image(systemName: selectedRange.systemImage)
-                    .font(.system(size: 13, weight: .bold))
-                    .foregroundStyle(palette.sage)
-                    .frame(width: 24, height: 24)
-                    .background(Circle().fill(palette.sage.opacity(0.18)))
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(palette.sectionAccent)
                 Text(selectedRange.reportTitle)
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundStyle(palette.primaryText)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.9)
-                Spacer(minLength: 0)
-                Text(formatDuration(duration))
-                    .font(.system(size: 15, weight: .bold, design: .rounded))
-                    .foregroundStyle(palette.readingTime)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
+                    .font(.literarySerifItalic(size: 13))
+                    .foregroundStyle(palette.secondaryText)
+                Spacer()
             }
-            .frame(height: 28)
 
-            HStack(spacing: 10) {
-                SmallStatPill(title: "阅读步调", value: hasPeriodData && speed > 0 ? String(format: "%.1f 页/分", speed) : "—", tint: palette.inkBlue)
-                SmallStatPill(title: "字数", value: hasPeriodData ? formatCharacterCount(characters) : "—", tint: palette.clay)
-                SmallStatPill(title: "翻页", value: hasPeriodData ? formatCount(pages) : "—", tint: palette.sage)
-            }
+            // Songti period figure — the focal point. Falls back to "暂无" so the
+            // 40pt slot stays at consistent height across day/month/year states.
+            Text(hasPeriodData ? formatDuration(duration) : "暂无")
+                .font(.literarySerif(size: 40, weight: .light))
+                .foregroundStyle(hasPeriodData ? palette.heroFigure : palette.secondaryText.opacity(0.6))
+                .lineLimit(1)
+                .minimumScaleFactor(0.55)
 
             Text(hasPeriodData ? rangeCommentary(for: selectedRange) : emptyPeriodHint(for: selectedRange))
-                .font(.system(size: 13, weight: .medium))
+                .font(.literarySerifItalic(size: 12.5))
                 .foregroundStyle(palette.secondaryText)
-                .lineLimit(1)
-                .minimumScaleFactor(0.85)
-                .frame(height: 18)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Rectangle()
+                .fill(palette.divider.opacity(0.85))
+                .frame(height: 0.6)
+                .padding(.top, 2)
+
+            // Hairline 3-column strip — replaces the chunky pill row. The serif
+            // figures + monospaced-tracked kicker labels give the card a printed
+            // info-page feel rather than a dashboard chip cluster.
+            HStack(alignment: .top, spacing: 12) {
+                PeriodColumn(
+                    kicker: "步调",
+                    value: hasPeriodData && speed > 0 ? String(format: "%.1f", speed) : "—",
+                    unit: hasPeriodData && speed > 0 ? "页/分" : nil,
+                    accent: palette.inkBlue
+                )
+                Rectangle()
+                    .fill(palette.divider.opacity(0.85))
+                    .frame(width: 0.6, height: 28)
+                PeriodColumn(
+                    kicker: "字数",
+                    value: hasPeriodData ? formatCount(characters) : "—",
+                    unit: hasPeriodData ? "字" : nil,
+                    accent: palette.clay
+                )
+                Rectangle()
+                    .fill(palette.divider.opacity(0.85))
+                    .frame(width: 0.6, height: 28)
+                PeriodColumn(
+                    kicker: "翻页",
+                    value: hasPeriodData ? formatCount(pages) : "—",
+                    unit: hasPeriodData ? "页" : nil,
+                    accent: palette.sage
+                )
+            }
+            .padding(.top, 2)
         }
-        .padding(16)
+        .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
         .statsCard()
     }
@@ -918,22 +1121,22 @@ struct ReadingStatsView: View {
         let calendarHeight: CGFloat = 22 + CGFloat(weekRows) * 43
 
         return VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .firstTextBaseline) {
-                Text("阅读日历")
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundStyle(palette.primaryText)
-                Text("记录每一次沉浸")
-                    .font(.system(size: 12, weight: .regular))
-                    .foregroundStyle(palette.secondaryText)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.75)
-                Spacer()
-            }
-
-            HStack(spacing: 10) {
-                SmallStatPill(title: "当前连续", value: "\(streak) 天", tint: palette.gold)
-                SmallStatPill(title: "最长连续", value: "\(longestStreak) 天", tint: palette.gold)
-                SmallStatPill(title: activeDaysLabel, value: "\(activeDays) 天", tint: palette.sage)
+            // Section title comes from the editorial sectionHeader above this card,
+            // so the card opens directly with the 3 streak figures — same data,
+            // but rendered as serif numerals with hairline rules so they read as
+            // typeset headlines instead of pill chips.
+            HStack(alignment: .top, spacing: 14) {
+                CalendarFigure(kicker: "当前连续", value: "\(streak)", unit: "天", accent: palette.sectionAccent)
+                Rectangle()
+                    .fill(palette.divider.opacity(0.85))
+                    .frame(width: 0.6, height: 36)
+                    .padding(.top, 12)
+                CalendarFigure(kicker: "最长连续", value: "\(longestStreak)", unit: "天", accent: palette.gold)
+                Rectangle()
+                    .fill(palette.divider.opacity(0.85))
+                    .frame(width: 0.6, height: 36)
+                    .padding(.top, 12)
+                CalendarFigure(kicker: activeDaysLabel, value: "\(activeDays)", unit: "天", accent: palette.sage)
             }
 
             HStack(spacing: 8) {
@@ -946,7 +1149,7 @@ struct ReadingStatsView: View {
                 }
 
                 Text(monthTitle(monthStart))
-                    .font(.system(size: 15, weight: .bold, design: .rounded))
+                    .font(.literarySerif(size: 17))
                     .foregroundStyle(palette.primaryText)
                     .frame(maxWidth: .infinity)
 
@@ -1001,17 +1204,13 @@ struct ReadingStatsView: View {
         let weekdayLabels = ["一", "二", "三", "四", "五", "六", "日"]
 
         return VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("阅读热力")
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundStyle(palette.primaryText)
-                Text("记录近 12 周阅读状态")
-                    .font(.system(size: 12, weight: .regular))
-                    .foregroundStyle(palette.secondaryText)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.75)
-                Spacer()
-            }
+            // sectionHeader above provides the title; the card opens with an
+            // italic serif kicker line describing the time window.
+            Text("记录近 12 周阅读状态")
+                .font(.literarySerifItalic(size: 12))
+                .foregroundStyle(palette.secondaryText)
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
 
             if hasAnyReadingData {
                 HStack(alignment: .top, spacing: 6) {
@@ -1118,21 +1317,21 @@ struct ReadingStatsView: View {
         .animation(.easeInOut(duration: 0.18), value: selectedHeatmapDay)
     }
 
+    /// Variant A leaderboard: ranks rendered as large serif Roman numerals
+    /// (I/II/III/IV/V) in the section accent (deep theme color) — replacing the
+    /// circle-chip "1/2/3" the old version used, which competed with the book
+    /// covers visually. Titles upgrade to serif, the rank-1 numeral gets the
+    /// stronger section accent to mark it as the chapter lead.
     private var topBooksCard: some View {
         let interval = selectedTopBooksRange.interval(containing: Date(), calendar: calendar)
         let events = libraryStore.readingStats.events.filter { interval.contains($0.timestamp) }
         let books = topBooks(from: events)
+        let romanRanks = ["I", "II", "III", "IV", "V"]
 
-        return VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .firstTextBaseline) {
-                Text("阅读榜单")
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundStyle(palette.primaryText)
-                Text("按时长排序")
-                    .font(.system(size: 12, weight: .regular))
-                    .foregroundStyle(palette.secondaryText)
-                Spacer()
-            }
+        return VStack(alignment: .leading, spacing: 14) {
+            Text("按时长排序的阅读时光")
+                .font(.literarySerifItalic(size: 12))
+                .foregroundStyle(palette.secondaryText)
 
             StatsSegmentedControl(
                 selection: $selectedTopBooksRange,
@@ -1142,43 +1341,53 @@ struct ReadingStatsView: View {
 
             if books.isEmpty {
                 Text("\(selectedTopBooksRange.title)还没有可统计的阅读记录。")
-                    .font(.system(size: 13, weight: .medium))
+                    .font(.literarySerifItalic(size: 13))
                     .foregroundStyle(palette.secondaryText)
+                    .padding(.vertical, 6)
             } else {
-                ForEach(Array(books.prefix(5).enumerated()), id: \.element.id) { index, item in
-                    let rankColor = palette.rankAccents[index % palette.rankAccents.count]
-                    HStack(spacing: 12) {
-                        Text("\(index + 1)")
-                            .font(.system(size: 13, weight: .bold, design: .rounded))
-                            .foregroundStyle(rankColor)
-                            .frame(width: 26, height: 26)
-                            .background(Circle().fill(rankColor.opacity(0.22)))
-                            .overlay(Circle().stroke(rankColor.opacity(0.42), lineWidth: 0.8))
+                VStack(spacing: 0) {
+                    ForEach(Array(books.prefix(5).enumerated()), id: \.element.id) { index, item in
+                        let isLead = index == 0
+                        let rankColor: Color = isLead ? palette.sectionAccent : palette.secondaryText.opacity(0.55)
+                        HStack(alignment: .center, spacing: 14) {
+                            Text(romanRanks[index])
+                                .font(.literarySerif(size: 30))
+                                .foregroundStyle(rankColor)
+                                .frame(width: 34, alignment: .leading)
 
-                        if let book = booksByID[item.id] {
-                            StatsBookCover(book: book, width: 38, height: 54)
-                        }
-                        VStack(alignment: .leading, spacing: 4) {
-                            HStack(spacing: 6) {
-                                Text(item.title)
-                                    .font(.system(size: 15, weight: .bold, design: .rounded))
-                                    .foregroundStyle(palette.primaryText)
-                                    .lineLimit(1)
-                                if booksByID[item.id]?.isDeleted == true {
-                                    RemovedFromLibraryBadge()
-                                }
+                            if let book = booksByID[item.id] {
+                                StatsBookCover(book: book, width: 38, height: 54)
                             }
-                            Text("\(formatDuration(item.durationSeconds)) · \(formatCount(item.pageTurns)) 页 · \(formatCharacterCount(item.characterCount))")
-                                .font(.system(size: 12, weight: .medium))
-                                .foregroundStyle(palette.secondaryText)
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack(spacing: 6) {
+                                    Text(item.title)
+                                        .font(.literarySerif(size: 15, weight: .bold))
+                                        .foregroundStyle(palette.primaryText)
+                                        .lineLimit(1)
+                                    if booksByID[item.id]?.isDeleted == true {
+                                        RemovedFromLibraryBadge()
+                                    }
+                                }
+                                Text("\(formatDuration(item.durationSeconds)) · \(formatCount(item.pageTurns)) 页 · \(formatCharacterCount(item.characterCount))")
+                                    .font(.system(size: 11.5, weight: .medium))
+                                    .foregroundStyle(palette.secondaryText)
+                                    .lineLimit(1)
+                                    .minimumScaleFactor(0.85)
+                            }
+                            Spacer()
                         }
-                        Spacer()
+                        .padding(.vertical, 8)
+
+                        if index < min(books.count, 5) - 1 {
+                            Rectangle()
+                                .fill(palette.divider.opacity(0.7))
+                                .frame(height: 0.5)
+                        }
                     }
-                    .padding(.vertical, 3)
                 }
             }
         }
-        .padding(16)
+        .padding(18)
         .statsLowerCard()
     }
 
@@ -1880,6 +2089,110 @@ private struct CalendarDayCell: View {
     }
 }
 
+/// Slim hairline-divided stat figure used under the hero and inside the period
+/// card. Renders a tracked monospaced/rounded kicker (e.g. "翻页数"), a 22pt
+/// serif value (the focal numeral), and an optional sub-unit ("页", "本").
+/// Variant A's editorial substitute for the old chunky `StatMetricStrip` card.
+private struct EditorialFigure: View {
+    @Environment(\.statsPalette) private var palette
+    let kicker: String
+    let value: String
+    var unit: String? = nil
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(kicker)
+                .font(.system(size: 9.5, weight: .semibold, design: .rounded))
+                .tracking(1.4)
+                .foregroundStyle(palette.secondaryText.opacity(0.78))
+            HStack(alignment: .lastTextBaseline, spacing: 3) {
+                Text(value)
+                    .font(.literarySerif(size: 22))
+                    .foregroundStyle(palette.primaryText)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                if let unit {
+                    Text(unit)
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(palette.secondaryText.opacity(0.85))
+                        .baselineOffset(1)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// Period-card stat column — same anatomy as EditorialFigure but the value
+/// font is sized to fit three side-by-side columns inside a 16pt-padded card,
+/// and the kicker color follows a per-column accent (步调/字数/翻页) so each
+/// column carries its own quiet semantic tint without screaming.
+private struct PeriodColumn: View {
+    @Environment(\.statsPalette) private var palette
+    let kicker: String
+    let value: String
+    var unit: String? = nil
+    let accent: Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(kicker)
+                .font(.system(size: 10, weight: .semibold, design: .rounded))
+                .tracking(1.2)
+                .foregroundStyle(accent.opacity(0.85))
+            HStack(alignment: .lastTextBaseline, spacing: 3) {
+                Text(value)
+                    .font(.literarySerif(size: 19))
+                    .foregroundStyle(palette.primaryText)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                if let unit {
+                    Text(unit)
+                        .font(.system(size: 9.5, weight: .medium))
+                        .foregroundStyle(palette.secondaryText.opacity(0.85))
+                        .baselineOffset(1)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// Calendar-card streak figure — sized between EditorialFigure (top of page)
+/// and PeriodColumn (period card) since the calendar card lives further down
+/// the page hierarchy. The accent param lets rank-1 ("当前连续") pull the
+/// section accent while siblings stay in muted theme tints.
+private struct CalendarFigure: View {
+    @Environment(\.statsPalette) private var palette
+    let kicker: String
+    let value: String
+    let unit: String
+    let accent: Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(kicker)
+                .font(.system(size: 9.5, weight: .semibold, design: .rounded))
+                .tracking(1.2)
+                .foregroundStyle(palette.secondaryText.opacity(0.85))
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+            HStack(alignment: .lastTextBaseline, spacing: 3) {
+                Text(value)
+                    .font(.literarySerif(size: 24))
+                    .foregroundStyle(accent)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                Text(unit)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(palette.secondaryText.opacity(0.85))
+                    .baselineOffset(1)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
 private struct StatsBookCover: View {
     let book: ReadingStatsBook
     let width: CGFloat
@@ -1891,7 +2204,7 @@ private struct StatsBookCover: View {
             coverBackground
 
             Text(displayed(book.title))
-                .font(.system(size: 10, weight: .semibold, design: .serif))
+                .font(.literarySerif(size: 10, weight: .bold))
                 .foregroundStyle(.white)
                 .lineLimit(3)
                 .minimumScaleFactor(0.65)
