@@ -106,7 +106,7 @@ private struct LibraryHelpItem: Identifiable {
 }
 
 private let libraryHelpItems: [LibraryHelpItem] = [
-    LibraryHelpItem(icon: "doc.badge.plus", title: "导入本地小说", detail: "左上角按钮导入 TXT 文件"),
+    LibraryHelpItem(icon: "doc.badge.plus", title: "导入本地小说", detail: "左上角按钮导入 TXT / EPUB / HTML 文件"),
     LibraryHelpItem(icon: "arrow.down.circle", title: "下载管理", detail: "右上角查看进度，暂停或重试"),
     LibraryHelpItem(icon: "magnifyingglass", title: "搜索书架", detail: "下拉呼出搜索栏，按书名或作者查找"),
     LibraryHelpItem(icon: "square.grid.2x2", title: "分类管理", detail: "用分类整理书架，导入后可随时归类"),
@@ -284,11 +284,11 @@ struct LibraryView: View {
         }
         .fileImporter(
             isPresented: $isShowingTxtPicker,
-            allowedContentTypes: [.plainText, .text],
+            allowedContentTypes: [.plainText, .text, .epub, .html],
             allowsMultipleSelection: false
         ) { result in
             if case .success(let urls) = result, let url = urls.first {
-                Task { await importTxt(at: url) }
+                Task { await importLocalFile(at: url) }
             }
         }
         .sheet(isPresented: $isManagingCategories) {
@@ -666,10 +666,10 @@ struct LibraryView: View {
     }
 
     @MainActor
-    private func importTxt(at url: URL) async {
+    private func importLocalFile(at url: URL) async {
         let message: String
         do {
-            let novel = try BookImportService.shared.importBook(fromPlainTextFile: url)
+            let novel = try BookImportService.shared.importBook(fromLocalFile: url)
             let alreadyInLibrary = libraryStore.containsBook(
                 sourceURLString: nil,
                 title: novel.title

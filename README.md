@@ -30,18 +30,22 @@ App Store 上架的灵阅是一个「空壳」阅读器——不自带任何书�
 
 导入完成后，「**发现**」页的搜索框就能跨所有已启用的书源搜索小说了。
 
-### 导入本地 TXT 文件
+### 导入本地小说文件
 
-除了从书源搜索下载，也可以把手头已有的 TXT 小说直接导入书架：
+除了从书源搜索下载，也可以把手头已有的小说文件直接导入书架。目前支持 **TXT / EPUB / HTML** 三种格式：
 
-1. 把 `.txt` 文件保存到 iPhone 的「文件」App（AirDrop、邮件附件、iCloud Drive 等任意方式均可）
+1. 把文件保存到 iPhone 的「文件」App（AirDrop、邮件附件、iCloud Drive 等任意方式均可）
 2. 打开灵阅，切到底部「**书架**」标签
 3. 点击左上角的「**＋**」按钮
-4. 在文件选择器里选中要导入的 `.txt` 文件
+4. 在文件选择器里选中要导入的文件
 
-App 会自动识别 `第 N 章 / 节 / 回 / 卷 / 页` 的章节标题（支持阿拉伯数字与「一二三十百千万」中文数字）拆分章节；没有识别到任何章节标题时则作为单章导入。文件名（去掉扩展名）会作为书名，作者默认显示「未知作者」。支持的文件编码：**UTF-8 / GB18030 / Big5**。
+各格式的处理方式略有差异：
 
-> 同名书籍再次导入会**覆盖**原书的章节内容，可用于更新或修正本地小说。
+- **TXT** — 自动识别 `第 N 章 / 节 / 回 / 卷 / 页` 的章节标题（支持阿拉伯数字与「一二三十百千万」中文数字）拆分章节；没有识别到任何章节标题时则作为单章导入。文件名（去掉扩展名）作为书名，作者默认「未知作者」。支持的文件编码：**UTF-8 / GB18030 / Big5**。
+- **EPUB** — 读取 `META-INF/container.xml` 与 OPF 包文件，按 `<spine>` 的阅读顺序逐章导入，章节标题取自每个 XHTML 的第一个 `<h1>-<h6>` 标题。书名与作者优先使用 EPUB 元数据里的 `<dc:title>` / `<dc:creator>`。
+- **HTML** — 把整页 HTML 去除标签后按 TXT 同样的章节规则拆分；书名优先使用 `<title>`，否则回落到文件名。
+
+> 同名书籍再次导入会**覆盖**原书的章节内容，可用于更新或修正本地小说。单个文件最大 100 MB。
 
 ### 常见问题
 
@@ -129,7 +133,7 @@ iOS 17+ · SwiftUI · Bundle id `com.lingyue.reader`
 
 ## Tabs at a glance
 
-- **Library (书架)** — wallet-stacked categorized shelves: collapse to spines, tap to fan out. A pinned 最近阅读 row tracks recently opened books; mail-style swipes expose download / cache-clear / delete; long-press to reassign category. A toolbar download-manager sheet centralizes active and paused chapter downloads. The top-left `doc.badge.plus` button imports a local `.txt` file (UTF-8 / GB18030 / Big5) and auto-splits it on `第 N 章` chapter headings.
+- **Library (书架)** — wallet-stacked categorized shelves: collapse to spines, tap to fan out. A pinned 最近阅读 row tracks recently opened books; mail-style swipes expose download / cache-clear / delete; long-press to reassign category. A toolbar download-manager sheet centralizes active and paused chapter downloads. The top-left `doc.badge.plus` button imports a local **TXT / EPUB / HTML** file — TXT/HTML auto-split on `第 N 章` chapter headings; EPUB walks the `<spine>` for chapter order and pulls metadata from `<dc:title>` / `<dc:creator>`.
 
 - **Discovery (发现)** — one search box aggregates every enabled source; results stream in as each source replies, and the same book found on multiple sources collapses into one row with provenance chips. The toolbar's globe icon opens **Sources** for enable/disable, JSON import/export, URL-analyze, and from-scratch rule editing.
 

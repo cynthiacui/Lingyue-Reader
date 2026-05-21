@@ -193,16 +193,33 @@ enum BookSourceRegistry {
 #endif
     }()
 
-    /// Custom URL scheme used to mark books imported from a local `.txt` file. We don't store
+    /// Custom URL schemes used to mark books imported from local files. We don't store
     /// the original file URL (which would leak sandbox paths and be tied to a single device),
     /// so a sentinel URL with the title in the path keeps each imported book's `sourceURLString`
-    /// stable and unique.
+    /// stable and unique. Three sibling schemes track the source format so the library can
+    /// surface "本地TXT / EPUB / HTML" without re-sniffing the chapter content.
     static let localPlainTextScheme = "lingyue-local-txt"
     static let localPlainTextDisplayName = "本地TXT"
+    static let localEPUBScheme = "lingyue-local-epub"
+    static let localEPUBDisplayName = "本地EPUB"
+    static let localHTMLScheme = "lingyue-local-html"
+    static let localHTMLDisplayName = "本地HTML"
 
     static func localPlainTextSourceURLString(forTitle title: String) -> String {
+        localSourceURLString(scheme: localPlainTextScheme, title: title)
+    }
+
+    static func localEPUBSourceURLString(forTitle title: String) -> String {
+        localSourceURLString(scheme: localEPUBScheme, title: title)
+    }
+
+    static func localHTMLSourceURLString(forTitle title: String) -> String {
+        localSourceURLString(scheme: localHTMLScheme, title: title)
+    }
+
+    private static func localSourceURLString(scheme: String, title: String) -> String {
         let safeTitle = title.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? ""
-        return "\(localPlainTextScheme)://import/\(safeTitle)"
+        return "\(scheme)://import/\(safeTitle)"
     }
 
     static func displayName(for sourceURLString: String?) -> String? {
@@ -210,8 +227,11 @@ enum BookSourceRegistry {
               let url = URL(string: sourceURLString) else {
             return nil
         }
-        if url.scheme == localPlainTextScheme {
-            return localPlainTextDisplayName
+        switch url.scheme {
+        case localPlainTextScheme: return localPlainTextDisplayName
+        case localEPUBScheme: return localEPUBDisplayName
+        case localHTMLScheme: return localHTMLDisplayName
+        default: break
         }
         guard let host = url.host(percentEncoded: false) else {
             return nil

@@ -1,5 +1,6 @@
 import Foundation
 import os
+import Compression
 import LingyueCore
 
 struct WebBookCandidate: Identifiable, Hashable, Sendable {
@@ -62,6 +63,8 @@ enum WebBookImportError: LocalizedError {
     case unsupportedEncoding
     case unreadableFile
     case suspiciousChapterCatalog(count: Int, limit: Int)
+    case invalidEPUB(reason: String)
+    case fileTooLarge(limitMB: Int)
 
     var errorDescription: String? {
         switch self {
@@ -78,11 +81,15 @@ enum WebBookImportError: LocalizedError {
         case .badStatus(let statusCode):
             return "网页请求失败，状态码 \(statusCode)。"
         case .unsupportedEncoding:
-            return "无法识别文件编码，仅支持 UTF-8 或 GB18030 的 .txt 文件。"
+            return "无法识别文件编码，仅支持 UTF-8 / GB18030 / Big5 的文本类文件。"
         case .unreadableFile:
             return "无法读取所选文件，请重新选择。"
         case .suspiciousChapterCatalog(let count, let limit):
             return "识别到 \(count) 个章节链接，超过安全上限 \(limit)。这可能是网页解析异常，请尝试从书籍目录页重新导入。"
+        case .invalidEPUB(let reason):
+            return "无法解析 EPUB 文件：\(reason)"
+        case .fileTooLarge(let limitMB):
+            return "文件超过 \(limitMB)MB 的导入上限。"
         }
     }
 }
@@ -284,6 +291,22 @@ final class BookImportService: Sendable {
         }
 
         return try await importBook(from: candidate)
+    }
+
+    /// Dispatcher for local-file imports. Routes by file extension to the
+    /// format-specific importer: `.txt` → plain text, `.epub` → EPUB, `.html` /
+    /// `.htm` / `.xhtml` → HTML. Anything unrecognized falls through to plain
+    /// text — best-effort, so users dragging unusual extensions like `.log`
+    /// still get something readable instead of a hard rejection.
+    func importBook(fromLocalFile url: URL) throws -> Novel {
+        switch url.pathExtension.lowercased() {
+        case "epub":
+            return try importBook(fromEPUBFile: url)
+        case "html", "htm", "xhtml":
+            return try importBook(fromHTMLFile: url)
+        default:
+            return try importBook(fromPlainTextFile: url)
+        }
     }
 
     /// Imports a local `.txt` file as a Novel. Splits chapters using the same
@@ -2256,6 +2279,301 @@ final class BookImportService: Sendable {
             return String(text[capture])
         }
     }
+
+    // MARK: - EPUB & HTML import
+
+    private static let localFileSizeLimitMB = 100
+    private static let epubChapterLimit = 5000
+
+    /// EPUB = a ZIP container with `META-INF/container.xml` pointing at an OPF
+    /// (package document). The OPF lists every resource in `<manifest>` and the
+    /// reading order in `<spine>`. We unzip in-memory with `MiniZipArchive`
+    /// (Apple's `Compression` framework provides the deflate codec), then parse
+    /// the OPF with regex — it's small, well-formed, machine-generated XML, so a
+    /// full XMLParser pass would be overkill. Each spine item becomes one
+    /// `NovelChapter` with its first `<h1-6>` heading as the title.
+    func importBook(fromEPUBFile url: URL) throws -> Novel {
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+
+        let data: Data
+        do {
+            data = try Data(contentsOf: url)
+        } catch {
+            throw WebBookImportError.unreadableFile
+        }
+
+        let limit = Self.localFileSizeLimitMB
+        guard data.count <= limit * 1024 * 1024 else {
+            throw WebBookImportError.fileTooLarge(limitMB: limit)
+        }
+
+        let archive: MiniZipArchive
+        do {
+            archive = try MiniZipArchive(data: data)
+        } catch {
+            throw WebBookImportError.invalidEPUB(reason: "不是有效的 ZIP 容器")
+        }
+
+        let containerData: Data
+        do {
+            containerData = try archive.extract(path: "META-INF/container.xml")
+        } catch {
+            throw WebBookImportError.invalidEPUB(reason: "缺少 META-INF/container.xml")
+        }
+
+        guard let containerXML = String(data: containerData, encoding: .utf8),
+              let opfPath = parseContainerForOPFPath(containerXML) else {
+            throw WebBookImportError.invalidEPUB(reason: "无法解析 container.xml")
+        }
+
+        let opfData: Data
+        do {
+            opfData = try archive.extract(path: opfPath)
+        } catch {
+            throw WebBookImportError.invalidEPUB(reason: "找不到 OPF：\(opfPath)")
+        }
+
+        guard let opfXML = String(data: opfData, encoding: .utf8) else {
+            throw WebBookImportError.invalidEPUB(reason: "OPF 不是 UTF-8 编码")
+        }
+
+        let opfDir = (opfPath as NSString).deletingLastPathComponent
+        let package = parseOPF(opfXML)
+
+        var chapters: [NovelChapter] = []
+        for (index, idref) in package.spineIDrefs.enumerated() {
+            if chapters.count >= Self.epubChapterLimit { break }
+            guard let item = package.manifest[idref] else { continue }
+            // Skip non-HTML manifest items (nav docs, cover images sometimes appear in spine).
+            let mediaType = item.mediaType.lowercased()
+            if !mediaType.isEmpty,
+               !mediaType.contains("html") && !mediaType.contains("xml") {
+                continue
+            }
+            let chapterPath = resolveZIPPath(base: opfDir, relative: item.href)
+            let chapterData: Data
+            do {
+                chapterData = try archive.extract(path: chapterPath)
+            } catch {
+                continue
+            }
+            // EPUB spec mandates UTF-8 / UTF-16 for XHTML; in practice some old
+            // packagers ship GB18030 bodies despite a UTF-8 OPF, so we fall
+            // through to the same encoding ladder as the TXT importer.
+            let chapterHTML: String
+            if let utf8 = String(data: chapterData, encoding: .utf8) {
+                chapterHTML = utf8
+            } else if let gb = String(data: chapterData, encoding: .gb_18030_2000) {
+                chapterHTML = gb
+            } else if let big5 = String(data: chapterData, encoding: .big5Chinese) {
+                chapterHTML = big5
+            } else {
+                continue
+            }
+            let body = stripHTMLToPlainText(chapterHTML)
+            if body.isEmpty { continue }
+            let title = extractFirstHTMLHeading(in: chapterHTML) ?? "第 \(index + 1) 章"
+            chapters.append(NovelChapter(title: title, content: body))
+        }
+
+        guard !chapters.isEmpty else {
+            throw WebBookImportError.invalidEPUB(reason: "未能从 spine 中读取到任何章节内容")
+        }
+
+        let filenameTitle = url.deletingPathExtension().lastPathComponent
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let title = nonEmpty(package.title) ?? nonEmpty(filenameTitle) ?? "未命名"
+        let author = nonEmpty(package.author) ?? "未知作者"
+
+        return Novel(
+            title: title,
+            author: author,
+            genre: LibraryStore.uncategorizedName,
+            summary: "",
+            lastChapter: chapters.first?.title ?? "",
+            progress: 0,
+            readMinutes: 0,
+            coverPalette: .deterministic(for: title),
+            isFeatured: false,
+            sourceURLString: BookSourceRegistry.localEPUBSourceURLString(forTitle: title),
+            chapters: chapters
+        )
+    }
+
+    /// A single-file HTML import: strip tags to plain text, then run the same
+    /// `第 N 章` chapter splitter the TXT importer uses. Useful for "single-page"
+    /// novel dumps that aren't packaged as EPUBs.
+    func importBook(fromHTMLFile url: URL) throws -> Novel {
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+
+        let data: Data
+        do {
+            data = try Data(contentsOf: url)
+        } catch {
+            throw WebBookImportError.unreadableFile
+        }
+
+        let limit = Self.localFileSizeLimitMB
+        guard data.count <= limit * 1024 * 1024 else {
+            throw WebBookImportError.fileTooLarge(limitMB: limit)
+        }
+
+        let html: String
+        if let utf8 = String(data: data, encoding: .utf8) {
+            html = utf8
+        } else if let gb = String(data: data, encoding: .gb_18030_2000) {
+            html = gb
+        } else if let big5 = String(data: data, encoding: .big5Chinese) {
+            html = big5
+        } else {
+            throw WebBookImportError.unsupportedEncoding
+        }
+
+        let plainText = stripHTMLToPlainText(html)
+        let documentTitle = extractHTMLDocumentTitle(in: html)
+        let filenameTitle = url.deletingPathExtension().lastPathComponent
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let title = nonEmpty(documentTitle) ?? nonEmpty(filenameTitle) ?? "未命名"
+
+        let chapters = splitPlainTextIntoChapters(plainText, fallbackTitle: title)
+
+        return Novel(
+            title: title,
+            author: "未知作者",
+            genre: LibraryStore.uncategorizedName,
+            summary: "",
+            lastChapter: chapters.first?.title ?? "",
+            progress: 0,
+            readMinutes: 0,
+            coverPalette: .deterministic(for: title),
+            isFeatured: false,
+            sourceURLString: BookSourceRegistry.localHTMLSourceURLString(forTitle: title),
+            chapters: chapters
+        )
+    }
+
+    private func nonEmpty(_ s: String?) -> String? {
+        guard let s, !s.isEmpty else { return nil }
+        return s
+    }
+
+    private func parseContainerForOPFPath(_ xml: String) -> String? {
+        // Prefer rootfile whose media-type is the package document, then fall back
+        // to the first rootfile if the media-type attribute is missing.
+        let preferred = #"<rootfile[^>]*full-path\s*=\s*["']([^"']+)["'][^>]*media-type\s*=\s*["']application/oebps-package\+xml["']"#
+        if let match = firstCapture(of: preferred, in: xml) {
+            return match
+        }
+        return firstCapture(of: #"<rootfile[^>]*full-path\s*=\s*["']([^"']+)["']"#, in: xml)
+    }
+
+    private struct EPUBManifestItem {
+        let href: String
+        let mediaType: String
+    }
+
+    private struct EPUBPackage {
+        var title: String?
+        var author: String?
+        var manifest: [String: EPUBManifestItem] = [:]
+        var spineIDrefs: [String] = []
+    }
+
+    private func parseOPF(_ xml: String) -> EPUBPackage {
+        var pkg = EPUBPackage()
+
+        pkg.title = firstCapture(of: #"<dc:title[^>]*>([\s\S]*?)</dc:title>"#, in: xml).map { cleanInlineXML($0) }
+            ?? firstCapture(of: #"<title[^>]*>([\s\S]*?)</title>"#, in: xml).map { cleanInlineXML($0) }
+        pkg.author = firstCapture(of: #"<dc:creator[^>]*>([\s\S]*?)</dc:creator>"#, in: xml).map { cleanInlineXML($0) }
+            ?? firstCapture(of: #"<creator[^>]*>([\s\S]*?)</creator>"#, in: xml).map { cleanInlineXML($0) }
+
+        for tag in matches(#"<item\s[^>]*>"#, in: xml) {
+            guard let id = attributeValue(named: "id", in: tag),
+                  let href = attributeValue(named: "href", in: tag) else { continue }
+            let mediaType = attributeValue(named: "media-type", in: tag) ?? ""
+            pkg.manifest[id] = EPUBManifestItem(href: href, mediaType: mediaType)
+        }
+
+        // `<itemref>` lives inside `<spine>`, but the manifest items also live
+        // inside `<package>` — both share the `<item` prefix only by accident.
+        // We match on the full `<itemref` token to avoid manifest-item leakage.
+        for tag in matches(#"<itemref\s[^>]*>"#, in: xml) {
+            if let idref = attributeValue(named: "idref", in: tag) {
+                pkg.spineIDrefs.append(idref)
+            }
+        }
+
+        return pkg
+    }
+
+    private func attributeValue(named name: String, in tag: String) -> String? {
+        let escaped = NSRegularExpression.escapedPattern(for: name)
+        let pattern = #"\b\#(escaped)\s*=\s*["']([^"']*)["']"#
+        return firstCapture(of: pattern, in: tag)
+    }
+
+    private func cleanInlineXML(_ s: String) -> String {
+        let stripped = s.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
+        return decodeHTMLEntities(stripped)
+            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// EPUB hrefs and OPF root paths are POSIX-style. We assemble the absolute
+    /// archive path manually rather than going through `URL` — `URL.init(string:
+    /// relativeTo:)` percent-encodes Chinese filenames inside EPUBs into segments
+    /// that no longer match the entries we read out of the central directory.
+    private func resolveZIPPath(base: String, relative: String) -> String {
+        let decoded = relative.removingPercentEncoding ?? relative
+        var stack = base.isEmpty ? [] : base.components(separatedBy: "/").filter { !$0.isEmpty }
+        for component in decoded.components(separatedBy: "/").filter({ !$0.isEmpty }) {
+            if component == ".." { _ = stack.popLast() }
+            else if component == "." { continue }
+            else { stack.append(component) }
+        }
+        return stack.joined(separator: "/")
+    }
+
+    private func stripHTMLToPlainText(_ html: String) -> String {
+        var text = html
+        text = text.replacingOccurrences(of: #"<script[^>]*>[\s\S]*?</script>"#, with: "", options: [.regularExpression, .caseInsensitive])
+        text = text.replacingOccurrences(of: #"<style[^>]*>[\s\S]*?</style>"#, with: "", options: [.regularExpression, .caseInsensitive])
+        text = text.replacingOccurrences(of: #"<br\s*/?\s*>"#, with: "\n", options: [.regularExpression, .caseInsensitive])
+        text = text.replacingOccurrences(of: #"</(p|div|h[1-6]|li|blockquote|pre|tr)\s*>"#, with: "\n\n", options: [.regularExpression, .caseInsensitive])
+        text = text.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
+        text = decodeHTMLEntities(text)
+        text = text.replacingOccurrences(of: #"[ \t]+\n"#, with: "\n", options: .regularExpression)
+        text = text.replacingOccurrences(of: #"\n[ \t]+"#, with: "\n", options: .regularExpression)
+        text = text.replacingOccurrences(of: #"\n{3,}"#, with: "\n\n", options: .regularExpression)
+        return text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func extractFirstHTMLHeading(in html: String) -> String? {
+        guard let raw = firstCapture(of: #"<h[1-6][^>]*>([\s\S]*?)</h[1-6]>"#, in: html) else {
+            return nil
+        }
+        let cleaned = cleanInlineXML(raw)
+        return cleaned.isEmpty ? nil : cleaned
+    }
+
+    private func extractHTMLDocumentTitle(in html: String) -> String? {
+        guard let raw = firstCapture(of: #"<title[^>]*>([\s\S]*?)</title>"#, in: html) else {
+            return nil
+        }
+        let cleaned = cleanInlineXML(raw)
+        return cleaned.isEmpty ? nil : cleaned
+    }
+
+    private func firstCapture(of pattern: String, in text: String) -> String? {
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) else { return nil }
+        let ns = text as NSString
+        let range = NSRange(location: 0, length: ns.length)
+        guard let match = regex.firstMatch(in: text, range: range),
+              match.numberOfRanges >= 2 else { return nil }
+        return ns.substring(with: match.range(at: 1))
+    }
 }
 
 /// Named HTML entities encountered across the various Chinese novel sources we import from.
@@ -2645,5 +2963,173 @@ actor ChapterContentCache {
             hash &*= 1_099_511_628_211
         }
         return String(hash, radix: 16)
+    }
+}
+
+/// Minimal in-memory ZIP reader covering the subset EPUBs use: store (method 0)
+/// and deflate (method 8), no encryption, no Zip64, no streamed CRC checks.
+/// Hand-rolled on Apple's `Compression` framework because the OS ships no
+/// public ZIP API but does ship the raw-deflate codec we need —
+/// `COMPRESSION_ZLIB` here means "raw RFC 1951 deflate stream" (despite the
+/// name), which is exactly what ZIP local file entries store.
+struct MiniZipArchive {
+    enum ReadError: Error {
+        case notZIP
+        case truncated
+        case zip64NotSupported
+        case unsupportedCompressionMethod(UInt16)
+        case decompressionFailed
+        case entryNotFound(String)
+    }
+
+    struct Entry {
+        let path: String
+        let compressionMethod: UInt16
+        let compressedSize: UInt32
+        let uncompressedSize: UInt32
+        let localHeaderOffset: UInt32
+    }
+
+    let data: Data
+    let entries: [Entry]
+    private let entriesByPath: [String: Entry]
+
+    init(data input: Data) throws {
+        // ZIP files don't have a fixed-position header — the End Of Central Directory
+        // (EOCD) record lives at the end of the file and may be followed by up to
+        // 64KB of comment. Scan backwards for the EOCD signature 0x06054b50.
+        guard input.count >= 22 else { throw ReadError.truncated }
+        self.data = input
+
+        let eocdSignature: UInt32 = 0x06054b50
+        let maxCommentSize = 0xFFFF
+        let scanStart = max(0, input.count - 22 - maxCommentSize)
+        var eocdOffset: Int? = nil
+        var i = input.count - 22
+        while i >= scanStart {
+            if input.readU32LE(at: i) == eocdSignature {
+                eocdOffset = i
+                break
+            }
+            i -= 1
+        }
+        guard let eocd = eocdOffset else { throw ReadError.notZIP }
+
+        let totalEntries = input.readU16LE(at: eocd + 10)
+        let cdSize = input.readU32LE(at: eocd + 12)
+        let cdOffset = input.readU32LE(at: eocd + 16)
+
+        // Zip64 sentinel: 0xFFFFFFFF / 0xFFFF means "real value lives in a Zip64
+        // extra block." We don't bother — EPUBs essentially never hit Zip64.
+        if cdOffset == 0xFFFFFFFF || cdSize == 0xFFFFFFFF || totalEntries == 0xFFFF {
+            throw ReadError.zip64NotSupported
+        }
+
+        let cdStart = Int(cdOffset)
+        let cdEnd = cdStart + Int(cdSize)
+        guard cdEnd <= input.count else { throw ReadError.truncated }
+
+        var entries: [Entry] = []
+        entries.reserveCapacity(Int(totalEntries))
+        var cursor = cdStart
+        let cdHeaderSignature: UInt32 = 0x02014b50
+
+        for _ in 0..<Int(totalEntries) {
+            guard cursor + 46 <= cdEnd else { throw ReadError.truncated }
+            guard input.readU32LE(at: cursor) == cdHeaderSignature else {
+                throw ReadError.truncated
+            }
+            let compressionMethod = input.readU16LE(at: cursor + 10)
+            let compressedSize = input.readU32LE(at: cursor + 20)
+            let uncompressedSize = input.readU32LE(at: cursor + 24)
+            let nameLen = Int(input.readU16LE(at: cursor + 28))
+            let extraLen = Int(input.readU16LE(at: cursor + 30))
+            let commentLen = Int(input.readU16LE(at: cursor + 32))
+            let localOffset = input.readU32LE(at: cursor + 42)
+
+            let nameStart = cursor + 46
+            let nameEnd = nameStart + nameLen
+            guard nameEnd <= cdEnd else { throw ReadError.truncated }
+            let nameData = input.subdata(in: nameStart..<nameEnd)
+            // EPUB filenames in the CD are encoded as either UTF-8 (general-purpose
+            // bit 11 set, which we don't check) or IBM CP437. UTF-8 covers the
+            // overwhelming majority of EPUBs in practice.
+            let path = String(data: nameData, encoding: .utf8) ?? ""
+
+            entries.append(Entry(
+                path: path,
+                compressionMethod: compressionMethod,
+                compressedSize: compressedSize,
+                uncompressedSize: uncompressedSize,
+                localHeaderOffset: localOffset
+            ))
+            cursor = nameEnd + extraLen + commentLen
+        }
+
+        self.entries = entries
+        var byPath: [String: Entry] = [:]
+        byPath.reserveCapacity(entries.count)
+        for entry in entries { byPath[entry.path] = entry }
+        self.entriesByPath = byPath
+    }
+
+    func extract(path: String) throws -> Data {
+        guard let entry = entriesByPath[path] else {
+            throw ReadError.entryNotFound(path)
+        }
+        let localOffset = Int(entry.localHeaderOffset)
+        guard localOffset + 30 <= data.count else { throw ReadError.truncated }
+        // The local file header repeats the name+extra lengths, which may differ
+        // from the central directory's values (extra fields can be longer here).
+        let localNameLen = Int(data.readU16LE(at: localOffset + 26))
+        let localExtraLen = Int(data.readU16LE(at: localOffset + 28))
+        let dataStart = localOffset + 30 + localNameLen + localExtraLen
+        let dataEnd = dataStart + Int(entry.compressedSize)
+        guard dataEnd <= data.count else { throw ReadError.truncated }
+
+        let compressed = data.subdata(in: dataStart..<dataEnd)
+
+        switch entry.compressionMethod {
+        case 0:
+            return compressed
+        case 8:
+            return try Self.inflate(compressed, uncompressedSize: Int(entry.uncompressedSize))
+        default:
+            throw ReadError.unsupportedCompressionMethod(entry.compressionMethod)
+        }
+    }
+
+    private static func inflate(_ compressed: Data, uncompressedSize: Int) throws -> Data {
+        // Bound the scratch buffer: trust the header's uncompressed size, but cap
+        // it at a hard ceiling so a malformed entry can't blow up memory.
+        let cap = max(uncompressedSize, 4096)
+        let bufferSize = min(cap, 64 * 1024 * 1024)
+        let destination = UnsafeMutablePointer<UInt8>.allocate(capacity: bufferSize)
+        defer { destination.deallocate() }
+
+        let written = compressed.withUnsafeBytes { (raw: UnsafeRawBufferPointer) -> Int in
+            guard let base = raw.baseAddress else { return 0 }
+            return compression_decode_buffer(
+                destination, bufferSize,
+                base.assumingMemoryBound(to: UInt8.self), compressed.count,
+                nil,
+                COMPRESSION_ZLIB
+            )
+        }
+        guard written > 0 else { throw ReadError.decompressionFailed }
+        return Data(bytes: destination, count: written)
+    }
+}
+
+private extension Data {
+    func readU16LE(at offset: Int) -> UInt16 {
+        return UInt16(self[offset]) | (UInt16(self[offset + 1]) << 8)
+    }
+
+    func readU32LE(at offset: Int) -> UInt32 {
+        return UInt32(self[offset])
+            | (UInt32(self[offset + 1]) << 8)
+            | (UInt32(self[offset + 2]) << 16)
+            | (UInt32(self[offset + 3]) << 24)
     }
 }
