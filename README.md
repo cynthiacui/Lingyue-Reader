@@ -30,6 +30,19 @@ App Store 上架的灵阅是一个「空壳」阅读器——不自带任何书�
 
 导入完成后，「**发现**」页的搜索框就能跨所有已启用的书源搜索小说了。
 
+### 导入本地 TXT 文件
+
+除了从书源搜索下载，也可以把手头已有的 TXT 小说直接导入书架：
+
+1. 把 `.txt` 文件保存到 iPhone 的「文件」App（AirDrop、邮件附件、iCloud Drive 等任意方式均可）
+2. 打开灵阅，切到底部「**书架**」标签
+3. 点击左上角的「**文档加号**」按钮（图标 `doc.badge.plus`）
+4. 在文件选择器里选中要导入的 `.txt` 文件
+
+App 会自动识别 `第 N 章 / 节 / 回 / 卷 / 页` 的章节标题（支持阿拉伯数字与「一二三十百千万」中文数字）拆分章节；没有识别到任何章节标题时则作为单章导入。文件名（去掉扩展名）会作为书名，作者默认显示「未知作者」。支持的文件编码：**UTF-8 / GB18030 / Big5**。
+
+> 同名书籍再次导入会**覆盖**原书的章节内容，可用于更新或修正本地小说。
+
 ### 常见问题
 
 **Q：为什么 App Store 版本不自带书源？**
@@ -116,7 +129,7 @@ iOS 17+ · SwiftUI · Bundle id `com.lingyue.reader`
 
 ## Tabs at a glance
 
-- **Library (书架)** — wallet-stacked categorized shelves: collapse to spines, tap to fan out. A pinned 最近阅读 row tracks recently opened books; mail-style swipes expose download / cache-clear / delete; long-press to reassign category. A toolbar download-manager sheet centralizes active and paused chapter downloads.
+- **Library (书架)** — wallet-stacked categorized shelves: collapse to spines, tap to fan out. A pinned 最近阅读 row tracks recently opened books; mail-style swipes expose download / cache-clear / delete; long-press to reassign category. A toolbar download-manager sheet centralizes active and paused chapter downloads. The top-left `doc.badge.plus` button imports a local `.txt` file (UTF-8 / GB18030 / Big5) and auto-splits it on `第 N 章` chapter headings.
 
 - **Discovery (发现)** — one search box aggregates every enabled source; results stream in as each source replies, and the same book found on multiple sources collapses into one row with provenance chips. The toolbar's globe icon opens **Sources** for enable/disable, JSON import/export, URL-analyze, and from-scratch rule editing.
 
