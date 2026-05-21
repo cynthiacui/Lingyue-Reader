@@ -66,6 +66,11 @@
       "selector": "div.infos h1, h1",
       "transforms": [{ "trim": {} }]
     },
+    "coverField": {
+      "selector": "div.book_info div.pic img, div.pic img",
+      "attribute": "src",
+      "transforms": [{ "absoluteURL": {} }]
+    },
     "catalogURLField": {
       "transforms": [{ "useBaseURL": {} }]
     }

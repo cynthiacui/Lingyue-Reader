@@ -59,6 +59,11 @@
       "selector": "h1",
       "transforms": [{ "trim": {} }]
     },
+    "coverField": {
+      "selector": "img[src*=\"/images/id/\"]",
+      "attribute": "src",
+      "transforms": [{ "absoluteURL": {} }]
+    },
     "catalogURLField": {
       "selector": "a[href^=\"/chapter/\"]",
       "attribute": "href",
