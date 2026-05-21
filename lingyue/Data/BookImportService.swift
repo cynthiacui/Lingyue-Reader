@@ -2538,6 +2538,11 @@ final class BookImportService: Sendable {
 
     private func stripHTMLToPlainText(_ html: String) -> String {
         var text = html
+        // Drop <head>…</head> entirely so its <title> isn't flattened into body
+        // text — EPUB chapters typically repeat the chapter name in both the
+        // head title and an <h1>, and we already lift the title separately via
+        // extractFirstHTMLHeading.
+        text = text.replacingOccurrences(of: #"<head[^>]*>[\s\S]*?</head>"#, with: "", options: [.regularExpression, .caseInsensitive])
         text = text.replacingOccurrences(of: #"<script[^>]*>[\s\S]*?</script>"#, with: "", options: [.regularExpression, .caseInsensitive])
         text = text.replacingOccurrences(of: #"<style[^>]*>[\s\S]*?</style>"#, with: "", options: [.regularExpression, .caseInsensitive])
         text = text.replacingOccurrences(of: #"<br\s*/?\s*>"#, with: "\n", options: [.regularExpression, .caseInsensitive])
