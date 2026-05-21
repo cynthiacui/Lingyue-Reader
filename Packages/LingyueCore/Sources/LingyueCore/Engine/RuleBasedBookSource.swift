@@ -60,7 +60,9 @@ public struct RuleBasedBookSource: BookSource {
             }
             let cover = try step.coverField.flatMap {
                 try SelectorEngine.resolveSingle($0, scope: row, baseURL: snapshot.finalURL)
-            }.flatMap(URL.init(string:))
+            }
+            .flatMap { URL(string: $0, relativeTo: snapshot.finalURL)?.absoluteURL }
+            .map(CoverHeuristics.httpsUpgraded)
             let snippet = try step.snippetField.flatMap {
                 try SelectorEngine.resolveSingle($0, scope: row, baseURL: snapshot.finalURL)
             }
@@ -290,6 +292,15 @@ public struct RuleBasedBookSource: BookSource {
         let coverString = try step.coverField.flatMap {
             try SelectorEngine.resolveSingle($0, scope: document, baseURL: snapshot.finalURL)
         }
+        // Fall back to the same heuristics the heuristic browser-import path
+        // uses (og:image, book-cover-shaped <img> tags) when the rule omits
+        // coverField or the selector resolved to nothing — many seeded JSON
+        // rules don't carry a cover selector and were silently dropping covers.
+        // Always pipe through httpsUpgraded so ATS doesn't reject plain http.
+        let coverURL: URL? = coverString
+            .flatMap { URL(string: $0, relativeTo: snapshot.finalURL)?.absoluteURL }
+            .map(CoverHeuristics.httpsUpgraded)
+            ?? CoverHeuristics.extract(fromHTML: snapshot.html, baseURL: snapshot.finalURL)
         let description = try step.descriptionField.flatMap {
             try SelectorEngine.resolveSingle($0, scope: document, baseURL: snapshot.finalURL)
         }
@@ -306,7 +317,7 @@ public struct RuleBasedBookSource: BookSource {
         return BookDetail(
             title: title,
             author: author,
-            coverURL: coverString.flatMap(URL.init(string:)),
+            coverURL: coverURL,
             description: description,
             tags: tags,
             status: status,
