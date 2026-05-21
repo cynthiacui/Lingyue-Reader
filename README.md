@@ -12,11 +12,11 @@ App Store 上架的灵阅是一个「空壳」阅读器——不自带任何书�
 
 ### 下载书源文件
 
-直接下载下面的 JSON 文件，并把它保存到 iPhone 的「文件」App（iCloud Drive、本机或任意位置都可以）：
+点击下面的下载链接，把 `lingyue-sources.json` 保存到 iPhone 的「文件」App（iCloud Drive、本机或任意位置都可以）：
 
-- **JSON 文件**：[`docs/lingyue-sources.json`](./docs/lingyue-sources.json)
-- **Raw 直链**（iPhone Safari 长按可「下载链接的文件」）：
-  `https://raw.githubusercontent.com/cynthiacui/Lingyue-Reader/main/docs/lingyue-sources.json`
+### 📥 [下载 lingyue-sources.json](https://github.com/cynthiacui/Lingyue-Reader/releases/latest/download/lingyue-sources.json)
+
+链接来自 GitHub Releases，iPhone Safari 点击会直接弹出「下载」对话框，无需长按。
 
 > 该文件包含若干公开书源的解析规则。规则只描述「如何解析网页」，不包含任何受版权保护的小说内容。
 
@@ -39,7 +39,7 @@ A：为了把「阅读器」和「书源规则」解耦——书源规则在第�
 A：可以。同样在「书源」页面，点击「＋」选择「**从 URL 分析**」或「**手动新建**」，按照向导填写解析规则即可。导出自己的书源也是同一个 JSON 格式，可以分享给他人。
 
 **Q：导入失败 / 搜索没结果？**
-A：网站结构变更可能让旧规则失效。请来 [Issues](https://github.com/cynthiacui/Lingyue-Reader/issues) 反馈具体的书源名称和搜索关键词，仓库会更新 `docs/lingyue-sources.json`，重新导入即可。
+A：网站结构变更可能让旧规则失效。请来 [Issues](https://github.com/cynthiacui/Lingyue-Reader/issues) 反馈具体的书源名称和搜索关键词，仓库会更新 Release 中的 `lingyue-sources.json`，重新下载导入即可。
 
 ---
 
