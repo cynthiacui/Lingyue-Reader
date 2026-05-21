@@ -64,6 +64,10 @@
       "attribute": "src",
       "transforms": [{ "absoluteURL": {} }]
     },
+    "authorField": {
+      "selector": "a[href^=\"/list/\"][title^=\"作者标签\"]",
+      "transforms": [{ "trim": {} }]
+    },
     "catalogURLField": {
       "selector": "a[href^=\"/chapter/\"]",
       "attribute": "href",
