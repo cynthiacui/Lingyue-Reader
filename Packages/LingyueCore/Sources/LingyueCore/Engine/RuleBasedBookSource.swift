@@ -286,9 +286,16 @@ public struct RuleBasedBookSource: BookSource {
             throw BookSourceError.parseFailed(field: "detail.catalogURLField")
         }
 
+        // Many seeded rules only declare authorField on the search step,
+        // so the rule's detail path used to return nil and the import
+        // service fell back to "未知作者". Mirror the cover fallback:
+        // try the rule selector first, then drop to og:novel:author /
+        // `作者：` label heuristics that the legacy browser-import path
+        // already had.
         let author = try step.authorField.flatMap {
             try SelectorEngine.resolveSingle($0, scope: document, baseURL: snapshot.finalURL)
-        }
+        }?.nonEmptyTrimmed
+            ?? AuthorHeuristics.extract(fromHTML: snapshot.html)
         let coverString = try step.coverField.flatMap {
             try SelectorEngine.resolveSingle($0, scope: document, baseURL: snapshot.finalURL)
         }
