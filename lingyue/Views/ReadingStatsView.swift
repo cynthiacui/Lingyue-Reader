@@ -134,9 +134,13 @@ private struct StatsPalette {
 
     /// Color for the page's monumental serif figures — the hero "0 分钟" and the
     /// period card's 40pt duration. Normally tracks `primaryText` (a near-black
-    /// editorial ink), but for the Sakura theme it's painted in the cinnabar seal
-    /// red so the focal numerals read as 印章 (data seals) pressed onto the blush
-    /// page rather than yet-more warm-brown type lost in a monotone wash.
+    /// editorial ink). For the Sakura theme it's painted in a deep warm
+    /// mulberry-ink that's distinct from both the body type AND the cinnabar
+    /// `sectionAccent` — completing the paper · ink · seal triad: blush paper
+    /// background, mulberry-dark figure ink, scattered cinnabar seal accents.
+    /// Earlier iterations painted the hero in cinnabar too, but that made the
+    /// 60pt figure visually fungible with the small 阅读投入 kicker and 连读
+    /// 印章 badge — size became the only differentiator instead of role.
     let heroFigure: Color
 
     /// Rotating accent for the top-books leaderboard rank circles. Gold for #1,
@@ -317,13 +321,15 @@ private struct StatsPalette {
     }
 
     /// The monumental serif figure color — used by the hero "0 分钟" and the
-    /// period card's 40pt duration. Sakura swaps in the cinnabar seal red so the
-    /// page's focal numerals read as 印章 pressed onto the blush page; other
-    /// themes keep their primary ink (they already have plenty of figure/ground
-    /// contrast against warm cream or deep indigo).
+    /// period card's 40pt duration. Sakura gets a 墨檀 deep warm mulberry-ink
+    /// that's distinct from both the body type (`primaryText` — near-black) and
+    /// the seal accents (`sectionAccent` — cinnabar): the hero is the dominant
+    /// dark voice of the page, the cinnabar marks remain small seal punctuation.
+    /// Other themes keep their primary ink (they already have plenty of
+    /// figure/ground contrast against warm cream or deep indigo).
     private static func lightHeroFigure(for theme: AppTheme, primaryText: Color) -> Color {
         switch theme {
-        case .pink:                            return lightSectionAccent(for: .pink) // cinnabar 数据印章
+        case .pink:                            return Color(red: 0.180, green: 0.122, blue: 0.133) // #2E1F22 墨檀 deep mulberry-ink
         case .ink, .paperGreen, .leafGreen, .starryNight:
                                                return primaryText
         }
