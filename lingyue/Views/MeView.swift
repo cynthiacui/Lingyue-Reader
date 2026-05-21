@@ -588,8 +588,6 @@ struct AppearanceThemeView: View {
             List {
                 Section {
                     appThemeRow
-                } header: {
-                    Text("外观主题")
                 }
                 .listRowBackground(theme.cardBackground)
             }
