@@ -10,3 +10,7 @@ xcuserdata/
 Packages/*/.build/
 Packages/*/Package.resolved
 Packages/*/.swiftpm/
+
+# Local scratch dirs (design explorations, animation experiments)
+_animation/
+_design/
