@@ -1692,7 +1692,7 @@ private struct StackedCategoryShelf: View {
 
     private let cardHeight: CGFloat = 88
     private let peekOffset: CGFloat = 22
-    private let maxVisible = 3
+    private let maxVisible = 5
 
     private var sortedNovels: [Novel] {
         category.novels.sorted { lhs, rhs in
