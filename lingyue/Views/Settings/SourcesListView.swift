@@ -481,8 +481,7 @@ struct SourcesListView: View {
                 )
             }
             entries = merged.sorted { lhs, rhs in
-                if lhs.priority != rhs.priority { return lhs.priority < rhs.priority }
-                return lhs.rule.name < rhs.rule.name
+                lhs.rule.name.localizedStandardCompare(rhs.rule.name) == .orderedAscending
             }
             loadError = nil
         } catch {
@@ -546,9 +545,17 @@ struct SourcesListView: View {
         // chain produce all four ✓ even when most candidates are dead.
         var candidates: [URL] = []
         if rule.search != nil || rule.jsonAPI?.search != nil {
-            if let hits = try? await source.search("一"), !hits.isEmpty {
-                await persistVerification(rule: rule, block: .search, passed: true)
-                candidates.append(contentsOf: hits.prefix(8).map(\.detailURL))
+            // Probe with a single common char first, then a 2-char fallback.
+            // A few mainland CMS clones (daweixs) reject keywords whose
+            // GB18030 byte length is < 4 — a single Chinese char is 2 bytes
+            // and produces a "关键字过短" error page, so the smoke test for
+            // those sites never marks search as 已识别 without the fallback.
+            for probe in ["一", "小说"] {
+                if let hits = try? await source.search(probe), !hits.isEmpty {
+                    await persistVerification(rule: rule, block: .search, passed: true)
+                    candidates.append(contentsOf: hits.prefix(8).map(\.detailURL))
+                    break
+                }
             }
         }
         let homepageCandidates = await findHomepageDetailURLs(rule: rule, limit: 8)

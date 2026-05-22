@@ -60,19 +60,15 @@ public struct InternalSourceRegistry: BookSourceRegistry {
         let enabledUserRules = userRules.filter { preferences[$0.id]?.isEnabled ?? true }
         let enabledBundled = bundled.filter { preferences[$0.id]?.isEnabled ?? true }
 
-        // Stable sort within each rule bucket: priority asc, then name asc.
-        // `Int.max` is the default for unknown keys, so freshly-seeded rules
-        // sink to the bottom until the user reorders them — but they stay
-        // visible, never hidden by missing preference state.
-        func key(_ rule: SourceRule) -> (Int, String) {
-            (preferences[rule.id]?.priority ?? .max, rule.name)
+        // Merge user + bundled into one alphabetic list. Dedup by UUID above
+        // already preserves user-edits-win semantics, so the buckets no
+        // longer need to be kept separate. `localizedStandardCompare` gives
+        // pinyin-aware ordering for Chinese names.
+        let mergedRules = (enabledUserRules + enabledBundled).sorted { lhs, rhs in
+            lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending
         }
-        let sortedUser = enabledUserRules.sorted { key($0) < key($1) }
-        let sortedBundled = enabledBundled.sorted { key($0) < key($1) }
-
-        let userSources: [any BookSource] = sortedUser.map { $0.makeBookSource(loader: loader) }
-        let bundledSources: [any BookSource] = sortedBundled.map { $0.makeBookSource(loader: loader) }
-        return userSources + bundledSources + fastPathAdapters
+        let ruleSources: [any BookSource] = mergedRules.map { $0.makeBookSource(loader: loader) }
+        return ruleSources + fastPathAdapters
     }
 
     public func searchableSources() async throws -> [any BookSource] {

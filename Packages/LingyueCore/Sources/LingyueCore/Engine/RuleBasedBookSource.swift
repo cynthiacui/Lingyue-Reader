@@ -600,13 +600,16 @@ public struct RuleBasedBookSource: BookSource {
                 guard !lower.isEmpty, !generic.contains(lower) else { continue }
                 out.insert(lower)
                 // Several legacy CMS templates encode chapter URLs as
-                // `<bookID>_<chapterID>.html` rather than nesting the
-                // chapter under the book directory (e.g. zhswx's
-                // `/read/58860_19603916.html` against `/chapter/58860.html`).
-                // Splitting on `_` lets the bookID overlap with the
-                // catalog's segments so the path-overlap check doesn't
-                // false-positive every real chapter as a nav link.
-                for part in lower.split(whereSeparator: { $0 == "_" || $0 == "-" }) {
+                // `<bookID>_<chapterID>.html`, `<bookID>-<chapterID>` or
+                // `<bookID>,<chapterID>` rather than nesting the chapter
+                // under the book directory (zhswx's
+                // `/read/58860_19603916.html` against `/chapter/58860.html`,
+                // hjwzw's `/Book/Read/35120,7892358` against
+                // `/Book/Chapter/35120`). Splitting on these separators
+                // lets the bookID overlap with the catalog's segments so
+                // the path-overlap check doesn't false-positive every real
+                // chapter as a nav link.
+                for part in lower.split(whereSeparator: { $0 == "_" || $0 == "-" || $0 == "," }) {
                     let str = String(part)
                     guard !str.isEmpty, !generic.contains(str) else { continue }
                     out.insert(str)

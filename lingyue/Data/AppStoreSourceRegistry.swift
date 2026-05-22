@@ -43,9 +43,7 @@ public struct AppStoreSourceRegistry: LingyueCore.BookSourceRegistry {
         }
         let visible = rules.filter { preferences[$0.id]?.isEnabled ?? true }
         let sorted = visible.sorted { lhs, rhs in
-            let lp = preferences[lhs.id]?.priority ?? .max
-            let rp = preferences[rhs.id]?.priority ?? .max
-            return lp != rp ? lp < rp : lhs.name < rhs.name
+            lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending
         }
         return sorted.map { $0.makeBookSource(loader: loader) }
     }
