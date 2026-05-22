@@ -5,7 +5,8 @@ import UIKit
 /// SwiftUI's `.toolbar(.hidden, for: .tabBar)` which on iOS 17 fades the tab bar back in only
 /// after the navigation pop animation completes — visibly delayed for the user.
 ///
-/// `viewDidAppear` hides the tab bar; `viewWillDisappear` shows it again, which fires before
+/// `viewWillAppear` hides the tab bar (fires *before* the push animation starts, so the bar is
+/// gone as the reader slides in); `viewWillDisappear` shows it again, which fires before
 /// the pop animation has finished, so the tab bar is already in place when Library is revealed.
 ///
 /// iPad iOS 18+ renders the tabs as a floating tab bar / sidebar that the legacy
@@ -35,8 +36,8 @@ final class TabBarVisibilityController: UIViewController {
         view.backgroundColor = .clear
     }
 
-    override func viewDidAppear(_ animated: Bool) {
-        super.viewDidAppear(animated)
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
         apply(targetHidden)
     }
 
@@ -46,7 +47,7 @@ final class TabBarVisibilityController: UIViewController {
     }
 
     func applyIfVisible() {
-        guard isViewLoaded, view.window != nil else { return }
+        guard isViewLoaded, view.window != nil, tabBarController != nil else { return }
         apply(targetHidden)
     }
 
