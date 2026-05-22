@@ -3,6 +3,24 @@ import Foundation
 import UIKit
 import NaturalLanguage
 
+/// One row of the Reader first-launch help popup. Icon + short title +
+/// one-line detail, mapped to a specific reader affordance so the icon
+/// matches the actual toolbar button the user will look for.
+private struct ReaderHelpItem: Identifiable {
+    let id = UUID()
+    let icon: String
+    let title: String
+    let detail: String
+}
+
+private let readerHelpItems: [ReaderHelpItem] = [
+    ReaderHelpItem(icon: "hand.tap", title: "翻页方式", detail: "左右两侧轻点翻页 · 中央轻点呼出工具栏 · 横向滑动同样可翻页"),
+    ReaderHelpItem(icon: "list.bullet", title: "章节目录", detail: "工具栏右侧的列表按钮可跨章节快速跳转"),
+    ReaderHelpItem(icon: "textformat.size", title: "字号与排版", detail: "调节字号、行距、字体与翻页方式，可开启滚读"),
+    ReaderHelpItem(icon: "sun.max", title: "亮度调节", detail: "太阳按钮独立调整屏幕亮度，不影响系统设置"),
+    ReaderHelpItem(icon: "arrow.left.arrow.right", title: "切换书源", detail: "同一本书在不同源之间一键切换")
+]
+
 struct ReaderView: View {
     let novel: Novel
 
@@ -37,6 +55,10 @@ struct ReaderView: View {
     @AppStorage("reader.autoScroll") private var autoScroll = false
     @AppStorage("reader.autoScrollSeconds") private var autoScrollSeconds = 6.0
     @AppStorage("reader.cacheEnabled") private var cacheEnabled = true
+    /// One-shot onboarding flag for the in-reader help popup. Flipped to
+    /// `true` the first time the user dismisses the overlay; persists across
+    /// launches so the popup never reappears after the first read.
+    @AppStorage("reader.hasSeenHelpOverlay") private var hasSeenReaderHelpOverlay = false
 
     @State private var currentChapterIndex = 0
     @State private var currentChapterPageIndex = 0
@@ -352,7 +374,17 @@ struct ReaderView: View {
                     )
                     .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
+
+                // First-launch help popup. Sits at the top of the ZStack so its
+                // dim scrim covers every reader chrome layer, and its own gesture
+                // swallows taps so the user can't accidentally page-turn while
+                // the introduction is up.
+                if !hasSeenReaderHelpOverlay {
+                    ReaderHelpPopup(onDismiss: dismissReaderHelpOverlay)
+                        .transition(.opacity)
+                }
             }
+            .animation(.easeInOut(duration: 0.28), value: hasSeenReaderHelpOverlay)
             .onAppear {
                 ratchetStableSafeAreaInsets(top: proxy.safeAreaInsets.top,
                                             bottom: proxy.safeAreaInsets.bottom)
@@ -1832,6 +1864,12 @@ struct ReaderView: View {
         }
     }
 
+    private func dismissReaderHelpOverlay() {
+        withAnimation(.easeInOut(duration: 0.28)) {
+            hasSeenReaderHelpOverlay = true
+        }
+    }
+
     private func goToPreviousPage(pages: [ReaderPageItem]) {
         guard !showChapterPicker else { return }
         let step = useTwoColumn ? 2 : 1
@@ -3133,5 +3171,75 @@ private struct BookSourceSwitcherSheet: View {
         }
         streamTask = task
         await task.value
+    }
+}
+
+/// First-launch help popup shown the first time the user opens a reader.
+/// Mirror of `LibraryHelpPopup` but with reader-specific affordances. The
+/// dim scrim ignores safe areas so it covers the status-bar region even
+/// while the reader keeps the bar hidden.
+private struct ReaderHelpPopup: View {
+    @Environment(\.appTheme) private var theme
+
+    let onDismiss: () -> Void
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.55)
+                .ignoresSafeArea()
+                .contentShape(Rectangle())
+                .onTapGesture(perform: onDismiss)
+
+            VStack(spacing: 18) {
+                VStack(spacing: 6) {
+                    Text("开始阅读")
+                        .font(.system(size: 20, weight: .semibold))
+                        .foregroundStyle(theme.primaryText)
+                    Text("阅读手势速览")
+                        .font(.system(size: 13))
+                        .foregroundStyle(theme.secondaryText)
+                }
+
+                VStack(alignment: .leading, spacing: 14) {
+                    ForEach(readerHelpItems) { item in
+                        HStack(alignment: .top, spacing: 12) {
+                            Image(systemName: item.icon)
+                                .font(.system(size: 16, weight: .semibold))
+                                .foregroundStyle(theme.accent)
+                                .frame(width: 28, height: 28)
+                                .background(
+                                    Circle().fill(theme.accent.opacity(0.12))
+                                )
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(item.title)
+                                    .font(.system(size: 14, weight: .semibold))
+                                    .foregroundStyle(theme.primaryText)
+                                Text(item.detail)
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(theme.secondaryText)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            Spacer(minLength: 0)
+                        }
+                    }
+                }
+
+                Button(action: onDismiss) {
+                    Text("开始阅读")
+                        .font(.system(size: 15, weight: .bold, design: .rounded))
+                        .foregroundStyle(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                        .background(Capsule().fill(theme.accent))
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(22)
+            .frame(maxWidth: 320)
+            .background(theme.cardBackground)
+            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .shadow(color: .black.opacity(0.3), radius: 18, x: 0, y: 10)
+            .padding(.horizontal, 24)
+        }
     }
 }
