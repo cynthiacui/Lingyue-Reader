@@ -3091,6 +3091,16 @@ private struct BookSourceSwitcherSheet: View {
                     ForEach(candidates) { candidate in
                         candidateRow(candidate)
                     }
+
+                    // Inline "still searching" footer. The aggregated stream
+                    // emits sources incrementally, so the centered loading
+                    // view goes away as soon as the first batch arrives —
+                    // without this, users see a stable list and assume the
+                    // search is finished even though slower sources are
+                    // still being scraped.
+                    if !hasFinishedLoading {
+                        searchingMoreFooter
+                    }
                 }
                 .padding(.top, 4)
             }
@@ -3098,6 +3108,19 @@ private struct BookSourceSwitcherSheet: View {
             .padding(.top, 14)
             .padding(.bottom, 24)
         }
+    }
+
+    private var searchingMoreFooter: some View {
+        HStack(spacing: 8) {
+            ProgressView()
+                .controlSize(.small)
+                .tint(theme.accent)
+            Text("正在搜索更多书源…")
+                .font(.footnote)
+                .foregroundStyle(theme.secondaryText)
+        }
+        .frame(maxWidth: .infinity, alignment: .center)
+        .padding(.vertical, 14)
     }
 
     private func candidateRow(_ candidate: BookSourceCandidate) -> some View {
