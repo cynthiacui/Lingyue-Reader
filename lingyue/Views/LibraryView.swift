@@ -106,11 +106,12 @@ private struct LibraryHelpItem: Identifiable {
 }
 
 private let libraryHelpItems: [LibraryHelpItem] = [
+    LibraryHelpItem(icon: "book.fill", title: "继续阅读", detail: "顶部卡片直达上次的章节，滚动时自动收起为细条"),
     LibraryHelpItem(icon: "doc.badge.plus", title: "导入本地小说", detail: "左上角按钮导入 TXT / EPUB / HTML 文件"),
-    LibraryHelpItem(icon: "arrow.down.circle", title: "下载管理", detail: "右上角查看进度，暂停或重试"),
-    LibraryHelpItem(icon: "magnifyingglass", title: "搜索书架", detail: "下拉呼出搜索栏，按书名或作者查找"),
-    LibraryHelpItem(icon: "square.grid.2x2", title: "分类管理", detail: "用分类整理书架，导入后可随时归类"),
-    LibraryHelpItem(icon: "hand.tap", title: "书籍交互", detail: "点击阅读 · 长按移动分类 · 左滑清理或删除")
+    LibraryHelpItem(icon: "arrow.down.circle", title: "下载管理", detail: "右上角查看下载进度，暂停或重试"),
+    LibraryHelpItem(icon: "magnifyingglass", title: "搜索书架", detail: "下拉呼出搜索栏，跨分类按书名或作者查找"),
+    LibraryHelpItem(icon: "square.grid.2x2", title: "分类整理", detail: "点击分类标题全屏展开，长按书籍可移动分类"),
+    LibraryHelpItem(icon: "hand.tap", title: "左滑操作", detail: "在书籍上左滑可清理已下载内容或删除")
 ]
 
 struct LibraryView: View {
