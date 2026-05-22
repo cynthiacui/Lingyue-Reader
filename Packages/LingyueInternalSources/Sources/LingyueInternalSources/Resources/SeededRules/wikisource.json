@@ -107,10 +107,10 @@
         { "regexReplace": { "pattern": "<table class=\"[^\"]*ws-(?:footer|noexport)[^\"]*\"[\\s\\S]*?</table>", "replacement": "" } },
         { "regexReplace": { "pattern": "<div class=\"printfooter\"[\\s\\S]*?</div>", "replacement": "" } },
         { "regexReplace": { "pattern": "<!--[\\s\\S]*?-->", "replacement": "" } },
+        { "regexReplace": { "pattern": "</p>", "replacement": "\n\n" } },
         { "brToNewline": {} },
         { "stripHTML": {} },
-        { "decodeHTMLEntities": {} },
-        { "trim": {} }
+        { "decodeHTMLEntities": {} }
       ]
     },
     "maxBodyPages": 1
