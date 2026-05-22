@@ -963,11 +963,12 @@ struct ReaderView: View {
         let backWidth: CGFloat = 52
         let globeWidth: CGFloat = chapterURL != nil ? 40 : 0
         let switcherWidth: CGFloat = 40
+        let brightnessWidth: CGFloat = 44
         let fontWidth: CGFloat = 44
         let listWidth: CGFloat = 52
         let leftGroupWidth = backWidth + globeWidth + switcherWidth
-        let rightGroupWidth = fontWidth + listWidth
-        let minGap: CGFloat = 8
+        let rightGroupWidth = brightnessWidth + fontWidth + listWidth
+        let minGap: CGFloat = 12
         let titleSidePadding = max(leftGroupWidth, rightGroupWidth) + minGap
 
         return VStack {
@@ -1029,7 +1030,7 @@ struct ReaderView: View {
                         } label: {
                             Image(systemName: "sun.max")
                                 .font(.system(size: 19, weight: .semibold))
-                                .frame(width: fontWidth, height: 44)
+                                .frame(width: brightnessWidth, height: 44)
                                 .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
