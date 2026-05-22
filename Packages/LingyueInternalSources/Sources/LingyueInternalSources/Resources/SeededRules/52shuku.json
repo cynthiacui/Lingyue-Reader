@@ -54,6 +54,10 @@
       "selector": "h1, h2.title",
       "transforms": [{ "trim": {} }]
     },
+    "authorField": {
+      "selector": "article.article-content a[href*=\"/zuozhe/\"]",
+      "transforms": [{ "trim": {} }]
+    },
     "catalogURLField": {
       "selector": "link[rel=canonical]",
       "attribute": "href",
