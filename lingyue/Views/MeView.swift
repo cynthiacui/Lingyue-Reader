@@ -902,11 +902,18 @@ struct AboutSettingsView: View {
 
 #if !LINGYUE_INTERNAL
     private var usageGuideRow: some View {
-        Link(destination: URL(string: "https://github.com/cynthiacui/Lingyue-Reader#使用指南")!) {
+        // Percent-encode the CJK fragment so Safari actually scrolls to the
+        // `## 使用指南` anchor instead of just opening the repo root.
+        Link(destination: URL(string: "https://github.com/cynthiacui/Lingyue-Reader#%E4%BD%BF%E7%94%A8%E6%8C%87%E5%8D%97")!) {
             HStack {
-                Label("使用指南", systemImage: "book.closed")
-                    .font(.headline)
-                    .foregroundStyle(theme.primaryText)
+                Label {
+                    Text("使用指南")
+                        .font(.headline)
+                        .foregroundStyle(theme.primaryText)
+                } icon: {
+                    Image(systemName: "book.closed")
+                        .foregroundStyle(theme.accent)
+                }
                 Spacer()
                 Image(systemName: "arrow.up.right.square")
                     .font(.system(size: 13, weight: .semibold))

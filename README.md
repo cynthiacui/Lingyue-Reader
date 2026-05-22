@@ -74,12 +74,10 @@ A：网站结构变更可能让旧规则失效。请来 [Issues](https://github.
 ### 发现
 
 <p>
-  <img src="docs/screenshots/03-discovery-empty.png" alt="发现页空状态" width="280">
-  <img src="docs/screenshots/04-discovery-with-source.png" alt="加入书源后" width="280">
-</p>
-<p>
-  <img src="docs/screenshots/05-discovery-search-results.png" alt="搜索结果" width="280">
-  <img src="docs/screenshots/06-sources-list.png" alt="书源管理" width="280">
+  <img src="docs/screenshots/03-discovery-empty.png" alt="发现页空状态" width="200">
+  <img src="docs/screenshots/04-discovery-with-source.png" alt="加入书源后" width="200">
+  <img src="docs/screenshots/05-discovery-search-results.png" alt="搜索结果" width="200">
+  <img src="docs/screenshots/06-sources-list.png" alt="书源管理" width="200">
 </p>
 
 App Store 版的「发现」页默认是空壳——导入 `lingyue-sources.json` 后，「我添加的书源」区会列出每一个站点磁贴，轻点直接在内置浏览器中打开。顶部的搜索框聚合所有已启用的书源，每个书源返回结果后即刻流式展示，多个书源同时收录的同一本书会合并成一行并以小标签列出来源。右上角的「地球」按钮进入书源管理页面，可逐个启用 / 禁用、导入、导出或手动新建书源。
