@@ -20,13 +20,17 @@ struct MeView: View {
     }
 
     var body: some View {
-        ZStack {
+        // Compute once per render — the underlying events / books / novels arrays
+        // can each be in the thousands, and the hero card + metrics row used to
+        // re-scan them five separate times per body invocation.
+        let metrics = heroMetrics
+        return ZStack {
             ThemeBackgroundView()
 
             ScrollView {
                 VStack(spacing: 16) {
-                    heroBanner
-                    metricsRow
+                    heroBanner(metrics: metrics)
+                    metricsRow(metrics: metrics)
                     quickAccessGroup
                 }
                 .padding(.horizontal, 16)
@@ -48,25 +52,25 @@ struct MeView: View {
     /// stats onto the 我 nav stack). Lives in a `ScrollView` so the card
     /// scrolls with the rest of the page; List rows swallow nested-button
     /// hits in iOS 26, so we don't use one here.
-    private var heroBanner: some View {
+    private func heroBanner(metrics: HeroMetrics) -> some View {
         Button {
             tabSelection.selectedTab = .stats
         } label: {
             ReadingIdentityCard(
-                streak: currentStreak,
-                weeklyMinutes: weeklyMinutes,
-                currentBook: mostRecentlyOpenedBook
+                streak: metrics.currentStreak,
+                weeklyMinutes: metrics.weeklyMinutes,
+                currentBook: metrics.mostRecentlyOpenedBook
             )
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }
 
-    private var metricsRow: some View {
+    private func metricsRow(metrics: HeroMetrics) -> some View {
         HStack(spacing: 10) {
-            MetricChip(value: booksFinishedLabel, label: "已读")
-            MetricChip(value: booksInProgressLabel, label: "正在读")
-            MetricChip(value: totalCharactersLabel, label: "已读字数")
+            MetricChip(value: "\(metrics.booksFinished)", label: "已读")
+            MetricChip(value: "\(metrics.booksInProgress)", label: "正在读")
+            MetricChip(value: metrics.totalCharactersLabel, label: "已读字数")
         }
     }
 
@@ -160,42 +164,63 @@ struct MeView: View {
 
     // MARK: - Hero data
 
-    private var mostRecentlyOpenedBook: Novel? {
-        libraryStore.allNovels
-            .filter { $0.lastOpenedAt != nil }
-            .max(by: { ($0.lastOpenedAt ?? .distantPast) < ($1.lastOpenedAt ?? .distantPast) })
+    /// All numbers shown on the hero card + metrics chips in one shot. Folded into
+    /// a single struct so body computes them in a single O(n) pass rather than
+    /// five separate full scans of the events / books / novels arrays (each of
+    /// which can be in the thousands for a long-time user). Recomputed only when
+    /// body re-invokes; SwiftUI's @Published change tracking gates that.
+    fileprivate struct HeroMetrics {
+        let currentStreak: Int
+        let weeklyMinutes: Int
+        let mostRecentlyOpenedBook: Novel?
+        let booksFinished: Int
+        let booksInProgress: Int
+        let totalCharactersLabel: String
     }
 
-    /// Same source of truth as the 统计 tab so the streak badge stays consistent
-    /// across surfaces. `ReadingStatsLedger.currentStreak()` weighs days by their
-    /// total reading duration (not just event presence) and grace-permits today.
-    private var currentStreak: Int {
-        libraryStore.readingStats.currentStreak()
-    }
-
-    /// Rolling 7-day minutes — keeps "本周" responsive without an abrupt midnight reset.
-    private var weeklyMinutes: Int {
+    private var heroMetrics: HeroMetrics {
+        let stats = libraryStore.readingStats
         let cutoff = Date().addingTimeInterval(-7 * 24 * 60 * 60)
-        let seconds = libraryStore.readingStats.events
-            .filter { $0.timestamp >= cutoff }
-            .reduce(0.0) { $0 + $1.durationSeconds }
-        return max(Int(seconds / 60), 0)
+        var weeklySeconds: TimeInterval = 0
+        var totalCharacters = 0
+        for event in stats.events {
+            if event.timestamp >= cutoff {
+                weeklySeconds += event.durationSeconds
+            }
+            totalCharacters += event.characterCount
+        }
+
+        var finished = 0
+        var inProgress = 0
+        for book in stats.books where !book.isDeleted {
+            if book.currentProgress >= 0.99 {
+                finished += 1
+            } else if book.currentProgress > 0 {
+                inProgress += 1
+            }
+        }
+
+        var mostRecent: Novel?
+        var mostRecentAt: Date = .distantPast
+        for novel in libraryStore.allNovels {
+            guard let lastOpened = novel.lastOpenedAt else { continue }
+            if lastOpened > mostRecentAt {
+                mostRecentAt = lastOpened
+                mostRecent = novel
+            }
+        }
+
+        return HeroMetrics(
+            currentStreak: stats.currentStreak(),
+            weeklyMinutes: max(Int(weeklySeconds / 60), 0),
+            mostRecentlyOpenedBook: mostRecent,
+            booksFinished: finished,
+            booksInProgress: inProgress,
+            totalCharactersLabel: formatCharactersLabel(totalCharacters)
+        )
     }
 
-    private var booksFinishedLabel: String {
-        let count = libraryStore.readingStats.books.filter { !$0.isDeleted && $0.currentProgress >= 0.99 }.count
-        return "\(count)"
-    }
-
-    private var booksInProgressLabel: String {
-        let count = libraryStore.readingStats.books.filter {
-            !$0.isDeleted && $0.currentProgress > 0 && $0.currentProgress < 0.99
-        }.count
-        return "\(count)"
-    }
-
-    private var totalCharactersLabel: String {
-        let total = libraryStore.readingStats.events.reduce(0) { $0 + $1.characterCount }
+    private func formatCharactersLabel(_ total: Int) -> String {
         if total < 10_000 { return "\(total)" }
         if total < 100_000_000 {
             let wan = Double(total) / 10_000
@@ -1179,12 +1204,18 @@ private struct ReadingIdentityCard: View {
     }
 
     private var lunarLikeDateString: String {
-        let now = Date()
+        Self.lunarLikeFormatter.string(from: Date())
+    }
+
+    /// Hoisted to a static so it's built once, not every body invocation.
+    /// `DateFormatter()` initialization is stateful (locale + format parsing)
+    /// and costs 1-2ms per construction.
+    private static let lunarLikeFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "zh_CN")
         formatter.dateFormat = "M月d日 · EEEE"
-        return formatter.string(from: now)
-    }
+        return formatter
+    }()
 
     private func displayed(_ text: String) -> String {
         ChineseTextConverter.display(text, usesTraditionalChinese: usesTraditionalChinese)

@@ -380,12 +380,23 @@ final class LibraryStore: ObservableObject {
         categories.flatMap(\.novels)
     }
 
-    var currentlyReading: [Novel] {
-        allNovels
-            .filter { $0.lastOpenedAt != nil }
-            .sorted { lhs, rhs in
-                (lhs.lastOpenedAt ?? .distantPast) > (rhs.lastOpenedAt ?? .distantPast)
+    /// The novel the user has most recently opened, or nil if nothing has been
+    /// opened yet. Earlier this was a fully sorted array (`O(N log N)` per
+    /// access) but the only caller takes `.first` — `max(by:)` does the same
+    /// work as a single O(N) pass.
+    var mostRecentlyOpenedNovel: Novel? {
+        var best: Novel?
+        var bestDate: Date = .distantPast
+        for category in categories {
+            for novel in category.novels {
+                guard let opened = novel.lastOpenedAt else { continue }
+                if opened > bestDate {
+                    bestDate = opened
+                    best = novel
+                }
             }
+        }
+        return best
     }
 
     func containsBook(sourceURLString: String?, title: String) -> Bool {

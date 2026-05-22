@@ -131,6 +131,10 @@ struct LibraryView: View {
     @State private var isShowingTxtPicker = false
     @State private var txtImportToast: String?
     @State private var searchText = ""
+    /// Tracks whether the "继续阅读" hero card has collapsed into its compact
+    /// rail. Driven by scroll offset — flips as soon as the user starts moving
+    /// the list, so the books below get more room without waiting for a big drag.
+    @State private var isHeroMinimized: Bool = false
     @Namespace private var stackNamespace
 
     /// One-shot onboarding flag. Flipped to `true` the first time the user
@@ -141,13 +145,6 @@ struct LibraryView: View {
     private var horizontalMargin: CGFloat {
         if dynamicTypeSize.isAccessibilitySize { return 12 }
         return horizontalSizeClass == .compact ? 14 : 22
-    }
-
-    private var readingColumns: [GridItem] {
-        [
-            GridItem(.flexible(), spacing: 10, alignment: .top),
-            GridItem(.flexible(), spacing: 10, alignment: .top)
-        ]
     }
 
     private var isLibraryEmpty: Bool {
@@ -209,8 +206,9 @@ struct LibraryView: View {
                     )
                 }
                 .coordinateSpace(name: "LibraryScroll")
-                .onPreferenceChange(LibraryScrollOffsetKey.self) { _ in
+                .onPreferenceChange(LibraryScrollOffsetKey.self) { offset in
                     closeActiveSwipe()
+                    updateHeroMinimized(forScrollOffset: offset)
                 }
                 // Mail-style global dismissal: any tap inside the library closes an
                 // open swipe alongside whatever the tapped child does. simultaneous
@@ -341,7 +339,7 @@ struct LibraryView: View {
         .navigationBarTitleDisplayMode(.inline)
         .searchable(
             text: $searchText,
-            placement: .navigationBarDrawer(displayMode: .always),
+            placement: .navigationBarDrawer(displayMode: .automatic),
             prompt: "搜索书名或作者"
         )
         .onChange(of: searchText) { _, _ in closeActiveSwipe() }
@@ -500,48 +498,60 @@ struct LibraryView: View {
 
     @ViewBuilder
     private var currentlyReadingSection: some View {
-        if !libraryStore.currentlyReading.isEmpty {
-            VStack(alignment: .leading, spacing: 10) {
-                CompactSectionHeader(title: "最近阅读")
+        if let novel = libraryStore.mostRecentlyOpenedNovel {
+            let actions = downloadActions(for: novel)
+            ContinueReadingHero(
+                novel: novel,
+                isMinimized: isHeroMinimized,
+                onTap: { bookToOpen = novel }
+            )
+            .contextMenu {
+                Button {
+                    presentCategoryEditor(for: novel)
+                } label: {
+                    Label("移动到分类", systemImage: "folder")
+                }
 
-                LazyVGrid(columns: readingColumns, spacing: 10) {
-                    ForEach(Array(libraryStore.currentlyReading.prefix(2))) { novel in
-                        let actions = downloadActions(for: novel)
-                        CompactReadingCard(novel: novel)
-                            .contentShape(Rectangle())
-                            .onTapGesture { bookToOpen = novel }
-                            .contextMenu {
-                                Button {
-                                    presentCategoryEditor(for: novel)
-                                } label: {
-                                    Label("移动到分类", systemImage: "folder")
-                                }
-
-                                if let onDownload = actions.onDownload {
-                                    Button {
-                                        onDownload()
-                                    } label: {
-                                        Label("下载本书", systemImage: "arrow.down.circle")
-                                    }
-                                }
-
-                                if let onClearDownloadData = actions.onClearDownloadData {
-                                    Button {
-                                        onClearDownloadData()
-                                    } label: {
-                                        Label("清理缓存", systemImage: "arrow.down.circle.dotted")
-                                    }
-                                }
-
-                                Button(role: .destructive) {
-                                    libraryStore.deleteBook(novel)
-                                } label: {
-                                    Label("删除", systemImage: "trash")
-                                }
-                            }
+                if let onDownload = actions.onDownload {
+                    Button {
+                        onDownload()
+                    } label: {
+                        Label("下载本书", systemImage: "arrow.down.circle")
                     }
                 }
+
+                if let onClearDownloadData = actions.onClearDownloadData {
+                    Button {
+                        onClearDownloadData()
+                    } label: {
+                        Label("清理缓存", systemImage: "arrow.down.circle.dotted")
+                    }
+                }
+
+                Button(role: .destructive) {
+                    libraryStore.deleteBook(novel)
+                } label: {
+                    Label("删除", systemImage: "trash")
+                }
             }
+        }
+    }
+
+    /// Maps the live scroll offset to the hero card's expanded/minimized state.
+    /// The preference reports the content's top edge in the scroll coordinate
+    /// space — 0 at rest, negative as the user scrolls down. A small hysteresis
+    /// (collapse at -6pt, expand at -2pt) keeps the spring from chattering when
+    /// the user pauses mid-scroll near the threshold.
+    private func updateHeroMinimized(forScrollOffset offset: CGFloat) {
+        let shouldMinimize: Bool
+        if isHeroMinimized {
+            shouldMinimize = offset < -2
+        } else {
+            shouldMinimize = offset < -6
+        }
+        guard shouldMinimize != isHeroMinimized else { return }
+        withAnimation(.spring(response: 0.34, dampingFraction: 0.86)) {
+            isHeroMinimized = shouldMinimize
         }
     }
 
@@ -1571,43 +1581,211 @@ private struct CompactSectionHeader: View {
     }
 }
 
-private struct CompactReadingCard: View {
+/// Big "继续阅读" hero card at the top of the library. It has two layouts:
+///
+/// - Expanded (at rest): tall cover with a circular progress badge overlay, title,
+///   chapter, a one-line "stopped at" timestamp, and a "继续阅读 →" affordance.
+/// - Minimized (during scroll): thin rail with a small cover, title + chapter,
+///   percentage, and a short progress bar. Driven by `LibraryView`'s scroll-offset
+///   observer so the rail appears as soon as the user starts scrolling.
+private struct ContinueReadingHero: View {
     @Environment(\.appTheme) private var theme
-    let novel: Novel
     @AppStorage("reader.usesTraditionalChinese") private var usesTraditionalChinese = false
+    let novel: Novel
+    let isMinimized: Bool
+    let onTap: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
+        VStack(alignment: .leading, spacing: 10) {
+            if !isMinimized {
+                Text("继 续 阅 读")
+                    .font(.system(size: 11, weight: .semibold))
+                    .tracking(2.6)
+                    .foregroundStyle(theme.secondaryText.opacity(0.85))
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+                    .padding(.leading, 2)
+            }
+
+            Button(action: onTap) {
+                Group {
+                    if isMinimized {
+                        minimizedCard
+                    } else {
+                        expandedCard
+                    }
+                }
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    private var expandedCard: some View {
+        HStack(alignment: .top, spacing: 16) {
+            ZStack(alignment: .bottomTrailing) {
+                BookCover(novel: novel, width: 96, height: 134)
+
+                progressBadge
+                    .offset(x: 8, y: 8)
+            }
+
+            VStack(alignment: .leading, spacing: 0) {
                 Text(displayed(novel.title))
-                    .font(.system(size: 15, weight: .semibold, design: .rounded))
+                    .font(.system(size: 19, weight: .semibold))
                     .foregroundStyle(theme.primaryText)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+
+                Text(displayed(novel.lastChapter))
+                    .font(.system(size: 13, design: .serif))
+                    .foregroundStyle(theme.secondaryText)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.82)
+                    .padding(.top, 3)
 
-                Spacer(minLength: 4)
+                VStack(alignment: .leading, spacing: 1) {
+                    if let stopped = stoppedTimeLine() {
+                        Text(stopped)
+                            .font(.system(size: 11))
+                            .foregroundStyle(theme.secondaryText.opacity(0.85))
+                            .lineLimit(1)
+                    }
+                    if novel.readMinutes > 0 {
+                        Text("已读 \(novel.readMinutes) 分钟")
+                            .font(.system(size: 11))
+                            .foregroundStyle(theme.secondaryText.opacity(0.85))
+                            .lineLimit(1)
+                    }
+                }
+                .padding(.top, 8)
 
+                Spacer(minLength: 6)
+
+                HStack(spacing: 5) {
+                    Text("继续阅读")
+                        .font(.system(size: 13, weight: .semibold))
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 11, weight: .bold))
+                }
+                .foregroundStyle(theme.accent)
+            }
+            .frame(maxWidth: .infinity, minHeight: 134, alignment: .topLeading)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(theme.cardBackground)
+        )
+        .shadow(color: theme.cardShadow, radius: 14, x: 0, y: 6)
+    }
+
+    private var minimizedCard: some View {
+        HStack(spacing: 12) {
+            BookCover(novel: novel, width: 36, height: 50)
+
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Text("继续读")
+                        .font(.system(size: 9, weight: .bold))
+                        .tracking(1.4)
+                        .foregroundStyle(theme.accent)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(
+                            Capsule().fill(theme.accent.opacity(0.14))
+                        )
+                    Text(displayed(novel.title))
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(theme.primaryText)
+                        .lineLimit(1)
+                }
+                Text(displayed(novel.lastChapter))
+                    .font(.system(size: 12, design: .serif))
+                    .foregroundStyle(theme.secondaryText)
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 8)
+
+            VStack(alignment: .trailing, spacing: 5) {
                 Text("\(Int(novel.progress * 100))%")
                     .font(.system(size: 12, weight: .bold, design: .rounded))
                     .foregroundStyle(theme.accent)
-                    .fixedSize(horizontal: true, vertical: false)
+
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(theme.secondaryText.opacity(0.16))
+                        .frame(width: 54, height: 3)
+                    Capsule()
+                        .fill(theme.accent)
+                        .frame(width: 54 * max(min(novel.progress, 1.0), 0.02), height: 3)
+                }
             }
-
-            Text(displayed(novel.lastChapter))
-                .font(.system(size: 14, design: .serif))
-                .foregroundStyle(theme.secondaryText)
-                .lineLimit(1)
-                .minimumScaleFactor(0.85)
-
-            ProgressView(value: novel.progress)
-                .tint(theme.accent)
-                .controlSize(.small)
         }
-        .padding(10)
-        .frame(maxWidth: .infinity, minHeight: 84, alignment: .topLeading)
-        .background(theme.cardBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .shadow(color: theme.cardShadow, radius: 8, x: 0, y: 4)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(theme.cardBackground)
+        )
+        .shadow(color: theme.cardShadow.opacity(0.65), radius: 8, x: 0, y: 3)
+    }
+
+    private var progressBadge: some View {
+        let pct = max(min(novel.progress, 1.0), 0.0)
+        let percent = Int(pct * 100)
+        return ZStack {
+            Circle()
+                .fill(theme.cardBackground)
+                .frame(width: 38, height: 38)
+                .shadow(color: theme.cardShadow.opacity(0.55), radius: 3, x: 0, y: 1)
+
+            Circle()
+                .stroke(theme.secondaryText.opacity(0.18), lineWidth: 2.4)
+                .frame(width: 28, height: 28)
+
+            Circle()
+                .trim(from: 0, to: max(pct, 0.012))
+                .stroke(theme.accent, style: StrokeStyle(lineWidth: 2.4, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+                .frame(width: 28, height: 28)
+
+            Text("\(percent)%")
+                .font(.system(size: percent >= 100 ? 7.5 : 9, weight: .bold, design: .rounded))
+                .foregroundStyle(theme.accent)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+                .frame(width: 26)
+        }
+    }
+
+    /// Human-friendly "stopped at" line. Same-day reads keep a precise time so the
+    /// user remembers when they put the book down; older reads fall back to a
+    /// relative day count, then an absolute month/day once it's been a week+.
+    private func stoppedTimeLine() -> String? {
+        guard let lastOpenedAt = novel.lastOpenedAt else { return nil }
+        let calendar = Calendar.current
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+
+        if calendar.isDateInToday(lastOpenedAt) {
+            formatter.dateFormat = "HH:mm"
+            return "今天 \(formatter.string(from: lastOpenedAt)) 停下"
+        }
+        if calendar.isDateInYesterday(lastOpenedAt) {
+            formatter.dateFormat = "HH:mm"
+            return "昨天 \(formatter.string(from: lastOpenedAt)) 停下"
+        }
+        let dayDiff = calendar.dateComponents(
+            [.day],
+            from: calendar.startOfDay(for: lastOpenedAt),
+            to: calendar.startOfDay(for: Date())
+        ).day ?? 0
+        if (2...6).contains(dayDiff) {
+            return "\(dayDiff) 天前停下"
+        }
+        formatter.dateFormat = "M月d日"
+        return "\(formatter.string(from: lastOpenedAt)) 停下"
     }
 
     private func displayed(_ text: String) -> String {

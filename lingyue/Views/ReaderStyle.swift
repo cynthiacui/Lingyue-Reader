@@ -204,7 +204,8 @@ struct BookCover: View {
     @AppStorage("reader.usesTraditionalChinese") private var usesTraditionalChinese = false
 
     var body: some View {
-        ZStack(alignment: .bottomLeading) {
+        let centered = !hasCoverImage
+        ZStack(alignment: centered ? .center : .bottomLeading) {
             coverBackground
 
             Text(displayed(novel.title))
@@ -213,7 +214,8 @@ struct BookCover: View {
                 .lineSpacing(4)
                 .lineLimit(3)
                 .minimumScaleFactor(0.75)
-                .padding(10)
+                .multilineTextAlignment(centered ? .center : .leading)
+                .padding(centered ? 8 : 10)
         }
         .frame(width: width, height: height)
         .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
@@ -221,6 +223,12 @@ struct BookCover: View {
             RoundedRectangle(cornerRadius: 7, style: .continuous)
                 .stroke(.white.opacity(0.18), lineWidth: 1)
         )
+    }
+
+    private var hasCoverImage: Bool {
+        guard let s = novel.coverImageURLString,
+              URL(string: s) != nil else { return false }
+        return true
     }
 
     @ViewBuilder

@@ -707,13 +707,17 @@ struct ReadingStatsView: View {
     }
 
     private var availableCalendarMonths: [Date] {
-        let eventEarliest: Date? = libraryStore.readingStats.events.map(\.timestamp).min().flatMap {
-            calendar.dateInterval(of: .month, for: $0)?.start
-        }
+        // Earlier this property scanned every reading event with `.min()` on
+        // every Stats body render to figure out the earliest month worth
+        // showing. With long-time users having thousands of events that scan
+        // was on the hot path of every tab switch. Default to a fixed 24-month
+        // window back from today; if the user has navigated to an even earlier
+        // month, extend just enough to include it. The chevrons handle going
+        // further back when needed.
         let defaultStart = calendar.date(byAdding: .month, value: -23, to: currentMonthStart) ?? currentMonthStart
-        let candidates: [Date] = [defaultStart, eventEarliest ?? defaultStart, displayedCalendarMonth]
-        var cursor = candidates.min() ?? currentMonthStart
+        let earliest = min(defaultStart, displayedCalendarMonth)
         var months: [Date] = []
+        var cursor = earliest
         while cursor <= currentMonthStart {
             months.append(cursor)
             guard let next = calendar.date(byAdding: .month, value: 1, to: cursor) else { break }
@@ -741,6 +745,11 @@ struct ReadingStatsView: View {
             StatsBackgroundDim(palette: palette, isDark: isDarkStats)
 
             ScrollView {
+                // Compute the day-buckets once per body render and share with
+                // every card that needs them. Each Stats render used to do
+                // multiple full-events scans (calendar + heatmap + each month
+                // page); a single shared map cuts that down to one pass.
+                let buckets = bucketEventsByDay()
                 VStack(alignment: .leading, spacing: bodySpacing) {
                     heroCard
                     globalMetrics
@@ -748,9 +757,9 @@ struct ReadingStatsView: View {
                     rangePicker
                     periodSummary
                     sectionHeader(num: "贰", title: "日历", sub: "CALENDAR · NO.02")
-                    streakCalendarCard
+                    streakCalendarCard(buckets: buckets)
                     sectionHeader(num: "叁", title: "热力", sub: "HEATMAP · NO.03")
-                    heatmapCard
+                    heatmapCard(buckets: buckets)
                     sectionHeader(num: "肆", title: "旅程", sub: "JOURNEY · NO.04")
                     topBooksCard
                 }
@@ -865,14 +874,17 @@ struct ReadingStatsView: View {
                 Spacer()
             }
 
-            // The hero figure: a single 60pt serif glyph string. New York / Noto
-            // Serif via SwiftUI's `.serif` design — the only place on the page
-            // that uses this size, so it's unambiguously the focal point.
+            // The hero figure: a single serif glyph string. Set at 44pt rather
+            // than the old 60pt — that size combined with literal spaces in the
+            // duration string made the line read as four separate items instead
+            // of one focal duration. 44pt still gives the page an unambiguous
+            // headline since nothing else on the page approaches it.
             Text(formatDuration(totalDuration))
-                .font(.literarySerif(size: 60, weight: .light))
+                .font(.literarySerif(size: 44, weight: .light))
+                .tracking(-0.4)
                 .foregroundStyle(palette.heroFigure)
                 .lineLimit(1)
-                .minimumScaleFactor(0.5)
+                .minimumScaleFactor(0.55)
                 .padding(.top, 2)
 
             // Kaiti SC sub-line — Chinese cursive script reads as a hand-set
@@ -912,10 +924,10 @@ struct ReadingStatsView: View {
                             } label: {
                                 HStack(spacing: 4) {
                                     Text("今日 \(todayMinutes) / \(dailyGoalMinutes) 分钟")
-                                        .font(.system(size: 10.5, weight: .semibold))
-                                        .tracking(0.2)
+                                        .font(.system(size: 12, weight: .semibold))
+                                        .tracking(0.1)
                                     Image(systemName: "chevron.down")
-                                        .font(.system(size: 7.5, weight: .bold))
+                                        .font(.system(size: 8.5, weight: .bold))
                                 }
                                 .foregroundStyle(palette.secondaryText)
                             }
@@ -1038,9 +1050,17 @@ struct ReadingStatsView: View {
     /// every range card read identically — the serif figure here gives each
     /// 日/月/年 view a real editorial focal point.
     private var periodSummary: some View {
-        let duration = periodEvents.reduce(0) { $0 + $1.durationSeconds }
-        let pages = periodEvents.reduce(0) { $0 + $1.pageTurns }
-        let characters = periodEvents.reduce(0) { $0 + $1.characterCount }
+        // Earlier this card read `periodEvents` three times in a row, each
+        // recomputing the full-events filter. Single-pass tally instead.
+        let interval = selectedRange.interval(containing: Date(), calendar: calendar)
+        var duration: TimeInterval = 0
+        var pages = 0
+        var characters = 0
+        for event in libraryStore.readingStats.events where interval.contains(event.timestamp) {
+            duration += event.durationSeconds
+            pages += event.pageTurns
+            characters += event.characterCount
+        }
         let speed: Double = duration >= 60 ? Double(pages) / (duration / 60) : 0
         let hasPeriodData = duration > 0 || pages > 0 || characters > 0
 
@@ -1110,9 +1130,9 @@ struct ReadingStatsView: View {
         .statsCard()
     }
 
-    private var streakCalendarCard: some View {
+    private func streakCalendarCard(buckets: [Date: DailyEventTotals]) -> some View {
         let monthStart = calendar.dateInterval(of: .month, for: displayedCalendarMonth)?.start ?? displayedCalendarMonth
-        let summaries = monthlySummaries(containing: monthStart)
+        let summaries = monthlySummaries(containing: monthStart, buckets: buckets)
         let streak = libraryStore.readingStats.currentStreak(calendar: calendar)
         let longestStreak = longestStreak()
         let activeDays = summaries.filter { summary in
@@ -1124,7 +1144,12 @@ struct ReadingStatsView: View {
         let isCurrentMonth = calendar.isDate(monthStart, equalTo: currentMonthStart, toGranularity: .month)
         let activeDaysLabel = isCurrentMonth ? "本月阅读" : "\(calendar.component(.month, from: monthStart))月阅读"
         let weekRows = weeksInMonth(containing: monthStart)
-        let calendarHeight: CGFloat = 22 + CGFloat(weekRows) * 43
+        // Earlier this was `22 + rows * 43` which fit the raw content but left
+        // no slack — on 6-row months TabView's page-style internal padding ate
+        // into the top, clipping the first day row. The extra header allowance
+        // + 1pt per row buys consistent breathing room for both 5- and 6-row
+        // months without making 5-row months look stranded.
+        let calendarHeight: CGFloat = 30 + CGFloat(weekRows) * 44
 
         return VStack(alignment: .leading, spacing: 14) {
             // Section title comes from the editorial sectionHeader above this card,
@@ -1173,7 +1198,7 @@ struct ReadingStatsView: View {
                     VStack(spacing: 0) {
                         StatsMonthlyReadingCalendar(
                             month: month,
-                            summaries: monthlySummaries(containing: month),
+                            summaries: monthlySummaries(containing: month, buckets: buckets),
                             dayTitle: dayTitle
                         )
                         .padding(.horizontal, 2)
@@ -1200,8 +1225,8 @@ struct ReadingStatsView: View {
         .statsCard()
     }
 
-    private var heatmapCard: some View {
-        let summaries = weeklyHeatmapSummaries()
+    private func heatmapCard(buckets: [Date: DailyEventTotals]) -> some View {
+        let summaries = weeklyHeatmapSummaries(buckets: buckets)
         let today = calendar.startOfDay(for: Date())
         let maxDuration = max(summaries.map(\.durationSeconds).max() ?? 1, 1)
         let selectedSummary = selectedHeatmapDay.flatMap { selectedDay in
@@ -1453,7 +1478,40 @@ struct ReadingStatsView: View {
         return max(1, Int(ceil(Double(daysToMonthEnd) / 7.0)))
     }
 
+    /// One-pass O(n) bucketing of all reading events by their startOfDay. Callers
+    /// (heatmap / daily / monthly summaries) used to each filter the full event
+    /// array per grid cell — 84 cells × thousands of events compounded to hundreds
+    /// of thousands of comparisons per render and was the dominant cause of Stats
+    /// tab lag on real devices. With this map, each cell lookup is O(1).
+    private func bucketEventsByDay() -> [Date: DailyEventTotals] {
+        var buckets: [Date: DailyEventTotals] = [:]
+        for event in libraryStore.readingStats.events {
+            let day = calendar.startOfDay(for: event.timestamp)
+            var entry = buckets[day] ?? DailyEventTotals()
+            entry.durationSeconds += event.durationSeconds
+            entry.pageTurns += event.pageTurns
+            entry.characterCount += event.characterCount
+            buckets[day] = entry
+        }
+        return buckets
+    }
+
+    private func summary(for day: Date, in buckets: [Date: DailyEventTotals]) -> DailyReadingSummary {
+        let entry = buckets[day] ?? DailyEventTotals()
+        return DailyReadingSummary(
+            day: day,
+            durationSeconds: entry.durationSeconds,
+            pageTurns: entry.pageTurns,
+            characterCount: entry.characterCount,
+            topBookID: nil
+        )
+    }
+
     private func weeklyHeatmapSummaries() -> [DailyReadingSummary] {
+        weeklyHeatmapSummaries(buckets: bucketEventsByDay())
+    }
+
+    private func weeklyHeatmapSummaries(buckets: [Date: DailyEventTotals]) -> [DailyReadingSummary] {
         let today = calendar.startOfDay(for: Date())
         let currentWeekStart = calendar.dateInterval(of: .weekOfYear, for: today)?.start ?? today
         let firstColumnStart = calendar.date(byAdding: .day, value: -11 * 7, to: currentWeekStart) ?? today
@@ -1462,17 +1520,7 @@ struct ReadingStatsView: View {
         for weekday in 0..<7 {
             for week in 0..<12 {
                 let day = calendar.date(byAdding: .day, value: week * 7 + weekday, to: firstColumnStart) ?? firstColumnStart
-                let nextDay = calendar.date(byAdding: .day, value: 1, to: day) ?? day
-                let events = libraryStore.readingStats.events.filter { $0.timestamp >= day && $0.timestamp < nextDay }
-                summaries.append(
-                    DailyReadingSummary(
-                        day: day,
-                        durationSeconds: events.reduce(0) { $0 + $1.durationSeconds },
-                        pageTurns: events.reduce(0) { $0 + $1.pageTurns },
-                        characterCount: events.reduce(0) { $0 + $1.characterCount },
-                        topBookID: nil
-                    )
-                )
+                summaries.append(summary(for: day, in: buckets))
             }
         }
         return summaries
@@ -1480,21 +1528,22 @@ struct ReadingStatsView: View {
 
     private func dailySummaries(days count: Int) -> [DailyReadingSummary] {
         let today = calendar.startOfDay(for: Date())
+        let buckets = bucketEventsByDay()
         return (0..<count).reversed().map { offset in
             let day = calendar.date(byAdding: .day, value: -offset, to: today) ?? today
-            let nextDay = calendar.date(byAdding: .day, value: 1, to: day) ?? day
-            let events = libraryStore.readingStats.events.filter { $0.timestamp >= day && $0.timestamp < nextDay }
-            return DailyReadingSummary(
-                day: day,
-                durationSeconds: events.reduce(0) { $0 + $1.durationSeconds },
-                pageTurns: events.reduce(0) { $0 + $1.pageTurns },
-                characterCount: events.reduce(0) { $0 + $1.characterCount },
-                topBookID: nil
-            )
+            return summary(for: day, in: buckets)
         }
     }
 
     private func monthlySummaries(containing date: Date) -> [DailyReadingSummary] {
+        monthlySummaries(containing: date, buckets: bucketEventsByDay())
+    }
+
+    /// Variant that accepts a pre-computed day-bucket map so callers iterating
+    /// over many months (the calendar TabView renders up to 24 pages at a time)
+    /// don't redo the full-events scan per month — that was the dominant cause
+    /// of laggy month swiping in Stats.
+    private func monthlySummaries(containing date: Date, buckets: [Date: DailyEventTotals]) -> [DailyReadingSummary] {
         let monthStart = calendar.dateInterval(of: .month, for: date)?.start ?? date
         let gridStart = calendar.dateInterval(of: .weekOfYear, for: monthStart)?.start ?? monthStart
         let monthEnd = calendar.date(byAdding: .month, value: 1, to: monthStart) ?? monthStart
@@ -1503,15 +1552,7 @@ struct ReadingStatsView: View {
         let totalDays = weeksNeeded * 7
         return (0..<totalDays).map { offset in
             let day = calendar.date(byAdding: .day, value: offset, to: gridStart) ?? gridStart
-            let nextDay = calendar.date(byAdding: .day, value: 1, to: day) ?? day
-            let events = libraryStore.readingStats.events.filter { $0.timestamp >= day && $0.timestamp < nextDay }
-            return DailyReadingSummary(
-                day: day,
-                durationSeconds: events.reduce(0) { $0 + $1.durationSeconds },
-                pageTurns: events.reduce(0) { $0 + $1.pageTurns },
-                characterCount: events.reduce(0) { $0 + $1.characterCount },
-                topBookID: nil
-            )
+            return summary(for: day, in: buckets)
         }
     }
 
@@ -1593,7 +1634,11 @@ struct ReadingStatsView: View {
             return parts.joined()
         }
 
-        return remainder == 0 ? "\(hours) 小时" : "\(hours) 小时 \(remainder) 分"
+        // Compact CJK typography: no space between digits and units.
+        // The hero figure renders at a smaller size now (44pt vs the
+        // previous 60pt) — wide spacing on top of that read as 三件 separate
+        // numbers rather than one duration.
+        return remainder == 0 ? "\(hours)小时" : "\(hours)小时\(remainder)分"
     }
 
     private func formatMetricDuration(_ seconds: TimeInterval) -> String {
@@ -1733,6 +1778,15 @@ private struct DailyReadingSummary: Identifiable {
     let pageTurns: Int
     let characterCount: Int
     let topBookID: UUID?
+}
+
+/// Pre-aggregated daily totals built once per render from the events array, so
+/// heatmap / calendar / weekly views can fetch a cell's data in O(1) instead of
+/// re-filtering the entire events array per cell.
+private struct DailyEventTotals {
+    var durationSeconds: TimeInterval = 0
+    var pageTurns: Int = 0
+    var characterCount: Int = 0
 }
 
 private struct BookReadingAggregate: Identifiable {
@@ -2108,18 +2162,18 @@ private struct EditorialFigure: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(kicker)
-                .font(.system(size: 9.5, weight: .semibold, design: .rounded))
-                .tracking(1.4)
-                .foregroundStyle(palette.secondaryText.opacity(0.78))
+                .font(.system(size: 12.5, weight: .semibold, design: .rounded))
+                .tracking(0.4)
+                .foregroundStyle(palette.secondaryText.opacity(0.85))
             HStack(alignment: .lastTextBaseline, spacing: 3) {
                 Text(value)
-                    .font(.literarySerif(size: 22))
+                    .font(.literarySerif(size: 24))
                     .foregroundStyle(palette.primaryText)
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
                 if let unit {
                     Text(unit)
-                        .font(.system(size: 10, weight: .medium))
+                        .font(.system(size: 12.5, weight: .medium))
                         .foregroundStyle(palette.secondaryText.opacity(0.85))
                         .baselineOffset(1)
                 }
@@ -2143,18 +2197,18 @@ private struct PeriodColumn: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(kicker)
-                .font(.system(size: 10, weight: .semibold, design: .rounded))
-                .tracking(1.2)
-                .foregroundStyle(accent.opacity(0.85))
+                .font(.system(size: 12.5, weight: .semibold, design: .rounded))
+                .tracking(0.4)
+                .foregroundStyle(accent.opacity(0.9))
             HStack(alignment: .lastTextBaseline, spacing: 3) {
                 Text(value)
-                    .font(.literarySerif(size: 19))
+                    .font(.literarySerif(size: 21))
                     .foregroundStyle(palette.primaryText)
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
                 if let unit {
                     Text(unit)
-                        .font(.system(size: 9.5, weight: .medium))
+                        .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(palette.secondaryText.opacity(0.85))
                         .baselineOffset(1)
                 }
@@ -2178,19 +2232,19 @@ private struct CalendarFigure: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(kicker)
-                .font(.system(size: 9.5, weight: .semibold, design: .rounded))
-                .tracking(1.2)
-                .foregroundStyle(palette.secondaryText.opacity(0.85))
+                .font(.system(size: 12.5, weight: .semibold, design: .rounded))
+                .tracking(0.4)
+                .foregroundStyle(palette.secondaryText.opacity(0.9))
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
             HStack(alignment: .lastTextBaseline, spacing: 3) {
                 Text(value)
-                    .font(.literarySerif(size: 24))
+                    .font(.literarySerif(size: 26))
                     .foregroundStyle(accent)
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
                 Text(unit)
-                    .font(.system(size: 10, weight: .medium))
+                    .font(.system(size: 12.5, weight: .medium))
                     .foregroundStyle(palette.secondaryText.opacity(0.85))
                     .baselineOffset(1)
             }

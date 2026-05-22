@@ -358,18 +358,32 @@ struct ReaderView: View {
                                             bottom: proxy.safeAreaInsets.bottom)
                 lastContainerSize = proxy.size
                 setInitialChapterIfNeeded(textSize: textSize)
-                startReadingStatsSession(pages: pages)
-                persistReadingState(pages: pages)
                 lastKnownTextSize = textSize
                 if autoScroll { startAutoScroll() }
-                ReaderDiagnostics.shared.log(.lifecycle, "ReaderView onAppear", context: [
-                    "novel": activeNovel.title,
-                    "ch": String(currentChapterIndex),
-                    "chCount": String(baseChapters.count),
-                    "page": String(currentChapterPageIndex),
-                    "textSize": "\(Int(textSize.width))x\(Int(textSize.height))"
-                ])
-                ReaderDiagnostics.shared.snapshot(diagnosticsSnapshot)
+                // Side effects that mutate libraryStore propagate
+                // objectWillChange through every tab that observes it as an
+                // EnvironmentObject — invalidating LibraryView, Stats, and Me
+                // mid-transition. Hop those (and diagnostics file I/O) one
+                // runloop later so the navigation-push frame ships first.
+                let initialPages = pages
+                let novelTitle = activeNovel.title
+                let initialChapter = currentChapterIndex
+                let chapterCount = baseChapters.count
+                let initialPage = currentChapterPageIndex
+                let initialTextSize = textSize
+                let snapshot = diagnosticsSnapshot
+                DispatchQueue.main.async {
+                    startReadingStatsSession(pages: initialPages)
+                    persistReadingState(pages: initialPages)
+                    ReaderDiagnostics.shared.log(.lifecycle, "ReaderView onAppear", context: [
+                        "novel": novelTitle,
+                        "ch": String(initialChapter),
+                        "chCount": String(chapterCount),
+                        "page": String(initialPage),
+                        "textSize": "\(Int(initialTextSize.width))x\(Int(initialTextSize.height))"
+                    ])
+                    ReaderDiagnostics.shared.snapshot(snapshot)
+                }
             }
             .onChange(of: proxy.safeAreaInsets.top) { _, newValue in
                 ratchetStableSafeAreaInsets(top: newValue, bottom: nil)

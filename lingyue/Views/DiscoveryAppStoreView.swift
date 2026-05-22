@@ -184,7 +184,7 @@ struct DiscoveryAppStoreView: View {
                     .font(.system(size: 22, weight: .semibold))
                     .foregroundStyle(theme.primaryText)
 
-                Text("点击你添加的书源网站，在内置浏览器中浏览，遇到的书会自动识别。")
+                Text("点击你添加的书源网站，在内置浏览器中浏览。")
                     .font(.footnote)
                     .foregroundStyle(theme.secondaryText)
                     .fixedSize(horizontal: false, vertical: true)

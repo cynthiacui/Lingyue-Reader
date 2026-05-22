@@ -57,6 +57,16 @@ final class BookDownloadManager: ObservableObject {
     /// flaky third-party sources, fewer makes downloads feel sluggish.
     private let maxConcurrentFetches = 4
 
+    /// Tracks the last time we published a `.downloading(...)` progress tick per novel.
+    /// `@Published states` re-renders every view observing this manager, so a 500-chapter
+    /// download would otherwise fire 500 tree-wide updates and cause UI lag on real devices.
+    private var lastProgressPublishedAt: [UUID: Date] = [:]
+
+    /// Minimum gap between intermediate progress publishes per novel. 100ms ≈ 10Hz, fast
+    /// enough that progress bars still look lively, slow enough to keep the UI responsive.
+    /// Terminal states (downloaded/paused/failed) always publish immediately, bypassing this.
+    private let progressThrottleInterval: TimeInterval = 0.1
+
     func state(for novel: Novel) -> BookDownloadState {
         states[novel.id] ?? .idle
     }
@@ -170,6 +180,7 @@ final class BookDownloadManager: ObservableObject {
             task.cancel()
         }
         activeTasks.removeAll()
+        lastProgressPublishedAt.removeAll()
         states.removeAll()
     }
 
@@ -253,6 +264,21 @@ final class BookDownloadManager: ObservableObject {
         return false
     }
 
+    /// Throttled progress publish. Drops intermediate `.downloading(...)` ticks that arrive
+    /// within `progressThrottleInterval` of the last one, except when `total` is hit (so the
+    /// final tick before the terminal `.downloaded` state always shows the right count).
+    private func publishProgress(_ completed: Int, total: Int, for novelID: UUID) {
+        let now = Date()
+        let isFinalTick = completed >= total
+        if !isFinalTick,
+           let last = lastProgressPublishedAt[novelID],
+           now.timeIntervalSince(last) < progressThrottleInterval {
+            return
+        }
+        lastProgressPublishedAt[novelID] = now
+        states[novelID] = .downloading(completed: completed, total: total)
+    }
+
     private func runDownload(
         novelID: UUID,
         chapters: [NovelChapter],
@@ -304,7 +330,7 @@ final class BookDownloadManager: ObservableObject {
                     completed += 1
                     // Publish progress incrementally; keeps the sheet's progress bars lively.
                     if !Task.isCancelled {
-                        states[novelID] = .downloading(completed: completed, total: total)
+                        publishProgress(completed, total: total, for: novelID)
                     }
                 case .failure(let error):
                     if Self.isPermanentSkip(error) {
@@ -316,7 +342,7 @@ final class BookDownloadManager: ObservableObject {
                         // opens one of these chapters.
                         completed += 1
                         if !Task.isCancelled {
-                            states[novelID] = .downloading(completed: completed, total: total)
+                            publishProgress(completed, total: total, for: novelID)
                         }
                     } else if failure == nil {
                         failure = error
@@ -338,6 +364,7 @@ final class BookDownloadManager: ObservableObject {
         }
 
         activeTasks[novelID] = nil
+        lastProgressPublishedAt[novelID] = nil
 
         if Task.isCancelled {
             // Cancellation routes through pause: pauseDownload(for:) already stamped
