@@ -1,7 +1,13 @@
 #!/usr/bin/env bash
-# Assemble docs/lingyue-sources.json from the seeded rule set bundled
-# inside the LingyueInternalSources package. Output mirrors the shape
-# SourceImportService.decode() accepts:
+# Assemble bundled `lingyue-sources.json` files from the seeded rule set
+# inside LingyueInternalSources. Two outputs land under `docs/`:
+#
+#   docs/lingyue-sources.json    — third-party-scraper bundle
+#   docs/lingyue-wikisource.json — Wikisource only (public domain)
+#
+# Wikisource is split out so App Store users can grab a safe, CC-licensed
+# bundle separately from the larger third-party set. Both files share the
+# same envelope shape SourceImportService.decode() accepts:
 #
 #   { "kind": "lingyue-sources", "version": 1, "createdAt": "...",
 #     "sources": [ <SourceRule>, ... ] }
@@ -16,29 +22,46 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SEEDED_DIR="$REPO_ROOT/Packages/LingyueInternalSources/Sources/LingyueInternalSources/Resources/SeededRules"
-OUTPUT="$REPO_ROOT/docs/lingyue-sources.json"
+MAIN_OUTPUT="$REPO_ROOT/docs/lingyue-sources.json"
+WIKI_OUTPUT="$REPO_ROOT/docs/lingyue-wikisource.json"
 
-mkdir -p "$(dirname "$OUTPUT")"
+mkdir -p "$(dirname "$MAIN_OUTPUT")"
 
-# Collect every seeded rule except the test fixture, in filename order so
-# the diff stays stable across runs.
-SOURCES=$(
-  find "$SEEDED_DIR" -maxdepth 1 -name '*.json' ! -name 'example.json' \
+CREATED_AT=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+# Main bundle: everything except example fixture and wikisource (the
+# latter ships as its own file).
+MAIN_SOURCES=$(
+  find "$SEEDED_DIR" -maxdepth 1 -name '*.json' \
+    ! -name 'example.json' \
+    ! -name 'wikisource.json' \
     | sort \
     | xargs jq -s '.'
 )
 
-CREATED_AT=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-
 jq -n \
   --arg createdAt "$CREATED_AT" \
-  --argjson sources "$SOURCES" \
+  --argjson sources "$MAIN_SOURCES" \
   '{
     kind: "lingyue-sources",
     version: 1,
     createdAt: $createdAt,
     sources: $sources
-  }' > "$OUTPUT"
+  }' > "$MAIN_OUTPUT"
 
-echo "Wrote $OUTPUT"
-echo "Source count: $(jq '.sources | length' "$OUTPUT")"
+echo "Wrote $MAIN_OUTPUT"
+echo "Source count: $(jq '.sources | length' "$MAIN_OUTPUT")"
+
+# Wikisource-only bundle.
+jq -n \
+  --arg createdAt "$CREATED_AT" \
+  --slurpfile rule "$SEEDED_DIR/wikisource.json" \
+  '{
+    kind: "lingyue-sources",
+    version: 1,
+    createdAt: $createdAt,
+    sources: $rule
+  }' > "$WIKI_OUTPUT"
+
+echo "Wrote $WIKI_OUTPUT"
+echo "Source count: $(jq '.sources | length' "$WIKI_OUTPUT")"

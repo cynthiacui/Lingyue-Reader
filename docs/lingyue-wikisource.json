@@ -1,0 +1,216 @@
+{
+  "kind": "lingyue-sources",
+  "version": 1,
+  "createdAt": "2026-05-22T01:21:25Z",
+  "sources": [
+    {
+      "id": "00000000-0000-0000-0000-000000005701",
+      "schemaVersion": 1,
+      "name": "维基文库",
+      "homepage": "https://zh.wikisource.org/",
+      "capabilities": {
+        "supportsSearch": true,
+        "showInSearchBar": true,
+        "supportsBrowserImport": true,
+        "requiresWebRender": false,
+        "maxConcurrentRequests": 2,
+        "requestIntervalMillis": 250
+      },
+      "enginePerStep": {
+        "search": "http",
+        "detail": "http",
+        "catalog": "http",
+        "chapter": "http"
+      },
+      "encoding": "auto",
+      "defaultHeaders": {
+        "User-Agent": "LingyueReader/1.0 (https://github.com/cynthiacui/Lingyue-Reader)"
+      },
+      "detection": {
+        "hostPatterns": [
+          "zh.wikisource.org"
+        ],
+        "pathPattern": "^/wiki/(?!Special:|Author:|Category:|File:|Help:|Wikisource:|Template:|Portal:|Talk:|User:)[^/?#]+$",
+        "confirmSelector": "h1#firstHeading"
+      },
+      "search": {
+        "method": "get",
+        "urlTemplate": "https://zh.wikisource.org/w/index.php?search={query}&fulltext=1&ns0=1",
+        "resultsSelector": "li.mw-search-result",
+        "titleField": {
+          "selector": "div.mw-search-result-heading a",
+          "transforms": [
+            {
+              "stripHTML": {}
+            },
+            {
+              "collapseWhitespace": {}
+            },
+            {
+              "trim": {}
+            }
+          ]
+        },
+        "detailURLField": {
+          "selector": "div.mw-search-result-heading a",
+          "attribute": "href",
+          "transforms": [
+            {
+              "absoluteURL": {}
+            }
+          ]
+        },
+        "snippetField": {
+          "selector": "div.searchresult",
+          "transforms": [
+            {
+              "stripHTML": {}
+            },
+            {
+              "collapseWhitespace": {}
+            },
+            {
+              "trim": {}
+            }
+          ]
+        }
+      },
+      "detail": {
+        "titleField": {
+          "selector": "h1#firstHeading",
+          "transforms": [
+            {
+              "stripHTML": {}
+            },
+            {
+              "collapseWhitespace": {}
+            },
+            {
+              "trim": {}
+            }
+          ]
+        },
+        "authorField": {
+          "selector": "a[href*=\"/wiki/Author:\"], a[href*=\"action=edit&redlink=1\"][title^=\"Author:\"]",
+          "transforms": [
+            {
+              "stripHTML": {}
+            },
+            {
+              "regexReplace": {
+                "pattern": "[（(]有[爭争]議[)）]",
+                "replacement": ""
+              }
+            },
+            {
+              "collapseWhitespace": {}
+            },
+            {
+              "trim": {}
+            }
+          ]
+        },
+        "catalogURLField": {
+          "transforms": [
+            {
+              "useBaseURL": {}
+            }
+          ]
+        }
+      },
+      "catalog": {
+        "chaptersSelector": "div.mw-parser-output a[title*=\"/\"]:not([title*=\":\"])",
+        "titleField": {
+          "transforms": [
+            {
+              "stripHTML": {}
+            },
+            {
+              "collapseWhitespace": {}
+            },
+            {
+              "trim": {}
+            }
+          ]
+        },
+        "urlField": {
+          "attribute": "href",
+          "transforms": [
+            {
+              "absoluteURL": {}
+            }
+          ]
+        },
+        "maxPages": 1
+      },
+      "chapter": {
+        "titleField": {
+          "selector": "h1#firstHeading",
+          "transforms": [
+            {
+              "stripHTML": {}
+            },
+            {
+              "regexReplace": {
+                "pattern": "^[^/]+/",
+                "replacement": ""
+              }
+            },
+            {
+              "collapseWhitespace": {}
+            },
+            {
+              "trim": {}
+            }
+          ]
+        },
+        "bodyField": {
+          "selector": "div.mw-parser-output",
+          "attribute": "html",
+          "transforms": [
+            {
+              "regexReplace": {
+                "pattern": "<div id=\"headerContainer\"[\\s\\S]*?</div>",
+                "replacement": ""
+              }
+            },
+            {
+              "regexReplace": {
+                "pattern": "<table class=\"[^\"]*ws-(?:footer|noexport)[^\"]*\"[\\s\\S]*?</table>",
+                "replacement": ""
+              }
+            },
+            {
+              "regexReplace": {
+                "pattern": "<div class=\"printfooter\"[\\s\\S]*?</div>",
+                "replacement": ""
+              }
+            },
+            {
+              "regexReplace": {
+                "pattern": "<!--[\\s\\S]*?-->",
+                "replacement": ""
+              }
+            },
+            {
+              "regexReplace": {
+                "pattern": "</p>",
+                "replacement": "\n\n"
+              }
+            },
+            {
+              "brToNewline": {}
+            },
+            {
+              "stripHTML": {}
+            },
+            {
+              "decodeHTMLEntities": {}
+            }
+          ]
+        },
+        "maxBodyPages": 1
+      }
+    }
+  ]
+}
