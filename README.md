@@ -8,27 +8,20 @@ iOS 17+ · SwiftUI · 单窗口应用 · 包名 `com.lingyue.reader`
 
 ## 使用指南
 
-App Store 上架的灵阅是一个「空壳」阅读器——不自带任何书源，需要你导入一份书源配置文件后才能搜索和下载小说。
+灵阅支持在「书源」页面通过 **从 JSON 导入 / 从 URL 分析 / 手动新建** 三种方式添加自定义书源。本节介绍如何导入一份你手头已有的书源 JSON 文件。
 
-### 下载书源文件
+### 导入书源 JSON
 
-点击下面的下载链接，把 `lingyue-sources.json` 保存到 iPhone 的「文件」App（iCloud Drive、本机或任意位置都可以）：
-
-### 📥 [下载 lingyue-sources.json](https://github.com/cynthiacui/Lingyue-Reader/releases/latest/download/lingyue-sources.json)
-
-链接来自 GitHub Releases，iPhone Safari 点击会直接弹出「下载」对话框，无需长按。
-
-> 该文件包含若干公开书源的解析规则。规则只描述「如何解析网页」，不包含任何受版权保护的小说内容。
-
-### 在 App 内导入
-
-1. 打开灵阅，切到底部「**发现**」标签
-2. 点击右上角的「**地球**」图标进入「**书源**」页面
-3. 点击右上角的「**＋**」，选择「**从 JSON 导入**」
-4. 在文件选择器里找到刚刚保存的 `lingyue-sources.json`
-5. 确认对话框会提示「新增 / 覆盖 / 未变更」的条数，点击「**导入**」完成
+1. 把 `*.json` 文件保存到 iPhone 的「文件」App（iCloud Drive、本机或任意位置都可以）
+2. 打开灵阅，切到底部「**发现**」标签
+3. 点击右上角的「**地球**」图标进入「**书源**」页面
+4. 点击右上角的「**＋**」，选择「**从 JSON 导入**」
+5. 在文件选择器里找到你保存的 JSON 文件
+6. 确认对话框会提示「新增 / 覆盖 / 未变更」的条数，点击「**导入**」完成
 
 导入完成后，「**发现**」页的搜索框就能跨所有已启用的书源搜索小说了。
+
+如果手头没有现成的 JSON，也可以在「书源」页直接通过「**从 URL 分析**」或「**手动新建**」自行创建一份，再用「**导出**」按钮分享给他人。
 
 ### 导入本地小说文件
 
@@ -46,17 +39,6 @@ App Store 上架的灵阅是一个「空壳」阅读器——不自带任何书�
 - **HTML** — 把整页 HTML 去除标签后按 TXT 同样的章节规则拆分；书名优先使用 `<title>`，否则回落到文件名。
 
 > 同名书籍再次导入会**覆盖**原书的章节内容，可用于更新或修正本地小说。单个文件最大 100 MB。
-
-### 常见问题
-
-**Q：为什么 App Store 版本不自带书源？**
-A：为了把「阅读器」和「书源规则」解耦——书源规则在第三方网站结构变化时需要频繁更新，独立放在 GitHub 上更新更快，也让 App 本身保持「干净」。
-
-**Q：可以自定义书源吗？**
-A：可以。同样在「书源」页面，点击「＋」选择「**从 URL 分析**」或「**手动新建**」，按照向导填写解析规则即可。导出自己的书源也是同一个 JSON 格式，可以分享给他人。
-
-**Q：导入失败 / 搜索没结果？**
-A：网站结构变更可能让旧规则失效。请来 [Issues](https://github.com/cynthiacui/Lingyue-Reader/issues) 反馈具体的书源名称和搜索关键词，仓库会更新 Release 中的 `lingyue-sources.json`，重新下载导入即可。
 
 ---
 
@@ -80,7 +62,7 @@ A：网站结构变更可能让旧规则失效。请来 [Issues](https://github.
   <img src="docs/screenshots/06-sources-list.png" alt="书源管理" width="200">
 </p>
 
-App Store 版的「发现」页默认是空壳——导入 `lingyue-sources.json` 后，「我添加的书源」区会列出每一个站点磁贴，轻点直接在内置浏览器中打开。顶部的搜索框聚合所有已启用的书源，每个书源返回结果后即刻流式展示，多个书源同时收录的同一本书会合并成一行并以小标签列出来源。右上角的「地球」按钮进入书源管理页面，可逐个启用 / 禁用、导入、导出或手动新建书源。
+「发现」页用于跨多个书源聚合搜索。添加了书源后（在「书源」页通过 JSON 导入、URL 分析或手动新建），「我添加的书源」区会列出每一个站点磁贴，轻点直接在内置浏览器中打开。顶部的搜索框聚合所有已启用的书源，每个书源返回结果后即刻流式展示，多个书源同时收录的同一本书会合并成一行并以小标签列出来源。右上角的「地球」按钮进入书源管理页面，可逐个启用 / 禁用、导入、导出或手动新建书源。
 
 ### 阅读器
 
@@ -107,7 +89,7 @@ App Store 版的「发现」页默认是空壳——导入 `lingyue-sources.json
   <img src="docs/screenshots/13-settings-reader-prefs.png" alt="阅读偏好" width="280">
 </p>
 
-顶部是「Reading Journal」阅读身份卡，显示当日、本周连读天数与最近一本书的进度，轻点跳到「统计」标签；下方依次是「阅读偏好」（带活页预览的字号、行距、段距、字体、翻页效果、背景颜色、跟随系统深色模式、繁体中文、自动滚读）、「外观主题」、「数据与缓存」（自动预载、累计下载数据、一键清理），以及「关于」（版本号、使用指南、GitHub 链接）。
+顶部是「Reading Journal」阅读身份卡，显示当日、本周连读天数与最近一本书的进度，轻点跳到「统计」标签；下方依次是「阅读偏好」（带活页预览的字号、行距、段距、字体、翻页效果、背景颜色、跟随系统深色模式、繁体中文、自动滚读）、「外观主题」、「数据与缓存」（自动预载、累计下载数据、一键清理），以及「关于」（版本号、GitHub 链接）。
 
 ### 外观主题
 
@@ -154,7 +136,7 @@ xcodebuild -project lingyue.xcodeproj \
 
 # Lingyue Reader (English Overview)
 
-A polished, theme-rich Chinese-language novel reader for iOS. The App Store build ships as a "thin shell" — bring your own source-rules JSON (see [使用指南](#使用指南) above), then aggregate-search and import books from multiple sites.
+A polished, theme-rich Chinese-language novel reader for iOS. Supports importing user-supplied source-rules JSON to aggregate-search across multiple sites.
 
 iOS 17+ · SwiftUI · Bundle id `com.lingyue.reader`
 
@@ -167,7 +149,7 @@ iOS 17+ · SwiftUI · Bundle id `com.lingyue.reader`
   <img src="docs/screenshots/02-bookshelf-download-manager.png" alt="Download manager" width="240">
 </p>
 
-- **Discovery (发现)** — empty by default on the App Store build; once you import `lingyue-sources.json` your sources show up as tiles in **我添加的书源**, tap one to open it in the in-app browser. The search box aggregates every enabled source; results stream in as each source replies, and the same book found on multiple sources collapses into one row with provenance chips. The globe icon opens **Sources** for enable/disable, JSON import/export, URL-analyze, and from-scratch rule editing.
+- **Discovery (发现)** — empty by default; once you add sources (via JSON import, URL-analyze, or manual creation in the Sources page) they show up as tiles in **我添加的书源**, tap one to open it in the in-app browser. The search box aggregates every enabled source; results stream in as each source replies, and the same book found on multiple sources collapses into one row with provenance chips. The globe icon opens **Sources** for enable/disable, JSON import/export, URL-analyze, and from-scratch rule editing.
 
 <p>
   <img src="docs/screenshots/03-discovery-empty.png" alt="Discovery empty" width="200">
@@ -182,7 +164,7 @@ iOS 17+ · SwiftUI · Bundle id `com.lingyue.reader`
   <img src="docs/screenshots/07-stats.png" alt="Stats" width="280">
 </p>
 
-- **Me (我)** — Reading Journal hero card (streak + lifetime characters read, taps over to Stats), plus reading preferences, app themes, data & cache management, and the About page (version, usage guide, GitHub).
+- **Me (我)** — Reading Journal hero card (streak + lifetime characters read, taps over to Stats), plus reading preferences, app themes, data & cache management, and the About page (version, GitHub).
 
 <p>
   <img src="docs/screenshots/08-me.png" alt="Me" width="240">
