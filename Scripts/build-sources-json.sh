@@ -1,22 +1,20 @@
 #!/usr/bin/env bash
-# Assemble bundled `lingyue-sources.json` files from the seeded rule set
+# Assemble bundled `*.json` source-rule files from the seeded rule set
 # inside LingyueInternalSources. Two outputs land under `docs/`:
 #
-#   docs/lingyue-sources.json    — third-party-scraper bundle
-#   docs/lingyue-wikisource.json — Wikisource only (public domain)
+#   docs/lingyue-sources.json     — full bundle of all seeded rules
+#   docs/lingyue-wikisource.json  — Wikisource only (CC public domain)
 #
-# Wikisource is split out so App Store users can grab a safe, CC-licensed
-# bundle separately from the larger third-party set. Both files share the
-# same envelope shape SourceImportService.decode() accepts:
+# Both files share the same envelope shape SourceImportService.decode()
+# accepts:
 #
 #   { "kind": "lingyue-sources", "version": 1, "createdAt": "...",
 #     "sources": [ <SourceRule>, ... ] }
 #
 # Run from the repo root:  Scripts/build-sources-json.sh
 #
-# The 'example.json' fixture is intentionally skipped — it uses the
-# `seeded-example.invalid.test` host and would just confuse a user who
-# imports the file.
+# The 'example.json' fixture is intentionally skipped — it uses an
+# `.invalid.test` host and would just confuse a user who imports the file.
 
 set -euo pipefail
 

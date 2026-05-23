@@ -1,9 +1,8 @@
 import Foundation
 import LingyueCore
 
-/// JSON envelope for sharing one or more `SourceRule`s out-of-band — the
-/// shape that ships in `docs/lingyue-sources.json` and that any user can
-/// hand-author or paste into a file picker.
+/// JSON envelope for sharing one or more `SourceRule`s out-of-band — a
+/// shape any user can hand-author or paste into a file picker.
 ///
 /// Kept narrower than `BackupArchive`: this carries rules only, not the
 /// user's library / stats / preferences. Sharing a source set should not
@@ -66,10 +65,10 @@ struct SourceImportSummary: Equatable {
 /// Decode a `.json` book-source file and merge it into the editable
 /// store. The merge is UUID-based: an incoming rule whose UUID is
 /// already in the store replaces the existing rule; everything else is
-/// appended. This is the same dedup policy `InternalSourceRegistry`
-/// already applies between user rules and seeded rules, so importing
-/// the bundled `lingyue-sources.json` on the App Store target gives the
-/// user the same source set the Internal build ships with.
+/// appended. This matches the dedup policy `InternalSourceRegistry`
+/// applies between user rules and seeded rules, so importing a JSON
+/// bundle on the App Store target gives the user the same source set
+/// the Internal build ships with.
 struct SourceImportService {
     let editableStore: any EditableSourceStore
 
