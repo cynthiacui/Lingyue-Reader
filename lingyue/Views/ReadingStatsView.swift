@@ -61,6 +61,41 @@ extension Font {
     }
 }
 
+/// Renders `string` in the italic literary serif, except ASCII number tokens
+/// (e.g. "12", "1.2", "1,200") which fall back to the upright variant. Keeps
+/// the Chinese kicker copy stylistically italic while preventing the slanted
+/// DM Serif Display digits from sitting awkwardly inside a Songti line.
+fileprivate func literarySerifItalicText(_ string: String, size: CGFloat) -> Text {
+    let italic: Font = .literarySerifItalic(size: size)
+    let upright: Font = .literarySerif(size: size)
+    let pattern = #"\d+(?:[.,]\d+)*"#
+    guard let regex = try? NSRegularExpression(pattern: pattern) else {
+        return Text(verbatim: string).font(italic)
+    }
+    let ns = string as NSString
+    let matches = regex.matches(in: string, range: NSRange(location: 0, length: ns.length))
+    guard !matches.isEmpty else {
+        return Text(verbatim: string).font(italic)
+    }
+
+    var result = Text(verbatim: "")
+    var cursor = 0
+    for match in matches {
+        if match.range.location > cursor {
+            let prefix = ns.substring(with: NSRange(location: cursor, length: match.range.location - cursor))
+            result = result + Text(verbatim: prefix).font(italic)
+        }
+        let digits = ns.substring(with: match.range)
+        result = result + Text(verbatim: digits).font(upright)
+        cursor = match.range.location + match.range.length
+    }
+    if cursor < ns.length {
+        let tail = ns.substring(with: NSRange(location: cursor, length: ns.length - cursor))
+        result = result + Text(verbatim: tail).font(italic)
+    }
+    return result
+}
+
 // MARK: - Stats visual system
 //
 // The Stats tab uses a fixed "paper-style dashboard" palette that stays the same
@@ -889,8 +924,7 @@ struct ReadingStatsView: View {
 
             // Kaiti SC sub-line — Chinese cursive script reads as a hand-set
             // editor's note rather than UI copy. `fixedSize` lets it wrap.
-            Text(heroSubtitle(minutes: minutes, streak: streak))
-                .font(.literarySerifItalic(size: 13))
+            literarySerifItalicText(heroSubtitle(minutes: minutes, streak: streak), size: 13)
                 .foregroundStyle(palette.secondaryText)
                 .fixedSize(horizontal: false, vertical: true)
 
@@ -1237,8 +1271,7 @@ struct ReadingStatsView: View {
         return VStack(alignment: .leading, spacing: 12) {
             // sectionHeader above provides the title; the card opens with an
             // italic serif kicker line describing the time window.
-            Text("记录近 12 周阅读状态")
-                .font(.literarySerifItalic(size: 12))
+            literarySerifItalicText("记录近 12 周阅读状态", size: 12)
                 .foregroundStyle(palette.secondaryText)
                 .lineLimit(1)
                 .minimumScaleFactor(0.75)
