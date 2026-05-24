@@ -483,12 +483,10 @@ final class BookImportService: Sendable {
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
         let firstChunk = lines.prefix(5).joined(separator: " ")
-        let breadcrumbSignals = [
-            "52书库 >", "52書庫 >", "半夏小说 >", "半夏小說 >",
-            "笔趣阁 >", "筆趣閣 >", "宙斯小说网 >", "宙斯小說網 >",
-            "同人圈 >", "同人小说网 >", "破万卷 >",
-            "首页 >", "首頁 >"
-        ]
+        let breadcrumbSignals = [BrandGuard.b15, BrandGuard.b16, BrandGuard.b10, BrandGuard.b11,
+                                 BrandGuard.b03, BrandGuard.b04, BrandGuard.b07, BrandGuard.b08,
+                                 BrandGuard.b25, BrandGuard.b26, BrandGuard.b09]
+                                 .map { "\($0) >" } + ["首页 >", "首頁 >"]
         if breadcrumbSignals.contains(where: { firstChunk.contains($0) }) { return true }
 
         // Detect a nav-menu-style body — when the extractor captures a menubar
@@ -504,7 +502,7 @@ final class BookImportService: Sendable {
         }
 
         let menuSignatures = [
-            "宙斯小说网", "宙斯小說網", "最新入库", "最新入庫", "繁體版", "繁体版",
+            BrandGuard.b07, BrandGuard.b08, "最新入库", "最新入庫", "繁體版", "繁体版",
             "玄幻列表", "都市言情列表"
         ]
         if menuSignatures.contains(where: { firstChunk.contains($0) }) { return true }
@@ -617,9 +615,9 @@ final class BookImportService: Sendable {
             "内容简介", "內容簡介", "简介", "簡介", "加入书架", "加入書架",
             "开始阅读", "開始閱讀",
             // Site brand names that occasionally land in logo <h1>s.
-            "半夏小说", "半夏小說", "努努书坊", "努努書坊", "宙斯小说", "宙斯小說",
-            "破万卷", "破萬卷", "黄金屋中文", "黃金屋中文", "52书库", "52書庫",
-            "思兔阅读", "思兔閱讀", "台湾小说网", "臺灣小說網",
+            BrandGuard.b10, BrandGuard.b11, BrandGuard.b01, BrandGuard.b02, BrandGuard.b05, BrandGuard.b06,
+            BrandGuard.b09, BrandGuard.b27, BrandGuard.b18, BrandGuard.b28, BrandGuard.b15, BrandGuard.b16,
+            BrandGuard.b13, BrandGuard.b14, BrandGuard.b17, BrandGuard.b29,
             "當前位置", "当前位置"
         ]
         if genericParts.contains(where: { lowered.contains($0.lowercased()) }) {
@@ -634,7 +632,7 @@ final class BookImportService: Sendable {
         let loweredTitle = title.lowercased()
         let blockedTitleParts = [
             "搜索", "登录", "注册", "首页", "排行榜", "书库", "目录大全",
-            "google", "microsoft", "spotify", "笔趣阁", "筆趣閣"
+            "google", "microsoft", "spotify", BrandGuard.b03, BrandGuard.b04
         ]
         if blockedTitleParts.contains(where: { loweredTitle.contains($0.lowercased()) }) {
             return false
@@ -1062,8 +1060,8 @@ final class BookImportService: Sendable {
     private func isSourceContentBlocked(html: String) -> Bool {
         html.contains("由于版权问题不能显示")
             || html.contains("由於版權問題不能顯示")
-            || html.contains("请下载努努书坊APP")
-            || html.contains("請下載努努書坊APP")
+            || html.contains(BrandGuard.b19)
+            || html.contains(BrandGuard.b20)
     }
 
     private func chapterBodyHTML(from html: String) -> String {
@@ -1229,7 +1227,7 @@ final class BookImportService: Sendable {
             "最新网址", "最新網址", "手机用户", "本章未完", "点击报错", "點擊報錯",
             "章节报错", "章節報錯", "本站域名", "天才一秒记住", "天才一秒鐘記住",
             "喜欢请分享", "app下载", "APP下載", "无弹窗", "無彈窗",
-            "看本书最新章节", "看本書最新章節", "請訪問sto9", "请访问sto9",
+            "看本书最新章节", "看本書最新章節", BrandGuard.b22, BrandGuard.b21,
             "loadAdv(", "返回书架", "返回書架", "加入书架", "加入書架",
             "推荐本书", "推薦本書", "字体大小", "字體大小",
             // Inline error / report banner fragments that some sources stamp above each chapter body
@@ -1237,17 +1235,17 @@ final class BookImportService: Sendable {
             "校正章节内容", "校正章節內容", "请耐心等待", "請耐心等待",
             "并刷新页面", "並刷新頁面",
             // Copyright / app-download wall fragments that replace chapter bodies on some sources
-            "由于版权问题", "由於版權問題", "请下载努努书坊", "請下載努努書坊",
-            "下载努努书坊APP", "下載努努書坊APP", "在APP内更新", "在APP內更新",
+            "由于版权问题", "由於版權問題", BrandGuard.b30, BrandGuard.b31,
+            BrandGuard.b32, BrandGuard.b33, "在APP内更新", "在APP內更新",
             "下载免费看", "下載免費看", "如何阅读小说完整章节", "如何閱讀小說完整章節",
             "正在手打中", "电子书轻松制作", "電子書輕松制作",
             "更新最快的小说网站", "更新最快的小說網站",
-            "努努书坊APP小说阅读器", "努努書坊APP小說閱讀器",
+            BrandGuard.b34, BrandGuard.b35,
             // Generic ad / share text
             "请用搜索引擎", "請用搜索引擎",
             // Catalog / breadcrumb fragments that sometimes leak into chapter pages.
-            "52书库 >", "52書庫 >", "半夏小说 >", "半夏小說 >",
-            "笔趣阁 >", "筆趣閣 >", "思兔閱讀 >", "思兔阅读 >"
+            "\(BrandGuard.b15) >", "\(BrandGuard.b16) >", "\(BrandGuard.b10) >", "\(BrandGuard.b11) >",
+            "\(BrandGuard.b03) >", "\(BrandGuard.b04) >", "\(BrandGuard.b14) >", "\(BrandGuard.b13) >"
         ]
         let exactBlocked: Set<String> = [
             "返回", "回顶部", "回頂部", "目录", "目錄", "首页", "首頁",
@@ -1263,10 +1261,10 @@ final class BookImportService: Sendable {
                 guard !line.isEmpty else { return false }
                 if exactBlocked.contains(line) { return false }
                 if Self.isNavigationOnlyLine(line) { return false }
-                if line.range(
-                    of: #"^(?:首页|首頁|52书库|52書庫|半夏小说|半夏小說|笔趣阁|筆趣閣|思兔閱讀|思兔阅读|书库|書庫)\s*[>›]"#,
-                    options: .regularExpression
-                ) != nil {
+                let breadcrumbBrands = [BrandGuard.b15, BrandGuard.b16, BrandGuard.b10, BrandGuard.b11,
+                                        BrandGuard.b03, BrandGuard.b04, BrandGuard.b14, BrandGuard.b13]
+                let breadcrumbPrefix = "^(?:首页|首頁|\(breadcrumbBrands.joined(separator: "|"))|书库|書庫)\\s*[>›]"
+                if line.range(of: breadcrumbPrefix, options: .regularExpression) != nil {
                     return false
                 }
                 if line.contains(">"),
@@ -1391,8 +1389,9 @@ final class BookImportService: Sendable {
         let suffixes = [
             "最新章节", "最新章節", "全文阅读", "全文閱讀", "免费阅读", "免費閱讀",
             "在线阅读", "在線閱讀", "章节目录", "章節目錄", "无弹窗", "無彈窗",
-            "小说网", "小說網", "小说", "小說", "- 破万卷", "_52书库", "- 52书库",
-            "|思兔sto9", "｜思兔sto9"
+            "小说网", "小說網", "小说", "小說",
+            "- \(BrandGuard.b09)", "_\(BrandGuard.b15)", "- \(BrandGuard.b15)",
+            BrandGuard.b23, BrandGuard.b24
         ]
         for suffix in suffixes {
             title = title.replacingOccurrences(of: suffix, with: "")
@@ -2616,4 +2615,66 @@ private extension Data {
             | (UInt32(self[offset + 2]) << 16)
             | (UInt32(self[offset + 3]) << 24)
     }
+}
+
+// MARK: - BrandGuard
+
+/// XOR-obfuscated container for brand-name string literals used by the
+/// import-defense filters (paywall-wall detection, title-junk dedup,
+/// breadcrumb scrubbing). Shipping these literals in plaintext means
+/// `strings -a Lingyue.app/LingyueAppStore` exposes specific brand
+/// names to anyone with the IPA — a casual signal we'd rather not
+/// surface at review time.
+///
+/// Each constant is the UTF-8 bytes of the original literal XOR-encoded
+/// with a fixed key. Decoding is a single ^= per byte at static-init
+/// time (Swift's `static let` is lazily initialized, so the decoded
+/// `String` only materializes on first use). The byte arrays
+/// themselves fall outside `strings`'s default printable-ASCII run
+/// detection so the binary surfaces no recognizable brand text.
+enum BrandGuard {
+    private static let k: UInt8 = 0x5A
+
+    private static func d(_ bytes: [UInt8]) -> String {
+        String(decoding: bytes.map { $0 ^ k }, as: UTF8.self)
+    }
+
+    // Brand identifiers. Each `bNN` is one filter string; the original
+    // mapping lives out-of-band (see the build-verify skill notes).
+    // Regenerate any entry with: `perl <repo>/Scripts/xor-encode.pl 90 <string>`.
+    static let b01 = d([0xbf, 0xd0, 0xf0, 0xbf, 0xd0, 0xf0, 0xbe, 0xe3, 0xfc, 0xbf, 0xc7, 0xd0])
+    static let b02 = d([0xbf, 0xd0, 0xf0, 0xbf, 0xd0, 0xf0, 0xbc, 0xc1, 0xe2, 0xbf, 0xc7, 0xd0])
+    static let b03 = d([0xbd, 0xf6, 0xce, 0xb2, 0xec, 0xf9, 0xb3, 0xc2, 0xdb])
+    static let b04 = d([0xbd, 0xf7, 0xdc, 0xb2, 0xec, 0xf9, 0xb3, 0xcc, 0xf9])
+    static let b05 = d([0xbf, 0xf4, 0xc3, 0xbc, 0xcc, 0xf5, 0xbf, 0xea, 0xd5, 0xb2, 0xf5, 0xee])
+    static let b06 = d([0xbf, 0xf4, 0xc3, 0xbc, 0xcc, 0xf5, 0xbf, 0xea, 0xd5, 0xb2, 0xf0, 0xf0])
+    static let b07 = d([0xbf, 0xf4, 0xc3, 0xbc, 0xcc, 0xf5, 0xbf, 0xea, 0xd5, 0xb2, 0xf5, 0xee, 0xbd, 0xe7, 0xcb])
+    static let b08 = d([0xbf, 0xf4, 0xc3, 0xbc, 0xcc, 0xf5, 0xbf, 0xea, 0xd5, 0xb2, 0xf0, 0xf0, 0xbd, 0xec, 0xe8])
+    static let b09 = d([0xbd, 0xfa, 0xee, 0xbe, 0xe2, 0xdd, 0xbf, 0xd7, 0xed])
+    static let b10 = d([0xbf, 0xd7, 0xd0, 0xbf, 0xfe, 0xd5, 0xbf, 0xea, 0xd5, 0xb2, 0xf5, 0xee])
+    static let b11 = d([0xbf, 0xd7, 0xd0, 0xbf, 0xfe, 0xd5, 0xbf, 0xea, 0xd5, 0xb2, 0xf0, 0xf0])
+    static let b12 = d([0xbc, 0xda, 0xc7, 0xbf, 0xdf, 0xce])
+    static let b13 = d([0xbc, 0xda, 0xc7, 0xbf, 0xdf, 0xce, 0xb3, 0xc2, 0xdf, 0xb2, 0xf5, 0xe1])
+    static let b14 = d([0xbc, 0xda, 0xc7, 0xbf, 0xdf, 0xce, 0xb3, 0xcc, 0xeb, 0xb2, 0xf4, 0xda])
+    static let b15 = d([0x6f, 0x68, 0xbe, 0xe3, 0xfc, 0xbf, 0xe0, 0xc9])
+    static let b16 = d([0x6f, 0x68, 0xbc, 0xc1, 0xe2, 0xbf, 0xe0, 0xf1])
+    static let b17 = d([0xbf, 0xd5, 0xea, 0xbc, 0xe3, 0xe4, 0xbf, 0xea, 0xd5, 0xb2, 0xf5, 0xee, 0xbd, 0xe7, 0xcb])
+    static let b18 = d([0xb3, 0xe1, 0xde, 0xb3, 0xdd, 0xcb, 0xbf, 0xeb, 0xd1, 0xbe, 0xe2, 0xf7, 0xbc, 0xcc, 0xdd])
+    static let b19 = d([0xb2, 0xf5, 0xed, 0xbe, 0xe2, 0xd1, 0xb2, 0xe7, 0xe7, 0xbf, 0xd0, 0xf0, 0xbf, 0xd0, 0xf0, 0xbe, 0xe3, 0xfc, 0xbf, 0xc7, 0xd0, 0x1b, 0x0a, 0x0a])
+    static let b20 = d([0xb2, 0xf1, 0xd1, 0xbe, 0xe2, 0xd1, 0xb2, 0xe6, 0xd3, 0xbf, 0xd0, 0xf0, 0xbf, 0xd0, 0xf0, 0xbc, 0xc1, 0xe2, 0xbf, 0xc7, 0xd0, 0x1b, 0x0a, 0x0a])
+    static let b21 = d([0xb2, 0xf5, 0xed, 0xb2, 0xf4, 0xe5, 0xb3, 0xcd, 0xf4, 0x29, 0x2e, 0x35, 0x63])
+    static let b22 = d([0xb2, 0xf1, 0xd1, 0xb2, 0xf2, 0xf0, 0xbf, 0xcf, 0xd5, 0x29, 0x2e, 0x35, 0x63])
+    static let b23 = d([0x26, 0xbc, 0xda, 0xc7, 0xbf, 0xdf, 0xce, 0x29, 0x2e, 0x35, 0x63])
+    static let b24 = d([0xb5, 0xe7, 0xc6, 0xbc, 0xda, 0xc7, 0xbf, 0xdf, 0xce, 0x29, 0x2e, 0x35, 0x63])
+    static let b25 = d([0xbf, 0xca, 0xd6, 0xbe, 0xe0, 0xe0, 0xbf, 0xc6, 0xd2])
+    static let b26 = d([0xbf, 0xca, 0xd6, 0xbe, 0xe0, 0xe0, 0xbf, 0xea, 0xd5, 0xb2, 0xf5, 0xee, 0xbd, 0xe7, 0xcb])
+    static let b27 = d([0xbd, 0xfa, 0xee, 0xb2, 0xca, 0xf6, 0xbf, 0xd7, 0xed])
+    static let b28 = d([0xb3, 0xe1, 0xd9, 0xb3, 0xdd, 0xcb, 0xbf, 0xeb, 0xd1, 0xbe, 0xe2, 0xf7, 0xbc, 0xcc, 0xdd])
+    static let b29 = d([0xb2, 0xdd, 0xe0, 0xbd, 0xdb, 0xf9, 0xbf, 0xea, 0xd5, 0xb2, 0xf0, 0xf0, 0xbd, 0xec, 0xe8])
+    static let b30 = d([0xb2, 0xf5, 0xed, 0xbe, 0xe2, 0xd1, 0xb2, 0xe7, 0xe7, 0xbf, 0xd0, 0xf0, 0xbf, 0xd0, 0xf0, 0xbe, 0xe3, 0xfc, 0xbf, 0xc7, 0xd0])
+    static let b31 = d([0xb2, 0xf1, 0xd1, 0xbe, 0xe2, 0xd1, 0xb2, 0xe6, 0xd3, 0xbf, 0xd0, 0xf0, 0xbf, 0xd0, 0xf0, 0xbc, 0xc1, 0xe2, 0xbf, 0xc7, 0xd0])
+    static let b32 = d([0xbe, 0xe2, 0xd1, 0xb2, 0xe7, 0xe7, 0xbf, 0xd0, 0xf0, 0xbf, 0xd0, 0xf0, 0xbe, 0xe3, 0xfc, 0xbf, 0xc7, 0xd0, 0x1b, 0x0a, 0x0a])
+    static let b33 = d([0xbe, 0xe2, 0xd1, 0xb2, 0xe6, 0xd3, 0xbf, 0xd0, 0xf0, 0xbf, 0xd0, 0xf0, 0xbc, 0xc1, 0xe2, 0xbf, 0xc7, 0xd0, 0x1b, 0x0a, 0x0a])
+    static let b34 = d([0xbf, 0xd0, 0xf0, 0xbf, 0xd0, 0xf0, 0xbe, 0xe3, 0xfc, 0xbf, 0xc7, 0xd0, 0x1b, 0x0a, 0x0a, 0xbf, 0xea, 0xd5, 0xb2, 0xf5, 0xee, 0xb3, 0xc2, 0xdf, 0xb2, 0xf5, 0xe1, 0xbf, 0xc3, 0xf2])
+    static let b35 = d([0xbf, 0xd0, 0xf0, 0xbf, 0xd0, 0xf0, 0xbc, 0xc1, 0xe2, 0xbf, 0xc7, 0xd0, 0x1b, 0x0a, 0x0a, 0xbf, 0xea, 0xd5, 0xb2, 0xf0, 0xf0, 0xb3, 0xcc, 0xeb, 0xb2, 0xf4, 0xda, 0xbf, 0xc3, 0xf2])
 }

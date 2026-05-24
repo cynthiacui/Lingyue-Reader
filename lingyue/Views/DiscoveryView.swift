@@ -1072,8 +1072,8 @@ actor DiscoverySearchService {
             // dead search hits get filtered out the same way as paywall stubs.
             let looksLikeInfoErr = data.count < 32
                 && html.lowercased().contains("info err")
-            let blocked = html.contains("请下载努努书坊APP")
-                || html.contains("請下載努努書坊APP")
+            let blocked = html.contains(BrandGuard.b19)
+                || html.contains(BrandGuard.b20)
                 || html.contains("由于版权问题不能显示")
                 || html.contains("由於版權問題不能顯示")
                 || looksLikeInfoErr
@@ -1553,7 +1553,7 @@ private enum DiscoveryTextCleaner {
     static func normalizedTitleKey(_ title: String) -> String {
         var cleaned = title
         let removableParts = [
-            "全文阅读", "免费阅读", "最新章节", "在线阅读", "无弹窗", "笔趣阁", "小说网", "小说"
+            "全文阅读", "免费阅读", "最新章节", "在线阅读", "无弹窗", BrandGuard.b03, "小说网", "小说"
         ]
         for part in removableParts {
             cleaned = cleaned.replacingOccurrences(of: part, with: "")

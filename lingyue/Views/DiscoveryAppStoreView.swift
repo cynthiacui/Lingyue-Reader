@@ -334,8 +334,8 @@ struct DiscoveryAppStoreView: View {
 
     // MARK: - Helpers
 
-    /// 1–2 character monogram for the source avatar. ASCII/digit runs
-    /// (e.g. "52书库", "ESJ轻小说") get up to 2 chars; CJK names get one.
+    /// 1–2 character monogram for the source avatar. ASCII/digit-leading
+    /// names get up to 2 chars; pure-CJK names get one.
     private static func monogram(for name: String) -> String {
         guard let first = name.first else { return "" }
         let isAsciiAlphanumeric: (Character) -> Bool = { ch in

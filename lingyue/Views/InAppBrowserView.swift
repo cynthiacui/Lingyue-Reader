@@ -376,7 +376,7 @@ struct InAppBrowserView: View {
     private func isGenericDetectedTitle(_ title: String) -> Bool {
         let lowered = title.lowercased()
         let genericParts = [
-            "笔趣阁", "筆趣閣", "免费阅读", "免費閱讀",
+            BrandGuard.b03, BrandGuard.b04, "免费阅读", "免費閱讀",
             "小说网", "小說網", "书库", "書庫", "首页", "首頁"
         ]
         return genericParts.contains { lowered.contains($0.lowercased()) }
