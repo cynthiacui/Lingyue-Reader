@@ -38,10 +38,11 @@ struct SourcesListView: View {
     /// row's swipe action; drives the confirmation alert. Cleared on
     /// confirm or cancel.
     @State private var pendingDelete: SourceEntry?
-    /// Rule IDs currently being auto-verified after a toggle-on. Used to
-    /// render an in-row 检查中… indicator so the user knows their flip
-    /// kicked off a real-site verification round.
-    @State private var verifyingIDs: Set<UUID> = []
+    /// Background verification owner. Lives outside the view so a
+    /// chain that's mid-flight when the user navigates back (or
+    /// dismisses the sheet) keeps running and the pill updates
+    /// correctly on return.
+    @ObservedObject private var verifier = SourceVerificationService.shared
     /// Drives the JSON file-picker. Flipped from the "+" menu's
     /// 从 JSON 导入 entry. After the picker resolves the rules are held
     /// in `pendingImport` so the confirm dialog can surface the
@@ -158,6 +159,12 @@ struct SourcesListView: View {
             // first appear, so without this a newly-saved rule wouldn't
             // surface until pull-to-refresh.
             if hasLoaded { Task { await refresh() } }
+        }
+        // Re-pull validation status when the verification service flips
+        // a rule out of the in-flight set — that's when 检查中 needs to
+        // become 可用/失败 in the list.
+        .onChange(of: verifier.verifyingIDs) { _, _ in
+            Task { await refresh() }
         }
         .refreshable { await refresh() }
         // Row-tap destination. Pushed when `selectedReviewEntry` becomes
@@ -410,15 +417,18 @@ struct SourcesListView: View {
             // so they get verified too.
             let toVerify = summary.newRules + summary.updatedRules.map(\.incoming)
             // Pre-mark every queued rule as in-flight before kicking off
-            // the sequential chain. Without this the rows that haven't
-            // had their turn yet still render 需要检查 (orange), which
-            // looks like a verification failure on first paint. Pills
-            // flip to 检查中 (gray ProgressView) for the whole batch at
-            // once, then resolve to 可用/失败 as each chain completes.
-            for rule in toVerify { verifyingIDs.insert(rule.id) }
+            // the per-rule background tasks. Without this the rows that
+            // haven't started yet would render 需要检查 (orange) until
+            // their turn, which looks like verification already failed.
+            verifier.markVerifying(ruleIDs: toVerify.map(\.id))
             await refresh()
+            // Fire each verification into the service. The tasks run
+            // outside this view's lifetime — if the user navigates back
+            // or opens "添加书源" mid-flight, the chains continue and
+            // the pill flips automatically on completion via the
+            // service's `@Published` state.
             for rule in toVerify {
-                await verifyAndPersist(rule: rule)
+                verifier.verify(rule: rule)
             }
         } catch {
             importError = error.localizedDescription
@@ -505,7 +515,7 @@ struct SourcesListView: View {
                 // the user never manually tested. Editable rules only —
                 // seeded rules trust their authored capabilities.
                 if newValue && entry.origin == .editable {
-                    await verifyAndPersist(rule: entry.rule)
+                    verifier.verify(rule: entry.rule)
                 }
             } catch {
                 loadError = String(describing: error)
@@ -513,151 +523,6 @@ struct SourcesListView: View {
         }
     }
 
-    /// Run the live verification chain for `rule` and persist each
-    /// passing block to `validationStore`. Silent on failure — verification
-    /// is a background nicety, not a blocking save path. The user can
-    /// always tap into Review and run the per-block tests manually.
-    private func verifyAndPersist(rule: SourceRule) async {
-        verifyingIDs.insert(rule.id)
-        defer {
-            verifyingIDs.remove(rule.id)
-            Task { await refresh() }
-        }
-        // Route through the rule's own factory so jsonAPI rules reach
-        // `JSONAPIBookSource` instead of the HTML scraper. Without this
-        // every block fails verification for those rules because the
-        // scraper hits the API endpoint and gets JSON.
-        let source = rule.makeBookSource(loader: sourceStack.loader)
-
-        // Build a candidate list: search hits first (when the rule has a
-        // search step), then homepage anchors matching the detection
-        // pathPattern. Walk this list rather than just taking the first
-        // entry — some sites poison search results and homepage listings
-        // with stub IDs that 404, so the first few candidates routinely
-        // fail. Stopping at the first working book lets the chain produce
-        // all four ✓ even when most candidates are dead.
-        var candidates: [URL] = []
-        if rule.search != nil || rule.jsonAPI?.search != nil {
-            // Probe with a single common char first, then a 2-char fallback.
-            // A few mainland CMS clones reject keywords whose GB18030
-            // byte length is < 4 — a single Chinese char is 2 bytes
-            // and produces a "关键字过短" error page, so the smoke test for
-            // those sites never marks search as 已识别 without the fallback.
-            for probe in ["一", "小说"] {
-                if let hits = try? await source.search(probe), !hits.isEmpty {
-                    await persistVerification(rule: rule, block: .search, passed: true)
-                    candidates.append(contentsOf: hits.prefix(8).map(\.detailURL))
-                    break
-                }
-            }
-        }
-        let homepageCandidates = await findHomepageDetailURLs(rule: rule, limit: 8)
-        for url in homepageCandidates where !candidates.contains(url) {
-            candidates.append(url)
-        }
-        guard !candidates.isEmpty else { return }
-
-        // Walk candidates. Persist each block as soon as ANY candidate
-        // passes it, but keep walking until we find one candidate that
-        // satisfies the full detail+catalog+chapter chain — otherwise a
-        // 404 stub with a stray <h1> would mark detail as 已识别 while
-        // catalog/chapter stay at 需要检查 forever.
-        var detailPassedOnce = false
-        var catalogPassedOnce = false
-        var seenDetail: Set<URL> = []
-        for candidateURL in candidates where seenDetail.insert(candidateURL).inserted {
-            guard let detail = try? await source.fetchDetail(url: candidateURL),
-                  !detail.title.trimmingCharacters(in: .whitespaces).isEmpty
-            else { continue }
-            if !detailPassedOnce {
-                await persistVerification(rule: rule, block: .detail, passed: true)
-                detailPassedOnce = true
-            }
-            guard let chapters = try? await source.fetchCatalog(url: detail.catalogURL),
-                  !chapters.isEmpty
-            else { continue }
-            if !catalogPassedOnce {
-                await persistVerification(rule: rule, block: .catalog, passed: true)
-                catalogPassedOnce = true
-            }
-            // Many user-authored catalog rules use broad selectors (e.g.
-            // `ul > li`) that scoop the site's top *and* bottom nav strips
-            // alongside the real chapter rows — sampling first-N + last-N
-            // still hits only nav junk on those sites. Real chapter URLs
-            // cluster under one path directory (e.g. `/books/170611/…`)
-            // while nav links scatter across `/`, `/list/`, etc. Filter to
-            // the dominant directory before probing.
-            let chapterCandidates = Self.likelyChapterLinks(chapters)
-            let probes = Array(chapterCandidates.prefix(3)) + Array(chapterCandidates.suffix(3))
-            var seenChapter: Set<URL> = []
-            for chapter in probes where seenChapter.insert(chapter.url).inserted {
-                if let content = try? await source.fetchChapter(url: chapter.url),
-                   !content.paragraphs.isEmpty {
-                    await persistVerification(rule: rule, block: .chapter, passed: true)
-                    return
-                }
-            }
-        }
-    }
-
-    /// Fetch the rule's homepage and return up to `limit` anchors whose
-    /// paths match `detection.pathPattern`. Used as the search-less seed
-    /// for the verification chain and to backfill ghost-ID search misses.
-    private func findHomepageDetailURLs(rule: SourceRule, limit: Int) async -> [URL] {
-        let request = SourceRequest(
-            url: rule.homepage,
-            headers: rule.defaultHeaders,
-            encoding: rule.encoding,
-            referer: nil
-        )
-        guard let snapshot = try? await sourceStack.loader.fetchHTML(request) else {
-            return []
-        }
-        return rule.detailURLs(in: snapshot, limit: limit)
-    }
-
-    /// Filter a noisy catalog to the entries that look like real
-    /// chapters. Heuristic: group by URL directory (path up to the
-    /// final `/`) and keep only the dominant group. On well-authored
-    /// rules the dominant group is the whole catalog, so the filter is
-    /// a no-op. On rules where `ul > li` over-matches nav, the dominant
-    /// group is the real chapter directory because nav links scatter
-    /// across `/`, `/list/`, `/static/`, etc. while every real chapter
-    /// lives under the book's path.
-    private static func likelyChapterLinks(_ chapters: [ChapterLink]) -> [ChapterLink] {
-        guard chapters.count > 1 else { return chapters }
-        func directory(_ url: URL) -> String {
-            let path = url.path
-            guard let slash = path.lastIndex(of: "/") else { return path }
-            return String(path[...slash])
-        }
-        var counts: [String: Int] = [:]
-        for link in chapters { counts[directory(link.url), default: 0] += 1 }
-        guard
-            let dominant = counts.max(by: { $0.value < $1.value })?.key,
-            // Require a meaningful majority — if no single directory
-            // dominates, the catalog is probably structured weirdly and
-            // we shouldn't second-guess it.
-            (counts[dominant] ?? 0) >= chapters.count / 2
-        else {
-            return chapters
-        }
-        return chapters.filter { directory($0.url) == dominant }
-    }
-
-    private func persistVerification(rule: SourceRule, block: SourceBlock, passed: Bool) async {
-        let record = BlockTestRecord(
-            status: passed ? .passed : .failed,
-            lastRunAt: Date(),
-            failureSummary: passed ? nil : "自动验证未通过",
-            inputFingerprint: rule.blockFingerprint(block)
-        )
-        try? await sourceStack.validationStore.recordTest(
-            ruleID: rule.id,
-            block: block,
-            record: record
-        )
-    }
 
     // MARK: - Subviews
 
@@ -736,7 +601,7 @@ struct SourcesListView: View {
 
             HStack(spacing: 6) {
                 originBadge(entry.origin)
-                if verifyingIDs.contains(entry.rule.id) {
+                if verifier.verifyingIDs.contains(entry.rule.id) {
                     verifyingPill
                 } else {
                     statusPill(entry.rowStatus)
