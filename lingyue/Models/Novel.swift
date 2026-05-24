@@ -11,6 +11,7 @@ struct Novel: Identifiable, Hashable, Codable, Sendable {
     var progress: Double
     var readMinutes: Int
     var lastOpenedAt: Date?
+    var addedAt: Date?
     var currentChapterIndex: Int?
     var currentChapterPageIndex: Int?
     var currentChapterSourceURLString: String?
@@ -34,6 +35,7 @@ struct Novel: Identifiable, Hashable, Codable, Sendable {
         progress: Double,
         readMinutes: Int,
         lastOpenedAt: Date? = nil,
+        addedAt: Date? = nil,
         currentChapterIndex: Int? = nil,
         currentChapterPageIndex: Int? = nil,
         currentChapterSourceURLString: String? = nil,
@@ -52,6 +54,7 @@ struct Novel: Identifiable, Hashable, Codable, Sendable {
         self.progress = progress
         self.readMinutes = readMinutes
         self.lastOpenedAt = lastOpenedAt
+        self.addedAt = addedAt
         self.currentChapterIndex = currentChapterIndex
         self.currentChapterPageIndex = currentChapterPageIndex
         self.currentChapterSourceURLString = currentChapterSourceURLString
@@ -60,6 +63,22 @@ struct Novel: Identifiable, Hashable, Codable, Sendable {
         self.isFeatured = isFeatured
         self.sourceURLString = sourceURLString
         self.chapters = chapters
+    }
+
+    /// Date used by the library's most-recent-first sort. Picks the
+    /// latest of `lastOpenedAt` (user actually read the book) and
+    /// `addedAt` (user just imported it). A freshly imported book
+    /// floats to the top of its category until something more recent
+    /// happens; opening a different book later naturally outranks both.
+    /// The "继续阅读" hero card stays keyed strictly on `lastOpenedAt`
+    /// so importing never claims that card.
+    var librarySortRank: Date {
+        switch (lastOpenedAt, addedAt) {
+        case let (l?, a?): return max(l, a)
+        case let (l?, nil): return l
+        case let (nil, a?): return a
+        case (nil, nil):   return .distantPast
+        }
     }
 }
 

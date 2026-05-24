@@ -170,8 +170,8 @@ struct LibraryView: View {
                 $0.author.localizedCaseInsensitiveContains(q)
             }
             .sorted { lhs, rhs in
-                let l = lhs.lastOpenedAt ?? .distantPast
-                let r = rhs.lastOpenedAt ?? .distantPast
+                let l = lhs.librarySortRank
+                let r = rhs.librarySortRank
                 if l != r { return l > r }
                 return lhs.readMinutes > rhs.readMinutes
             }
@@ -1875,11 +1875,9 @@ private struct StackedCategoryShelf: View {
 
     private var sortedNovels: [Novel] {
         category.novels.sorted { lhs, rhs in
-            let lhsOpened = lhs.lastOpenedAt ?? .distantPast
-            let rhsOpened = rhs.lastOpenedAt ?? .distantPast
-            if lhsOpened != rhsOpened {
-                return lhsOpened > rhsOpened
-            }
+            let l = lhs.librarySortRank
+            let r = rhs.librarySortRank
+            if l != r { return l > r }
             return lhs.readMinutes > rhs.readMinutes
         }
     }
@@ -2088,11 +2086,9 @@ private struct ExpandedCategoryOverlay: View {
 
     private var sortedNovels: [Novel] {
         category.novels.sorted { lhs, rhs in
-            let lhsOpened = lhs.lastOpenedAt ?? .distantPast
-            let rhsOpened = rhs.lastOpenedAt ?? .distantPast
-            if lhsOpened != rhsOpened {
-                return lhsOpened > rhsOpened
-            }
+            let l = lhs.librarySortRank
+            let r = rhs.librarySortRank
+            if l != r { return l > r }
             return lhs.readMinutes > rhs.readMinutes
         }
     }
@@ -2359,11 +2355,9 @@ private struct CategoryDetailView: View {
         switch sortMode {
         case .recent:
             return filtered.sorted { lhs, rhs in
-                let lhsOpenedAt = lhs.lastOpenedAt ?? .distantPast
-                let rhsOpenedAt = rhs.lastOpenedAt ?? .distantPast
-                if lhsOpenedAt != rhsOpenedAt {
-                    return lhsOpenedAt > rhsOpenedAt
-                }
+                let l = lhs.librarySortRank
+                let r = rhs.librarySortRank
+                if l != r { return l > r }
                 return lhs.readMinutes > rhs.readMinutes
             }
         case .title:
