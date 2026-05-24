@@ -851,6 +851,12 @@ struct AboutSettingsView: View {
                     githubLinkRow
                 }
                 .listRowBackground(theme.cardBackground)
+
+                Section {
+                    privacyPolicyRow
+                    copyrightRow
+                }
+                .listRowBackground(theme.cardBackground)
             }
             .listStyle(.insetGrouped)
             .scrollContentBackground(.hidden)
@@ -882,6 +888,44 @@ struct AboutSettingsView: View {
                         .resizable()
                         .scaledToFit()
                         .frame(width: 20, height: 20)
+                }
+                Spacer()
+                Image(systemName: "arrow.up.right.square")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(theme.secondaryText.opacity(0.7))
+            }
+        }
+    }
+
+    private var privacyPolicyRow: some View {
+        externalLinkRow(
+            title: "隐私政策",
+            systemImage: "hand.raised",
+            urlString: "https://cynthiacui.github.io/Lingyue-Reader/privacy.html"
+        )
+    }
+
+    private var copyrightRow: some View {
+        externalLinkRow(
+            title: "投诉与版权",
+            systemImage: "exclamationmark.bubble",
+            urlString: "https://cynthiacui.github.io/Lingyue-Reader/complaint.html"
+        )
+    }
+
+    /// Shared style for outbound https rows in About (privacy policy + copyright).
+    /// Matches the GitHub row's leading SF-Symbol-style label + trailing
+    /// arrow.up.right.square affordance.
+    private func externalLinkRow(title: String, systemImage: String, urlString: String) -> some View {
+        Link(destination: URL(string: urlString)!) {
+            HStack {
+                Label {
+                    Text(title)
+                        .font(.headline)
+                        .foregroundStyle(theme.primaryText)
+                } icon: {
+                    Image(systemName: systemImage)
+                        .foregroundStyle(theme.primaryText)
                 }
                 Spacer()
                 Image(systemName: "arrow.up.right.square")
