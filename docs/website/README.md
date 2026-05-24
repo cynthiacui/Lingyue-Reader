@@ -6,7 +6,8 @@ Static landing + legal pages for the App Store Connect URL fields. Deployed to G
 
 - `index.html` — landing page (Support URL + Marketing URL target)
 - `privacy.html` — privacy policy (Privacy Policy URL target)
-- `complaint.html` — 投诉与版权 + 免责声明
+- `complaint.html` — 投诉与版权 (DMCA-style takedown)
+- `disclaimer.html` — 免责声明 (limitation of liability)
 - `screenshots/` — three iPhone captures used in the index hero
 
 ## Live URLs
@@ -14,6 +15,7 @@ Static landing + legal pages for the App Store Connect URL fields. Deployed to G
 - https://cynthiacui.github.io/Lingyue-Reader/
 - https://cynthiacui.github.io/Lingyue-Reader/privacy.html
 - https://cynthiacui.github.io/Lingyue-Reader/complaint.html
+- https://cynthiacui.github.io/Lingyue-Reader/disclaimer.html
 
 ## Updating the live site
 
