@@ -2,12 +2,9 @@ import Foundation
 import LingyueCore
 
 /// On-disk `EditableSourceStore` backed by a single JSON file at
-/// `Application Support/lingyue/user-sources.json`. Both registries
-/// (`InternalSourceRegistry` and `AppStoreSourceRegistry`) read from
-/// this store, so a rule the user authors is visible to whichever
-/// target is running. Each target keeps its own sandboxed copy of the
-/// file — iOS isolates `Application Support` per bundle ID — which is
-/// the intentional Phase 5 behaviour.
+/// `Application Support/lingyue/user-sources.json`. The source registry
+/// reads from this store, so a rule the user authors is visible to the
+/// app the moment it lands on disk.
 ///
 /// Writes go through `Data.write(options: .atomic)`: the new content
 /// lands in a temp file in the same directory, then `rename(2)`s on top
@@ -57,22 +54,16 @@ public actor FileEditableSourceStore: EditableSourceStore {
     /// One-shot rewrites for rules already on disk. Each migration matches
     /// an exact stale value so we never touch a user's hand-edited copy,
     /// and re-running the migration on already-migrated data is a no-op.
-    ///
-    /// Currently rewrites: the 笔趣阁 (json-api:biquge-api) search step's
-    /// `detailURLTemplate`, which used to synthesize `bqgl.cc/look/{id}/`
-    /// URLs. Those IDs are apiqu.cc's, not bqgl.cc's — every search-result
-    /// click landed on the wrong book or a 404. The new template points
-    /// at the bqg303.xyz SPA mirror, which shares apiqu's backend.
     static func applyMigrations(to rules: [SourceRule]) -> ([SourceRule], Bool) {
-        let staleBiqugeTemplate = "https://www.bqgl.cc/look/{id}/"
-        let newBiqugeTemplate = "https://9b0.bqg303.xyz/#/book/{id}/"
+        let staleTemplate = "https://www.bqgl.cc/look/{id}/"
+        let newTemplate = "https://9b0.bqg303.xyz/#/book/{id}/"
         var didMigrate = false
         let migrated: [SourceRule] = rules.map { rule in
             guard var jsonAPI = rule.jsonAPI,
                   var search = jsonAPI.search,
-                  search.detailURLTemplate == staleBiqugeTemplate
+                  search.detailURLTemplate == staleTemplate
             else { return rule }
-            search.detailURLTemplate = newBiqugeTemplate
+            search.detailURLTemplate = newTemplate
             jsonAPI.search = search
             didMigrate = true
             var copy = rule

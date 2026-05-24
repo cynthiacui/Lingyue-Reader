@@ -209,12 +209,11 @@ struct DiscoverySearchResultsView: View {
 }
 
 enum DiscoverySourceKind: Hashable {
-    /// Hardcoded site with a hand-written parser in this file. Registry routing is
-    /// always on for `LINGYUE_INTERNAL` builds and off for App Store; legacy parser
-    /// owns the path when routing is off or when the registry returns empty/failed.
+    /// Hardcoded site with a hand-written parser in this file (App Store builds
+    /// no longer wire these up, but the case is retained for source compatibility).
     case seeded
-    /// User-created rule from `EditableSourceStore`. No legacy parser exists, so routing MUST
-    /// go through `InternalSourceRegistry`; on failure return [] for that source.
+    /// User-created rule from `EditableSourceStore`, served by the rule engine
+    /// via the source registry; on failure return [] for that source.
     case userRule
 }
 
@@ -467,10 +466,8 @@ actor DiscoverySearchService {
     // changes require a relaunch to take effect on this path.
     private var cachedRegistrySourcesByName: [String: any BookSource]?
 
-    /// Build-time gate for the rule-engine Discovery search route.
-    /// Internal builds always try `InternalSourceRegistry.searchableSources()`
-    /// first and fall through to legacy on empty/failed results; App Store
-    /// builds stay on the legacy hand-written parsers.
+    /// Stable hook for routing Discovery search through the rule engine.
+    /// Currently always false in the App Store build.
     fileprivate static var useRegistryForDiscoverySearch: Bool {
         return false
     }
@@ -711,7 +708,7 @@ actor DiscoverySearchService {
         return sources
     }
 
-    /// Try to satisfy the search through `InternalSourceRegistry`. Returns `nil` when no rule
+    /// Try to satisfy the search through the source registry. Returns `nil` when no rule
     /// matches this `DiscoverySource` by `displayName`, or when the matched rule's `search`
     /// call threw. Either way the caller falls back to the legacy hand-written parser so a
     /// transient engine error never blacks out a known-good legacy path. Returns an empty
@@ -1036,9 +1033,9 @@ actor DiscoverySearchService {
     }
 
     /// Drops hits whose `probeChapterURL` returns a copyright-takedown body. Sources that
-    /// don't populate `probeChapterURL` (everything except 努努书坊 today) pass through
-    /// unchanged, so this is effectively a no-op for them. Probes run concurrently so the
-    /// added latency is bounded by the slowest single chapter fetch, not their sum.
+    /// don't populate `probeChapterURL` (the common case) pass through unchanged, so this
+    /// is effectively a no-op for them. Probes run concurrently so the added latency is
+    /// bounded by the slowest single chapter fetch, not their sum.
     private func filterPaywalledHits(_ results: [ParsedSourceResult]) async -> [ParsedSourceResult] {
         let probeIndices = results.indices.filter { results[$0].probeChapterURL != nil }
         guard !probeIndices.isEmpty else { return results }
@@ -1070,16 +1067,16 @@ actor DiscoverySearchService {
                 return false
             }
             let html = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .gb_18030_2000) ?? ""
-            // xsw.tw responds with a tiny `info err.` body (≈9 bytes, HTTP 200) for book
-            // IDs that no longer exist in the catalog. Treat that as a takedown so dead
-            // search hits get filtered out the same way as 努努书坊 paywall stubs.
-            let looksLikeXSWInfoErr = data.count < 32
+            // Some sites respond with a tiny `info err.` body (≈9 bytes, HTTP 200) for
+            // book IDs that no longer exist in the catalog. Treat that as a takedown so
+            // dead search hits get filtered out the same way as paywall stubs.
+            let looksLikeInfoErr = data.count < 32
                 && html.lowercased().contains("info err")
             let blocked = html.contains("请下载努努书坊APP")
                 || html.contains("請下載努努書坊APP")
                 || html.contains("由于版权问题不能显示")
                 || html.contains("由於版權問題不能顯示")
-                || looksLikeXSWInfoErr
+                || looksLikeInfoErr
             paywallProbeCache[key] = blocked
             return blocked
         } catch {
@@ -1182,8 +1179,8 @@ actor DiscoverySearchService {
         let author: String
         let summary: String
         let url: URL
-        // For sources with selective paywalling (currently 努努书坊): a chapter URL we can
-        // fetch to detect copyright-takedown markers before showing the source to the user.
+        // For sources with selective paywalling: a chapter URL we can fetch to
+        // detect copyright-takedown markers before showing the source to the user.
         // nil means "no probe needed" (the source either has no paywall, or we couldn't
         // extract a chapter URL — in which case we keep the hit rather than filter blindly).
         let probeChapterURL: URL?
@@ -1355,7 +1352,7 @@ private enum DiscoveryTextCleaner {
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    // 52shuku.net pages embed sogou-style suggestion blocks ("您是不是要找：…") whose
+    // Some sites embed sogou-style suggestion blocks ("您是不是要找：…") whose
     // chips parse as fake hits. Drop them at the earliest point so they never reach
     // the grouped result list.
     static func isSearchEngineSuggestionTitle(_ text: String) -> Bool {

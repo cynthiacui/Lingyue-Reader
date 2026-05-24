@@ -8,10 +8,8 @@ import SwiftUI
 /// and the parent flow swaps to `AddSourceURLView` — one-time per
 /// install, not per-sheet.
 ///
-/// Only reachable from `AddSourceFlowView`, which is itself
-/// `#if !LINGYUE_INTERNAL` — Internal builds ship with seeded rules,
-/// so this onboarding doesn't apply. The store key keeps its original
-/// name so upgrading users don't see the screen again.
+/// Only reachable from `AddSourceFlowView`. The store key keeps its
+/// original name so upgrading users don't see the screen again.
 struct IPAttestationView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.appTheme) private var theme

@@ -65,10 +65,7 @@ struct SourceImportSummary: Equatable {
 /// Decode a `.json` book-source file and merge it into the editable
 /// store. The merge is UUID-based: an incoming rule whose UUID is
 /// already in the store replaces the existing rule; everything else is
-/// appended. This matches the dedup policy `InternalSourceRegistry`
-/// applies between user rules and seeded rules, so importing a JSON
-/// bundle on the App Store target gives the user the same source set
-/// the Internal build ships with.
+/// appended.
 struct SourceImportService {
     let editableStore: any EditableSourceStore
 

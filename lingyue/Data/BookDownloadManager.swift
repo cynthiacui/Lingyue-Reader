@@ -335,7 +335,7 @@ final class BookDownloadManager: ObservableObject {
                 case .failure(let error):
                     if Self.isPermanentSkip(error) {
                         // Source-blocked chapters can't be obtained from this source no matter
-                        // how many retries (努努书坊 paywalls newest chapters, etc.). The cache
+                        // how many retries (e.g. a source paywalls newest chapters). The cache
                         // has already persisted a sentinel for them, so count toward progress
                         // and let the download finish in `.downloaded` instead of looping in
                         // `.failed`. Reader still surfaces the original error when the user

@@ -523,24 +523,24 @@ struct SourcesListView: View {
             verifyingIDs.remove(rule.id)
             Task { await refresh() }
         }
-        // Route through the rule's own factory so jsonAPI rules (5dxs,
-        // biquge) reach `JSONAPIBookSource` instead of the HTML scraper.
-        // Without this every block fails verification for those rules
-        // because the scraper hits the API endpoint and gets JSON.
+        // Route through the rule's own factory so jsonAPI rules reach
+        // `JSONAPIBookSource` instead of the HTML scraper. Without this
+        // every block fails verification for those rules because the
+        // scraper hits the API endpoint and gets JSON.
         let source = rule.makeBookSource(loader: sourceStack.loader)
 
         // Build a candidate list: search hits first (when the rule has a
         // search step), then homepage anchors matching the detection
         // pathPattern. Walk this list rather than just taking the first
-        // entry — some sites (xsw.tw) poison search results and homepage
-        // listings with stub IDs that 404, so the first few candidates
-        // routinely fail. Stopping at the first working book lets the
-        // chain produce all four ✓ even when most candidates are dead.
+        // entry — some sites poison search results and homepage listings
+        // with stub IDs that 404, so the first few candidates routinely
+        // fail. Stopping at the first working book lets the chain produce
+        // all four ✓ even when most candidates are dead.
         var candidates: [URL] = []
         if rule.search != nil || rule.jsonAPI?.search != nil {
             // Probe with a single common char first, then a 2-char fallback.
-            // A few mainland CMS clones (daweixs) reject keywords whose
-            // GB18030 byte length is < 4 — a single Chinese char is 2 bytes
+            // A few mainland CMS clones reject keywords whose GB18030
+            // byte length is < 4 — a single Chinese char is 2 bytes
             // and produces a "关键字过短" error page, so the smoke test for
             // those sites never marks search as 已识别 without the fallback.
             for probe in ["一", "小说"] {

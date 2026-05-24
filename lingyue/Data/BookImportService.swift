@@ -98,14 +98,14 @@ final class BookImportService: Sendable {
     static let shared = BookImportService()
 
     /// Sentinel content stored in the chapter cache for chapters whose source permanently
-    /// refuses to serve the body. 努努书坊 now gates every chapter site-wide behind a
-    /// "请下载努努书坊APP" / "由于版权问题不能显示" wall (verified 2026-05-14 — first chapter
-    /// of any book returns the same gate). Discovery's `filterPaywalledHits` keeps new
-    /// imports off nunu, but books imported before that filter landed still carry nunu
-    /// chapter URLs, so the reader path needs this sentinel to short-circuit reattempts.
-    /// Distinct from a transient network error: retrying against the same source won't
-    /// help, so we persist the marker and treat the chapter as "accounted for" in
-    /// download progress while still surfacing `sourceBlockedContent` to the reader.
+    /// refuses to serve the body (typical pattern: site-wide app-download gate that
+    /// returns boilerplate copyright text in place of every chapter). Discovery's
+    /// `filterPaywalledHits` keeps new imports off such sources, but books imported
+    /// before that filter landed still carry those chapter URLs, so the reader path
+    /// needs this sentinel to short-circuit reattempts. Distinct from a transient
+    /// network error: retrying against the same source won't help, so we persist the
+    /// marker and treat the chapter as "accounted for" in download progress while
+    /// still surfacing `sourceBlockedContent` to the reader.
     static let sourceBlockedContentSentinel = "__lingyue.source_blocked__\n"
 
     static func isSourceBlockedSentinelContent(_ content: String) -> Bool {
@@ -461,15 +461,15 @@ final class BookImportService: Sendable {
         if Self.isSourceBlockedSentinelContent(cachedChapter.content) {
             return true
         }
-        // Reject cached chapters whose title is a site-brand (e.g. "努努书坊", "笔趣阁") rather
-        // than a real chapter name. These were produced by the old <h1>-grabs-first bug; force
+        // Reject cached chapters whose title is a site brand rather than a real
+        // chapter name. These were produced by the old <h1>-grabs-first bug; force
         // a re-fetch so the new title parser can pick the right heading.
         if isSiteBrandTitle(cachedChapter.title) {
             return false
         }
-        // Reject cached chapters whose body begins with a breadcrumb signature — indicates the
-        // old extractor matched a page-level wrapper (e.g. 52书库's `<div class="content-wrap">`)
-        // instead of the real chapter container.
+        // Reject cached chapters whose body begins with a breadcrumb signature —
+        // indicates the old extractor matched a page-level wrapper instead of the
+        // real chapter container.
         if startsWithBreadcrumb(cachedChapter.content) {
             return false
         }
@@ -491,10 +491,11 @@ final class BookImportService: Sendable {
         ]
         if breadcrumbSignals.contains(where: { firstChunk.contains($0) }) { return true }
 
-        // Detect a nav-menu-style body (the old 宙斯小说 bug captured the menubar — many
-        // short single-token lines like 最新入库 / 宙斯小说网 / 繁体版 / 都市 / 言情 / 仙侠).
-        // If the cached body opens with several very short lines AND the total is small, it's
-        // almost certainly menu cruft, not a chapter.
+        // Detect a nav-menu-style body — when the extractor captures a menubar
+        // instead of the chapter, many short single-token lines line up at the top
+        // (category names, navigation labels). If the cached body opens with several
+        // very short lines AND the total is small, it's almost certainly menu cruft,
+        // not a chapter.
         if !lines.isEmpty {
             let head = lines.prefix(8)
             let shortHeadCount = head.filter { $0.count <= 8 }.count
@@ -570,10 +571,11 @@ final class BookImportService: Sendable {
                 ?? ""
         )
 
-        // 半夏小说 also stashes the full-resolution cover in the lazy <img>'s data-original
-        // attribute (its src is a "no cover" placeholder). Try og:image first, then any img
-        // with a book-cover-ish class — preferring data-original over src — before falling
-        // back to the alt-attribute pattern that just gives us the title.
+        // Some sources stash the full-resolution cover in the lazy <img>'s
+        // data-original attribute (its src is a "no cover" placeholder). Try
+        // og:image first, then any img with a book-cover-ish class — preferring
+        // data-original over src — before falling back to the alt-attribute
+        // pattern that just gives us the title.
         let cover = metaContent(named: "og:image", in: html)
             ?? firstMatch(#"<img[^>]+(?:id|class)=["'][^"']*(?:cover|bookimg|image|book-img)[^"']*["'][^>]+data-original=["']([^"']+)["']"#, in: html)
             ?? firstMatch(#"<img[^>]+data-original=["']([^"']+)["'][^>]+(?:id|class)=["'][^"']*(?:cover|bookimg|image|book-img)[^"']*["']"#, in: html)
@@ -592,7 +594,7 @@ final class BookImportService: Sendable {
 
     /// App Transport Security blocks plain http loads for URLSession (and therefore SwiftUI's
     /// AsyncImage), even though our WKWebView is allowed via NSAllowsArbitraryLoadsInWebContent.
-    /// Some sources (e.g. 半夏小说) advertise their og:image as an http URL even though https
+    /// Some sources advertise their og:image as an http URL even though https
     /// works fine — upgrade so the cover actually loads.
     private func httpsUpgraded(_ url: URL) -> URL {
         guard url.scheme?.lowercased() == "http",
@@ -692,8 +694,8 @@ final class BookImportService: Sendable {
 
         // Always fetch the canonical server HTML in parallel and treat it as another candidate.
         // WKWebView's outerHTML can serialize attributes differently or omit late-rendered DOM
-        // (e.g. 破万卷小说 sometimes returns a snapshot missing the chapter list). The candidate
-        // with the most chapters wins via chapterListScore below.
+        // (some sources return a snapshot missing the chapter list). The candidate with the
+        // most chapters wins via chapterListScore below.
         var candidateLists = [primaryLinks]
         var freshLinks: [ChapterLink] = []
         var freshHTMLForCatalog: String?
@@ -833,10 +835,10 @@ final class BookImportService: Sendable {
             return (n, link)
         }
         // If most titles are numbered, sort by that number — fixes catalogs that show
-        // "latest chapters" previews above the actual chapter sequence (e.g., 努努书坊).
+        // "latest chapters" previews above the actual chapter sequence.
         if numberedSlice.count >= max(3, unique.count * 3 / 4) {
-            // Some catalogs (e.g., daweixs.com) list the chapter sequence twice with
-            // distinct URLs, so URL-based dedup leaves duplicates that the numeric sort
+            // Some catalogs list the chapter sequence twice with distinct URLs, so
+            // URL-based dedup leaves duplicates that the numeric sort
             // pairs up as adjacent entries. Collapse by parsed chapter number too,
             // keeping the later occurrence so the catalog body wins over any preview.
             var byNumber: [Int: ChapterLink] = [:]
@@ -1009,9 +1011,9 @@ final class BookImportService: Sendable {
         html: String,
         allowDynamicTextEndpoint: Bool
     ) async throws -> NovelChapter? {
-        // Prefer headings explicitly tagged as the chapter title (class/id="title", "chaptername",
-        // "article-title", etc.) so site-logo <h1> elements like 努努书坊's
-        // <h1 class="logo"><a href="/">努努书坊</a></h1> don't hijack the real title.
+        // Prefer headings explicitly tagged as the chapter title (class/id="title",
+        // "chaptername", "article-title", etc.) so site-logo <h1> elements (e.g.
+        // <h1 class="logo"><a href="/">SiteName</a></h1>) don't hijack the real title.
         let titleClassRegex = #"\b(?:title|chaptername|chapter-name|article-title|book-title|nr_title)\b"#
         let parsedTitle = cleanText(
             firstMatch(#"<h1[^>]+(?:class|id)\s*=\s*["'][^"']*\#(titleClassRegex)[^"']*["'][^>]*>([\s\S]*?)</h1>"#, in: html)
@@ -1021,8 +1023,8 @@ final class BookImportService: Sendable {
         )
         // If the parsed h1/h2 looks like just the book name (no 第N章/节/页/回 marker)
         // but the catalog gave us a real chapter label (link.title has a marker), prefer
-        // the catalog one. 52书库 puts "<book name>(N)" in the chapter <h1>, but the catalog
-        // links read "第N页", which is what the user actually wants to see.
+        // the catalog one. Some templates put "<book name>(N)" in the chapter <h1>, while
+        // the catalog links read "第N页" — the latter is what the user actually wants to see.
         let chapterMarkerRegex = #"第\s*[\d一二三四五六七八九十百千万零〇两]+\s*[章节節回卷页頁]"#
         let parsedHasMarker = parsedTitle.range(of: chapterMarkerRegex, options: .regularExpression) != nil
         let linkHasMarker = link.title.range(of: chapterMarkerRegex, options: .regularExpression) != nil
@@ -1077,21 +1079,24 @@ final class BookImportService: Sendable {
 
         // Find the opening tag, then walk balanced to find the matching close.
         // Non-greedy regex like ([\s\S]*?)</div> stops at the FIRST </div>, which can
-        // be a nested noise wrapper (e.g., 努努书坊's <div class="posterror">).
+        // be a nested noise wrapper (e.g. an inline error/banner div nested in the
+        // chapter container).
         //
-        // Specific content selectors come first. Generic alternatives like `class*="content"`
-        // are intentionally LAST because page wrappers like 52书库's `<div class="content-wrap">`
-        // and `<div class="content contentmargin">` share the substring and would steal the match
-        // away from the precise chapter container.
+        // Specific content selectors come first. Generic alternatives like
+        // `class*="content"` are intentionally LAST because page wrappers like
+        // `<div class="content-wrap">` or `<div class="content contentmargin">`
+        // share the substring and would steal the match away from the precise
+        // chapter container.
         let containers: [(String, String)] = [
-            // 1. Inline-styled chapter body (黄金屋中文 / 宙斯小说). Drop the standalone `width: 700px`
-            //    signal — 宙斯小说's header bar uses `position: absolute; ...; width: 700px;`.
+            // 1. Inline-styled chapter body. Drop the standalone `width: 700px`
+            //    signal — some sites' header bars use
+            //    `position: absolute; ...; width: 700px;`.
             (#"<div[^>]+style=["'][^"']*(?:word-wrap:\s*break-word|text-indent:\s*2em)[^"']*["'][^>]*>"#, "div"),
             // 2. Specific id/class selectors.
             (#"<div[^>]+id=["']content["'][^>]*>"#, "div"),
             (#"<div[^>]+id=["']chaptercontent["'][^>]*>"#, "div"),
             // 3. Article/Section with a content-specific class — must come BEFORE the generic
-            //    div-with-content selector so 52书库's `<article class="article-content" id="nr1">`
+            //    div-with-content selector so a specific `<article class="article-content" id="nr1">`
             //    wins over its outer `<div class="content contentmargin">`.
             (#"<article[^>]+(?:id|class)\s*=\s*["'][^"']*(?:\#(containerKeywords))[^"']*["'][^>]*>"#, "article"),
             (#"<section[^>]+(?:id|class)\s*=\s*["'][^"']*(?:\#(containerKeywords))[^"']*["'][^>]*>"#, "section"),
@@ -1168,9 +1173,9 @@ final class BookImportService: Sendable {
 
     private func fetchHTML(from url: URL) async throws -> String {
         // App Transport Security blocks plain http for URLSession even though WKWebView is allowed
-        // arbitrary loads in web content. Several sources (e.g. 破万卷小说) issue 301s that drop
-        // from https to http, leaving us with an http URL we can't fetch directly. Upgrade the
-        // scheme back to https — every source we've encountered serves both schemes equivalently.
+        // arbitrary loads in web content. Several sources issue 301s that drop from https to http,
+        // leaving us with an http URL we can't fetch directly. Upgrade the scheme back to https —
+        // every source we've encountered serves both schemes equivalently.
         let secureURL: URL = {
             guard url.scheme?.lowercased() == "http",
                   var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
@@ -1227,11 +1232,11 @@ final class BookImportService: Sendable {
             "看本书最新章节", "看本書最新章節", "請訪問sto9", "请访问sto9",
             "loadAdv(", "返回书架", "返回書架", "加入书架", "加入書架",
             "推荐本书", "推薦本書", "字体大小", "字體大小",
-            // 努努书坊 inline error / report banner that sits above each chapter body
+            // Inline error / report banner fragments that some sources stamp above each chapter body
             "章节错误", "章節錯誤", "点此举报", "點此舉報", "举报后维护人员",
             "校正章节内容", "校正章節內容", "请耐心等待", "請耐心等待",
             "并刷新页面", "並刷新頁面",
-            // 努努书坊 copyright wall fragments
+            // Copyright / app-download wall fragments that replace chapter bodies on some sources
             "由于版权问题", "由於版權問題", "请下载努努书坊", "請下載努努書坊",
             "下载努努书坊APP", "下載努努書坊APP", "在APP内更新", "在APP內更新",
             "下载免费看", "下載免費看", "如何阅读小说完整章节", "如何閱讀小說完整章節",
@@ -1275,8 +1280,8 @@ final class BookImportService: Sendable {
         return stripLeadingBookMetadata(lines).joined(separator: "\n\n")
     }
 
-    /// Navigation-link footers (e.g. "目录 上一页 下一页 尾页 Top" on 52书库, or
-    /// "上一章 | 章节目录 | 下一章" on笔趣阁-style sites) survive earlier filters because
+    /// Navigation-link footers (e.g. "目录 上一页 下一页 尾页 Top" or
+    /// "上一章 | 章节目录 | 下一章" on common site templates) survive earlier filters because
     /// they're a *single* line containing multiple labels separated by whitespace or
     /// punctuation. Tokenize the line and drop it if every token is a known nav label
     /// — this is source-agnostic, so adding new sources doesn't need a per-site rule.
@@ -1317,7 +1322,7 @@ final class BookImportService: Sendable {
     }
 
     /// Strips leading book-metadata noise that some sources wedge before the actual chapter
-    /// content — e.g. 破万卷小说 prefaces every chapter page with the book title, "作者：xxx",
+    /// content — e.g. a chapter page that prefaces every body with the book title, "作者：xxx",
     /// "简介：" and a few summary paragraphs before the real "第N章 ..." heading. If we see
     /// metadata markers (作者[:：] / 简介[:：]) within the first ~12 lines AND a chapter heading
     /// appears later, drop everything up through that first chapter heading.
@@ -1443,15 +1448,15 @@ final class BookImportService: Sendable {
         } else {
             path = rawPath
         }
-        // Order matters: more specific patterns must come first. The biquge-style
+        // Order matters: more specific patterns must come first. The common
         // /(?:htm|html|index|kan|look)/(\d+)... patterns aren't anchored to start, so on a
         // chapter URL like /tongren/20104/index/1.html they would otherwise match the trailing
         // /index/1.html and capture "1" — the chapter number — instead of the book id "20104".
         let patterns = [
-            // 就爱读小说 (jieqi-style): /info/<sub>/<bookid>.html (detail), /reader/<sub>/<bookid>/<chapterno>.html (chapter)
+            // jieqi-style: /info/<sub>/<bookid>.html (detail), /reader/<sub>/<bookid>/<chapterno>.html (chapter)
             #"^/info/\d+/(\d+)\.html?$"#,
             #"^/reader/\d+/(\d+)/\d+\.html?$"#,
-            // 破万卷小说: /<category>/<bookid> (book detail) and /<category>/<bookid>/index/<n>.html (chapter)
+            // /<category>/<bookid> (book detail) and /<category>/<bookid>/index/<n>.html (chapter)
             #"^/[a-z]+\d*/(\d+)/index/\d+\.html?$"#,
             #"^/[a-z]+\d*/(\d+)/?$"#,
             #"/book/(\d+)(?:/index)?\.html$"#,
@@ -1674,10 +1679,10 @@ final class BookImportService: Sendable {
         ]
         let units: [Character: Int] = ["十": 10, "百": 100, "千": 1_000, "万": 10_000]
 
-        // Some sites (e.g., daweixs.com) write chapter numbers ≥100 as
-        // positional digits like "一一零" (110) or "二零二四" (2024)
-        // instead of place-value "一百一十". Detect the absence of any
-        // unit token and parse digit-by-digit. Without this, "一一零"
+        // Some sites write chapter numbers ≥100 as positional digits like
+        // "一一零" (110) or "二零二四" (2024) instead of place-value "一百一十".
+        // Detect the absence of any unit token and parse digit-by-digit.
+        // Without this, "一一零"
         // collapses to its last digit (0), every chapter ending in 零
         // sorts to the same bucket, and the catalog imports in the wrong
         // order.
@@ -2137,7 +2142,7 @@ private extension String.Encoding {
 }
 
 /// URLSession delegate that rewrites http://… redirect targets to https://… so App Transport
-/// Security doesn't block sites that 301 from https to http (e.g. 破万卷小说).
+/// Security doesn't block sites that 301 from https to http.
 final class HTTPSUpgradingRedirectDelegate: NSObject, URLSessionTaskDelegate, Sendable {
     func urlSession(
         _ session: URLSession,

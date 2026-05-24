@@ -24,10 +24,8 @@ public struct DetectionResult: Sendable, Hashable {
 /// post-redirect `finalURL` plus the rendered HTML hash so back/forward
 /// navigation is cheap without freezing an early incomplete DOM miss.
 ///
-/// **Module boundary.** Depends only on `BookSourceRegistry` —
-/// LingyueCore must not link `LingyueInternalSources` here. Both
-/// `InternalSourceRegistry` and the future App Store registry conform
-/// to the protocol; callers pick the right concrete instance.
+/// **Module boundary.** Depends only on the `BookSourceRegistry`
+/// protocol; callers pick the right concrete instance.
 ///
 /// **Cache invalidation.** The cache is keyed by page snapshot, but it
 /// still has no knowledge of which source produced each cached hit. When

@@ -2,10 +2,7 @@ import Foundation
 
 /// Aggregator of currently-enabled `BookSource`s. The Discovery search bar
 /// and the in-app browser's detector each obtain their working set through
-/// this protocol — they never instantiate sources themselves. The seam
-/// where target membership matters: `AppStoreSourceRegistry` returns only
-/// user-rule-driven sources; `InternalSourceRegistry` merges user-rule
-/// sources with internal fast-path adapters.
+/// this protocol — they never instantiate sources themselves.
 public protocol BookSourceRegistry: Sendable {
     /// Snapshot of currently-enabled sources, in user-visible priority
     /// order. Implementations should be reasonably cheap to call

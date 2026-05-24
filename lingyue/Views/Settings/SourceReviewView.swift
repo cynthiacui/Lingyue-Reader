@@ -212,10 +212,9 @@ struct SourceReviewView: View {
     }
 
     private var blocksSection: some View {
-        // Hide the 搜索 row when the rule has no search step — biquge,
-        // 5dxs and similar browser-import-only sources don't search, so
-        // surfacing 需要检查 there reads as "broken" when there's nothing
-        // to test in the first place.
+        // Hide the 搜索 row when the rule has no search step — browser-
+        // import-only sources don't search, so surfacing 需要检查 there
+        // reads as "broken" when there's nothing to test in the first place.
         let visibleBlocks = SourceBlock.allCases.filter { block in
             block != .search || draft.search != nil
         }

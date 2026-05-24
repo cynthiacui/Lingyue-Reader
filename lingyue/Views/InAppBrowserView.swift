@@ -237,13 +237,10 @@ struct InAppBrowserView: View {
                 responseHeaders: [:],
                 statusCode: nil
             ))
-            // Phase 5 gate: heuristic detection is Internal-only. The App
-            // Store target relies entirely on user-authored rules — the
-            // heuristic fallback would happily import from pirate mirrors
-            // a rule never claimed, which is exactly the App Store
-            // posture we're avoiding. The helper returns nil under
-            // `!LINGYUE_INTERNAL`, so `heuristic` stays nil and every
-            // heuristic-fed branch below short-circuits.
+            // The App Store target relies entirely on user-authored rules —
+            // there is no heuristic catalog fallback. The helper always returns
+            // nil, so `heuristic` stays nil and every heuristic-fed branch below
+            // short-circuits.
             async let heuristicTask = Self.runHeuristicDetection(
                 html: html,
                 url: url,
@@ -352,14 +349,10 @@ struct InAppBrowserView: View {
         }
     }
 
-    /// Runs `BookImportService`'s hardcoded-heuristic detector — but
-    /// only on the Internal target. The App Store target ships without
-    /// the heuristic catalog (no laundry list of `.cn` pirate hosts,
-    /// no `isLikelyChapterURL` / `isLikelyChapterTitle` walker), and
-    /// the only path that ever reached it from the in-app browser is
-    /// here. Returning `nil` under `!LINGYUE_INTERNAL` keeps the call
-    /// site shape identical and lets every downstream heuristic branch
-    /// short-circuit naturally.
+    /// Hook for a hardcoded-heuristic detector — currently a no-op in
+    /// the App Store build. Returning `nil` keeps the call site shape
+    /// identical and lets every downstream heuristic branch short-circuit
+    /// naturally.
     nonisolated static func runHeuristicDetection(
         html: String,
         url: URL,
@@ -823,10 +816,10 @@ private struct InAppWebView: UIViewRepresentable {
         webView.isOpaque = false
         webView.backgroundColor = .clear
         webView.scrollView.backgroundColor = .clear
-        // Many Chinese novel mirrors (笔趣阁 family, daweixs.com, …) sit behind
-        // nginx WAF rules that 502 anything missing the Version/* and Safari/*
-        // tokens — WKWebView's default UA omits both. Force a full mobile-Safari
-        // UA so the in-app browser is treated identically to Safari.
+        // Many Chinese novel mirrors sit behind nginx WAF rules that 502
+        // anything missing the Version/* and Safari/* tokens — WKWebView's
+        // default UA omits both. Force a full mobile-Safari UA so the in-app
+        // browser is treated identically to Safari.
         webView.customUserAgent = Self.mobileSafariUserAgent
 
         state.attach(webView)
@@ -906,12 +899,11 @@ private struct InAppWebView: UIViewRepresentable {
             return nil
         }
 
-        // Several Chinese novel mirrors (powanjuan.cc, daweixs.com, …)
-        // sit behind Cloudflare with a 301 from `https://host/path` to
-        // `http://host/path/` — a trailing-slash canonicalization that
-        // accidentally downgrades the scheme. WebKit silently blocks
-        // mixed-content navigations from a secure origin, so tapping a
-        // book on the HTTPS homepage just no-ops. The same path served
+        // Several Chinese novel mirrors sit behind Cloudflare with a 301
+        // from `https://host/path` to `http://host/path/` — a trailing-slash
+        // canonicalization that accidentally downgrades the scheme. WebKit
+        // silently blocks mixed-content navigations from a secure origin, so
+        // tapping a book on the HTTPS homepage just no-ops. The same path served
         // over HTTPS with the trailing slash returns 200, so transparently
         // re-issuing the request as HTTPS recovers the navigation.
         func webView(
