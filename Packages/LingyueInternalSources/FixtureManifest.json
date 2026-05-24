@@ -1,5 +1,0 @@
-{
-  "schemaVersion": 1,
-  "comment": "Maps neutral fixture IDs used in Tests/Fixtures to the real source hosts they represent. Internal-only — do NOT mirror this file into LingyueCore or the App Store target. Phase 0 ships an empty map; Phase 1 fills it.",
-  "sources": {}
-}
