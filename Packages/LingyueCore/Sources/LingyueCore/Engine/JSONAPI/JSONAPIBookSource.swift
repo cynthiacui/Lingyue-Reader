@@ -59,8 +59,9 @@ public struct JSONAPIBookSource: BookSource {
             }
             guard let endpointURL = URL(string: expanded) else { continue }
             do {
-                let snapshot = try await loader.fetchHTML(
-                    SourceRequest(url: endpointURL, headers: search.headers ?? [:])
+                let snapshot = try await fetchJSONExpected(
+                    url: endpointURL,
+                    headers: search.headers ?? [:]
                 )
                 let results = try Self.decodeSearch(
                     json: snapshot.html,
@@ -189,8 +190,9 @@ public struct JSONAPIBookSource: BookSource {
             guard let endpointURL = Self.applyTemplate(template, tokens: tokens, index: nil) else {
                 continue
             }
-            guard let snapshot = try? await loader.fetchHTML(
-                SourceRequest(url: endpointURL, headers: detail.headers ?? [:])
+            guard let snapshot = try? await fetchJSONExpected(
+                url: endpointURL,
+                headers: detail.headers ?? [:]
             ) else { continue }
             guard let resolved = try? Self.decodeDetail(
                 json: snapshot.html,
@@ -223,8 +225,9 @@ public struct JSONAPIBookSource: BookSource {
                 continue
             }
             do {
-                let snapshot = try await loader.fetchHTML(
-                    SourceRequest(url: endpointURL, headers: detail.headers ?? [:])
+                let snapshot = try await fetchJSONExpected(
+                    url: endpointURL,
+                    headers: detail.headers ?? [:]
                 )
                 if let resolved = try Self.decodeDetail(
                     json: snapshot.html,
@@ -323,8 +326,9 @@ public struct JSONAPIBookSource: BookSource {
                 continue
             }
             do {
-                let snapshot = try await loader.fetchHTML(
-                    SourceRequest(url: endpointURL, headers: catalog.headers ?? [:])
+                let snapshot = try await fetchJSONExpected(
+                    url: endpointURL,
+                    headers: catalog.headers ?? [:]
                 )
                 let links = try Self.decodeCatalog(
                     json: snapshot.html,
@@ -421,8 +425,9 @@ public struct JSONAPIBookSource: BookSource {
                 continue
             }
             do {
-                let snapshot = try await loader.fetchHTML(
-                    SourceRequest(url: endpointURL, headers: chapter.headers ?? [:])
+                let snapshot = try await fetchJSONExpected(
+                    url: endpointURL,
+                    headers: chapter.headers ?? [:]
                 )
                 let content = try Self.decodeChapter(json: snapshot.html, chapter: chapter)
                 if !content.paragraphs.isEmpty { return content }
@@ -708,6 +713,63 @@ public struct JSONAPIBookSource: BookSource {
             components.scheme = "https"
         }
         return components.url
+    }
+
+    // MARK: - Fetch with HTML-response retry
+
+    /// Fetches a URL the engine expects to return JSON. If the response is
+    /// actually HTML (a sign that the upstream CDN is holding an HTML page
+    /// in its cache for what should be a JSON endpoint — observed on at
+    /// least one site whose nginx cache key didn't distinguish HTML
+    /// routes from `/ajaxService?…` JSON routes), retries the same
+    /// request once with a cache-buster query param so the CDN either
+    /// cache-misses or stores the busted URL separately.
+    private func fetchJSONExpected(
+        url: URL,
+        headers: [String: String]
+    ) async throws -> WebPageSnapshot {
+        let snapshot = try await loader.fetchHTML(
+            SourceRequest(url: url, headers: headers)
+        )
+        guard Self.responseLooksLikeHTML(snapshot) else { return snapshot }
+        let bustedURL = Self.withCacheBuster(url)
+        return try await loader.fetchHTML(
+            SourceRequest(url: bustedURL, headers: headers)
+        )
+    }
+
+    /// True when the response Content-Type announces HTML, or when the
+    /// body unambiguously opens with `<!doctype html>` / `<html>`. The
+    /// body sniff covers renderer-sourced snapshots that don't carry
+    /// response headers — though those don't hit JSON-API endpoints in
+    /// practice, the check stays cheap and safe.
+    private static func responseLooksLikeHTML(_ snapshot: WebPageSnapshot) -> Bool {
+        if let contentType = snapshot.responseHeaders["content-type"],
+           contentType.lowercased().contains("text/html") {
+            return true
+        }
+        let head = snapshot.html
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .prefix(15)
+            .lowercased()
+        return head.hasPrefix("<!doctype html") || head.hasPrefix("<html")
+    }
+
+    /// Appends `_=<unix-ms>` to the URL's query so the CDN treats the
+    /// retry as a distinct cache key from the (possibly stale) primary.
+    /// Falls back to the original URL on the (vanishingly rare) case
+    /// where `URLComponents` can't recompose.
+    private static func withCacheBuster(_ url: URL) -> URL {
+        guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            return url
+        }
+        var items = components.queryItems ?? []
+        items.append(URLQueryItem(
+            name: "_",
+            value: String(Int(Date().timeIntervalSince1970 * 1000))
+        ))
+        components.queryItems = items
+        return components.url ?? url
     }
 }
 
