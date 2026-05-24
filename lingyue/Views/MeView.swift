@@ -855,6 +855,7 @@ struct AboutSettingsView: View {
                 Section {
                     privacyPolicyRow
                     copyrightRow
+                    disclaimerRow
                 }
                 .listRowBackground(theme.cardBackground)
             }
@@ -913,6 +914,21 @@ struct AboutSettingsView: View {
         )
     }
 
+    private var disclaimerRow: some View {
+        NavigationLink {
+            DisclaimerView()
+        } label: {
+            Label {
+                Text("免责声明")
+                    .font(.headline)
+                    .foregroundStyle(theme.primaryText)
+            } icon: {
+                Image(systemName: "doc.text")
+                    .foregroundStyle(theme.primaryText)
+            }
+        }
+    }
+
     /// Shared style for outbound https rows in About (privacy policy + copyright).
     /// Matches the GitHub row's leading SF-Symbol-style label + trailing
     /// arrow.up.right.square affordance.
@@ -933,6 +949,47 @@ struct AboutSettingsView: View {
                     .foregroundStyle(theme.secondaryText.opacity(0.7))
             }
         }
+    }
+}
+
+// MARK: - Disclaimer
+
+/// In-app 免责声明 screen, pushed from the About settings. Plain themed
+/// `ScrollView` rather than a `List` because the content is paragraph prose, not
+/// a row-style list. Kept in sync with the disclaimer section of the public
+/// complaint page (https://cynthiacui.github.io/Lingyue-Reader/complaint.html).
+struct DisclaimerView: View {
+    @Environment(\.appTheme) private var theme
+
+    private let paragraphs: [String] = [
+        "灵阅书屋为个人学习与非商业用途设计。",
+        "App 内访问的任何第三方网站,其内容版权与法律责任均由相应网站及添加该网站的用户承担。我们不对用户通过 app 访问、缓存或下载的任何第三方内容的合法性作出保证。",
+        "用户导入或保存的任何本地文件,其版权归属与合法性由用户自行确认与承担。请仅导入您拥有合法使用权或属于公有领域(public domain)的作品。",
+        "如因用户使用 app 访问、导入或下载任何内容引发的任何纠纷,由该用户与相应权利方自行解决。",
+        "如您对本声明有疑问,或希望就 app 默认行为提出改进建议,请通过 GitHub 提交 issue:github.com/cynthiacui/Lingyue-Reader/issues"
+    ]
+
+    var body: some View {
+        ZStack {
+            ThemeBackgroundView()
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    ForEach(paragraphs.indices, id: \.self) { index in
+                        Text(paragraphs[index])
+                    }
+                }
+                .font(.callout)
+                .foregroundStyle(theme.primaryText)
+                .lineSpacing(4)
+                .padding(.horizontal, 20)
+                .padding(.top, 20)
+                .padding(.bottom, 40)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .navigationTitle("免责声明")
+        .navigationBarTitleDisplayMode(.inline)
     }
 }
 
