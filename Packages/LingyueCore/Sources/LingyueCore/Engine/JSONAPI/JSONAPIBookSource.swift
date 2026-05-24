@@ -8,9 +8,9 @@ import Foundation
 /// App Store target needs.
 ///
 /// `search`, `detectBook`, and `fetchDetail` throw narrow errors: the
-/// sites this engine targets (笔趣阁 API mirrors, 5dxs ajaxService)
-/// expose only catalog/chapter endpoints. Detection still happens
-/// through the rule's `detection` step on the in-app browser path.
+/// JSON-API engine handles catalog/chapter endpoints only. Detection
+/// still happens through the rule's `detection` step on the in-app
+/// browser path.
 public struct JSONAPIBookSource: BookSource {
     public let rule: SourceRule
     public let config: JSONAPIConfig
@@ -147,8 +147,8 @@ public struct JSONAPIBookSource: BookSource {
 
     /// Coerces a `JSONPath.resolve` result into a String. Handles the
     /// common JSON types — `String`, `NSNumber`, `Int`, `Double`, `Bool` —
-    /// because biquge's API serves book IDs as numbers (`"id": 15089`)
-    /// rather than strings.
+    /// because some APIs serve numeric book IDs (`"id": 15089`) rather
+    /// than strings.
     private static func stringValue(_ raw: Any?) -> String? {
         switch raw {
         case let s as String: return s
@@ -341,12 +341,12 @@ public struct JSONAPIBookSource: BookSource {
                 continue
             }
         }
-        // The biquge API serves a known constellation of bxwxorg-family
-        // sites; sister mirrors (bqg99/bgg99) share the same URL shape
-        // but have book IDs the API doesn't recognize, so every
-        // endpoint returns `{"list":null}`. Falling back to the HTML
-        // catalog block — when the rule defines one — lets one rule
-        // cover both API-backed and HTML-backed mirrors.
+        // The same JSON API may serve a constellation of mirror sites;
+        // sister mirrors can share the URL shape but have book IDs the
+        // API doesn't recognize, so every endpoint returns
+        // `{"list":null}`. Falling back to the HTML catalog block —
+        // when the rule defines one — lets one rule cover both
+        // API-backed and HTML-backed mirrors.
         if !rule.catalog.chaptersSelector.isEmpty {
             if let html = try? await fallback.fetchCatalog(url: url), !html.isEmpty {
                 return html
@@ -531,10 +531,10 @@ public struct JSONAPIBookSource: BookSource {
         // Synthetic host/origin tokens. Lets a template say
         // `https://{originHost}/api/book?id={bookID}` so the engine hits
         // the same-host API on whatever mirror the user landed on; named
-        // mirrors (`apiqu.cc`, `apige.cc`) can sit later in the list as
-        // fallbacks. The biquge ecosystem has many mirrors with
-        // independent ID spaces, so cross-host fallback is unreliable —
-        // this lets the rule prefer the local backend.
+        // backend mirrors can sit later in the list as fallbacks. Some
+        // ecosystems have many mirrors with independent ID spaces, so
+        // cross-host fallback is unreliable — this lets the rule prefer
+        // the local backend.
         if let host = url.host, !host.isEmpty {
             tokens["originHost"] = host
             let scheme = url.scheme ?? "https"

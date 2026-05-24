@@ -1,9 +1,6 @@
 import SwiftUI
 import UniformTypeIdentifiers
 import LingyueCore
-#if LINGYUE_INTERNAL
-import LingyueInternalSources
-#endif
 
 /// Phase 3.1 — sources management screen. Lists every rule available
 /// to the runtime (seeded + user-authored), with per-rule enable/disable
@@ -451,11 +448,7 @@ struct SourcesListView: View {
             // Seeded rules are an Internal-target concept. The App Store
             // target ships with no bundled rules — the user starts with
             // an empty list and authors their own via §3.2.
-#if LINGYUE_INTERNAL
-            let seeded = LingyueInternalSources.bundledRules()
-#else
             let seeded: [SourceRule] = []
-#endif
             // Dedup by id: a user override and its seeded original share UUID;
             // the editable copy wins because the user authored it.
             let editableIDs = Set(editable.map(\.id))
@@ -681,26 +674,9 @@ struct SourcesListView: View {
 
     @ViewBuilder
     private var emptyCard: some View {
-#if LINGYUE_INTERNAL
-        // Internal ships with seeded rules — an empty list here is
-        // diagnostic, not first-launch.
-        VStack(alignment: .leading, spacing: 8) {
-            Label("还没有可用书源", systemImage: "tray")
-                .font(.headline)
-                .foregroundStyle(theme.primaryText)
-            Text("应用未检测到任何内置或自定义书源——这通常意味着资源未正确打包。")
-                .font(.footnote)
-                .foregroundStyle(theme.secondaryText)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .sourcesListCard()
-#else
         appStoreFirstLaunchCard
-#endif
     }
 
-#if !LINGYUE_INTERNAL
     private var appStoreFirstLaunchCard: some View {
         VStack(alignment: .leading, spacing: 6) {
             Label("尚未添加任何来源", systemImage: "books.vertical")
@@ -714,7 +690,6 @@ struct SourcesListView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .sourcesListCard()
     }
-#endif
 
     private func errorCard(_ message: String) -> some View {
         VStack(alignment: .leading, spacing: 8) {

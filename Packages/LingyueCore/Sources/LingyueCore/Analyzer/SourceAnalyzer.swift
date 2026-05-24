@@ -263,9 +263,9 @@ public enum SourceAnalyzer {
         // Unified search-refinement helper: execute the candidate step
         // with the user's keyword, refine selectors from the live HTML,
         // and fall back to a smoke-test when refinement fails. Used by
-        // both the URL-derived and form-discovered branches so POST
-        // sites (xbanxia, xsw, nunu) also get real selectors instead of
-        // the `.result, .result-item, ...` placeholder.
+        // both the URL-derived and form-discovered branches so POST-based
+        // search forms also get real selectors instead of the
+        // `.result, .result-item, ...` placeholder.
         func refineAndRecord(step initialStep: SearchStep, baseConfidence: AnalysisReport.BlockConfidence, baseNote: String?) async {
             var step = initialStep
             // Always probe — if the user didn't supply a keyword we use a
@@ -812,8 +812,8 @@ public enum SourceAnalyzer {
             // pasted a typo) takes us here because the response contains
             // no rows to cluster on. But Chinese book CMSes still emit
             // the empty results container with a named class — e.g.
-            // xbanxia.cc renders `<div class="pop-books2"><ol></ol></div>`
-            // even on 0 hits. Walk those empty lists, look for a results
+            // `<div class="pop-books2"><ol></ol></div>` even on 0 hits.
+            // Walk those empty lists, look for a results
             // signal on the element or a near ancestor, and infer the
             // selector anyway so the user only needs to retry with a
             // known-good keyword (not also hand-edit selectors).
@@ -1301,8 +1301,8 @@ public enum SourceAnalyzer {
         // qualify, A picks up B's text *plus* whatever else is on the
         // page (header, nav, footer, recommendations). Reading from A
         // dumps the entire page chrome into every chapter; reading
-        // from the leaf-most B gives just the body. xbanxia is the
-        // motivating case — both `#pagewrap` (whole page) and `#nr1`
+        // from the leaf-most B gives just the body. The motivating case
+        // — a site where both `#pagewrap` (whole page) and `#nr1`
         // (chapter body) clear the 300-char threshold and neither
         // matches `knownContentTokens`, so length alone picks the
         // wrapper. Pruning ancestors keeps `#nr1`.

@@ -144,9 +144,8 @@ enum ChineseTextConverter {
 
 enum BookSourceRegistry {
     /// Each source is identified by a display `name` plus a list of `hosts` (matched as the host
-    /// itself or as a suffix, so subdomains like `m.nunucom.com` resolve too) and an optional list
-    /// of `hostPatterns` (regex on the lowercased host) for source families whose mirror domains
-    /// proliferate (e.g. 笔趣阁 spawns bqg82.de, qu83.cc, biq53.com, d1070b.bqg606.cc, …).
+    /// itself or as a suffix, so subdomains resolve too) and an optional list of `hostPatterns`
+    /// (regex on the lowercased host) for source families whose mirror domains proliferate.
     /// Add a new source by appending one entry — no other code changes needed.
     private struct SourcePattern {
         let name: String
@@ -160,38 +159,7 @@ enum BookSourceRegistry {
         }
     }
 
-    private static let sources: [SourcePattern] = {
-#if LINGYUE_INTERNAL
-        return [
-        SourcePattern(name: "笔趣阁小说", hosts: ["bqgl.cc"]),
-        SourcePattern(name: "大尾笔趣阁", hosts: ["daweixs.com"]),
-        SourcePattern(
-            name: "笔趣阁",
-            hosts: ["bq99.cc"],
-            hostPatterns: [#"(?:^|\.)(?:bq|biq|qu)[a-z]*\d+\.[a-z]{2,}$"#]
-        ),
-        SourcePattern(name: "破万卷小说", hosts: ["powanjuan.cc"]),
-        SourcePattern(name: "ESJ轻小说", hosts: ["esjzone.cc"]),
-        SourcePattern(name: "思兔閱讀", hosts: ["sto9.com"]),
-        SourcePattern(name: "就爱读小说", hosts: ["5dxs.net"]),
-        SourcePattern(name: "UU看书", hosts: ["uuks.org"]),
-        SourcePattern(name: "同人圈", hosts: ["tongrenquan.org"]),
-        SourcePattern(name: "同人小说网", hosts: ["trxs.org"]),
-        SourcePattern(name: "台灣小說網", hosts: ["xsw.tw"]),
-        SourcePattern(name: "半夏小说", hosts: ["xbanxia.cc"]),
-        SourcePattern(name: "宙斯小说", hosts: ["zhswx.com"]),
-        SourcePattern(name: "黄金屋中文", hosts: ["hjwzw.com"]),
-        SourcePattern(name: "努努书坊", hosts: ["nunucom.com"]),
-        SourcePattern(name: "轻小说百科", hosts: ["lnovel.org"]),
-        SourcePattern(name: "飘天文学网", hosts: ["piaotian8.com"]),
-        SourcePattern(name: "69书吧", hosts: ["69shuba.com"]),
-        SourcePattern(name: "52书库", hosts: ["52shuku.net"]),
-        SourcePattern(name: "无忧书城", hosts: ["51shucheng.net"])
-        ]
-#else
-        return []
-#endif
-    }()
+    private static let sources: [SourcePattern] = []
 
     /// Custom URL schemes used to mark books imported from local files. We don't store
     /// the original file URL (which would leak sandbox paths and be tied to a single device),
@@ -308,12 +276,12 @@ enum BookSourceRegistry {
 
     private static func matchedSource(forHost host: String) -> SourcePattern? {
         let normalized = normalize(host)
-        // Exact host match first so e.g. bqgl.cc resolves to 笔趣阁小说 rather than getting
-        // swept up by 笔趣阁's mirror regex.
+        // Exact host match first so a specific host resolves to its own
+        // entry rather than getting swept up by a mirror-family regex.
         for source in sources where source.hosts.contains(normalized) {
             return source
         }
-        // Subdomain (suffix) match — m.nunucom.com, www.52shuku.net, etc.
+        // Subdomain (suffix) match — handles m.<host>, www.<host>, etc.
         for source in sources where source.hosts.contains(where: { normalized.hasSuffix(".\($0)") }) {
             return source
         }

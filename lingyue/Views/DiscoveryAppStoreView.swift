@@ -1,10 +1,8 @@
 import SwiftUI
 import LingyueCore
 
-#if !LINGYUE_INTERNAL
-/// App Store-build Discovery page. The internal target has a curated
-/// `书库` grid driven by seeded sources; the App Store target ships with
-/// no seeded sources, so this view exposes only what the user has added:
+/// Discovery page for the App Store build. Ships with no seeded sources,
+/// so this view exposes only what the user has added:
 ///
 /// 1. A top-right toolbar button that pushes `SourcesListView` for
 ///    add/edit/reorder. This entry used to live under Settings → 书源;
@@ -401,4 +399,3 @@ private struct BrowserDestination: Identifiable, Hashable {
         self.title = title
     }
 }
-#endif

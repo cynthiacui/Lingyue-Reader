@@ -738,9 +738,6 @@ struct DataStorageView: View {
 
             List {
                 Section {
-#if LINGYUE_INTERNAL
-                    sourcesNavRow
-#endif
                     backupNavRow
                 } header: {
                     Text("数据")
@@ -772,17 +769,6 @@ struct DataStorageView: View {
             await refreshCacheSize()
         }
     }
-
-#if LINGYUE_INTERNAL
-    private var sourcesNavRow: some View {
-        NavigationLink {
-            SourcesListView()
-        } label: {
-            Label("我的书源", systemImage: "books.vertical")
-                .font(.headline)
-        }
-    }
-#endif
 
     private var backupNavRow: some View {
         NavigationLink {
@@ -861,9 +847,6 @@ struct AboutSettingsView: View {
 
             List {
                 Section {
-#if LINGYUE_INTERNAL
-                    diagnosticsNavRow
-#endif
                     aboutVersionRow
                     githubLinkRow
                 }
@@ -875,17 +858,6 @@ struct AboutSettingsView: View {
         .navigationTitle("关于")
         .navigationBarTitleDisplayMode(.inline)
     }
-
-#if LINGYUE_INTERNAL
-    private var diagnosticsNavRow: some View {
-        NavigationLink {
-            ReaderDiagnosticsView()
-        } label: {
-            Label("阅读诊断", systemImage: "doc.text.magnifyingglass")
-                .font(.headline)
-        }
-    }
-#endif
 
     private var aboutVersionRow: some View {
         HStack {

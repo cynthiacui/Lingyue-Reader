@@ -7,15 +7,10 @@ extract.
 
 ## Why neutral IDs
 
-Folders are named `source-a`, `source-b`, `source-c` — not `52shuku` or
-`hjwzw`. The neutral-to-real mapping lives in
-`Packages/LingyueInternalSources/Sources/LingyueInternalSources/FixtureManifest.json`,
-which the App Store target does not link. This means:
-
-- Grepping the App Store binary turns up no real source names from
-  fixtures.
-- The fixtures themselves can be checked in without leaking host strings
-  into `LingyueCore` test code.
+Folders are named `source-a`, `source-b`, `source-c` — not after any
+real host. The neutral IDs let the fixtures be checked in without
+leaking host strings into `LingyueCore` test code, and grepping the App
+Store binary turns up no real source names from fixtures.
 
 ## File layout per source
 

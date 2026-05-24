@@ -116,11 +116,6 @@ final class BookImportService: Sendable {
     /// should import all chapters below this high ceiling; hitting it means the extractor likely
     /// matched navigation/archive links as chapters.
     private let runawayChapterLimit = 20_000
-#if LINGYUE_INTERNAL
-    private let biqugeAPIHosts = ["apiqu.cc", "apige.cc"]
-#else
-    private let biqugeAPIHosts: [String] = []
-#endif
     private let catalogRepairCache = OSAllocatedUnfairLock<[UUID: Bool]>(initialState: [:])
     private let httpSession: URLSession
 
@@ -434,13 +429,6 @@ final class BookImportService: Sendable {
             return true
         }
 
-        if isHJWZWHost(sourceURL),
-           novel.chapters.count >= 10,
-           let firstChapterNumber = novel.chapters.first.flatMap({ chapterNumber(from: $0.title) }),
-           firstChapterNumber > 50 {
-            return true
-        }
-
         return false
     }
 
@@ -486,23 +474,7 @@ final class BookImportService: Sendable {
             return false
         }
 
-        guard let sourceURLString = originalChapter.sourceURLString,
-              let sourceURL = URL(string: sourceURLString),
-              isBiqugeAPISource(sourceURL) else {
-            return true
-        }
-
-        let content = cachedChapter.content.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard content.count >= 30 else { return false }
-
-        let leakedShellFragments = [
-            "笔趣阁\n\n字体", "筆趣閣\n\n字體",
-            "字体：", "字體：",
-            "我的书架", "我的書架",
-            "联系我们", "聯繫我們"
-        ]
-        let shellHitCount = leakedShellFragments.filter { content.contains($0) }.count
-        return shellHitCount < 2
+        return true
     }
 
     private func startsWithBreadcrumb(_ content: String) -> Bool {
@@ -564,26 +536,6 @@ final class BookImportService: Sendable {
     private struct ChapterLink: Hashable {
         let title: String
         let url: URL
-    }
-
-    private struct BiqugeBookListResponse: Decodable {
-        let list: [String]
-    }
-
-    private struct BiqugeChapterResponse: Decodable {
-        let title: String?
-        let author: String?
-        let chaptername: String?
-        let txt: String?
-    }
-
-    private struct FivedxsCatalogResponse: Decodable {
-        let items: [Item]?
-
-        struct Item: Decodable {
-            let chaptername: String
-            let url: String
-        }
     }
 
     private func parseMetadata(html: String, url: URL, fallbackTitle: String?) -> BookMetadata {
@@ -651,48 +603,7 @@ final class BookImportService: Sendable {
     }
 
     private func sourceSpecificBookTitle(in html: String, url: URL) -> String? {
-#if !LINGYUE_INTERNAL
         return nil
-#else
-        let host = url.host(percentEncoded: false)?.lowercased() ?? ""
-        let isCatalogSource = host.contains("bqg")
-            || host.contains("biqu")
-            || host.contains("banxia")
-            || host.contains("xbanxia")
-            || host.contains("zhswx")
-            || host.contains("hjwzw")
-        guard isCatalogSource || BookSourceRegistry.isKnownHost(url) else { return nil }
-
-        if host.contains("hjwzw") {
-            let breadcrumbBookLink = #"<a[^>]+href=["'][^"']*/Book/\d+/?["'][^>]*>([^<]{2,100})</a>\s*(?:&nbsp;|\s|　)*>>"#
-            if let title = firstMatch(breadcrumbBookLink, in: html).map(cleanBookTitle),
-               isSpecificBookTitle(title) {
-                return title
-            }
-        }
-
-        let patterns = [
-            // 半夏小说 wraps the book name in <h1> inside <div class="book-describe">. Other
-            // sites use similar info containers; this pattern grabs the first h1/h2 that lives
-            // directly inside one of those containers, which steers around site-logo <h1>s.
-            #"<(?:div|section|article)[^>]+class=["'][^"']*(?:book-describe|book-detail|book-info|book-msg|bookbox|book-data)[^"']*["'][^>]*>\s*(?:<[^>]+>\s*)*?<(?:h1|h2|h3)[^>]*>\s*([^<]{2,100})\s*</(?:h1|h2|h3)>"#,
-            #"<(?:h1|h2|h3|div|span|p)[^>]*(?:class|id)=["'][^"']*(?:bookname|book-name|booktitle|book-title|info-title|detail-title|novel-title|title)[^"']*["'][^>]*>([\s\S]{1,180}?)</(?:h1|h2|h3|div|span|p)>"#,
-            #"<img[^>]+(?:class|id)=["'][^"']*(?:cover|bookimg|image|pic)[^"']*["'][^>]+alt=["']([^"']{1,100})["']"#,
-            #"<img[^>]+alt=["']([^"']{1,100})["'][^>]+(?:class|id)=["'][^"']*(?:cover|bookimg|image|pic)[^"']*["']"#,
-            #"<(?:h1|h2|h3|div|span|p)[^>]*>\s*([^<>]{1,100})\s*</(?:h1|h2|h3|div|span|p)>\s*[\s\S]{0,700}?作者[：:]"#
-        ]
-
-        for pattern in patterns {
-            for match in matches(pattern, in: html) {
-                let candidate = cleanBookTitle(firstMatch(pattern, in: match) ?? match)
-                if isSpecificBookTitle(candidate) {
-                    return candidate
-                }
-            }
-        }
-
-        return nil
-#endif
     }
 
     private func isSpecificBookTitle(_ title: String) -> Bool {
@@ -745,9 +656,6 @@ final class BookImportService: Sendable {
         if path == "/" || path.isEmpty || blockedPathFragments.contains(where: { path.contains($0) }) {
             return false
         }
-        if isHJWZWHost(url), !isHJWZWImportableBookPath(path) {
-            return false
-        }
 
         let hasNovelMeta = loweredHTML.contains("og:novel")
             || loweredHTML.contains("book_name")
@@ -772,21 +680,6 @@ final class BookImportService: Sendable {
             || (hasAuthor && hasReaderActions)
             || (hasBookLikePath && hasAuthor)
             || (isKnownSourceHost && chapterCount >= 1)
-    }
-
-    private func isHJWZWHost(_ url: URL) -> Bool {
-#if !LINGYUE_INTERNAL
-        return false
-#else
-        guard let host = url.host(percentEncoded: false)?.lowercased() else { return false }
-        return host == "hjwzw.com" || host.hasSuffix(".hjwzw.com")
-#endif
-    }
-
-    private func isHJWZWImportableBookPath(_ path: String) -> Bool {
-        path.range(of: #"^/book/\d+/?$"#, options: [.regularExpression, .caseInsensitive]) != nil
-            || path.range(of: #"^/book/chapter/\d+/?$"#, options: [.regularExpression, .caseInsensitive]) != nil
-            || path.range(of: #"^/book/read/\d+,\d+/?$"#, options: [.regularExpression, .caseInsensitive]) != nil
     }
 
     private func bestChapterLinks(from html: String, sourceURL: URL) async throws -> [ChapterLink] {
@@ -819,39 +712,15 @@ final class BookImportService: Sendable {
 #endif
         }
 
-        let apiLinks = await biqugeAPICatalogLinks(for: sourceURL, sourceBookID: sourceBookID)
-        if !apiLinks.isEmpty {
-            candidateLists.append(apiLinks)
-        }
-
-        let fivedxsLinks = await fivedxsCatalogLinks(for: sourceURL, sourceBookID: sourceBookID)
-        if !fivedxsLinks.isEmpty {
-            candidateLists.append(fivedxsLinks)
-#if DEBUG
-            debugLog("[ChapterImport] 5dxs ajax catalog -> \(fivedxsLinks.count) chapters")
-#endif
-        }
-
-        let hjwzwLinks = await hjwzwCatalogLinks(for: sourceURL, sourceBookID: sourceBookID)
-        if !hjwzwLinks.isEmpty {
-            candidateLists.append(hjwzwLinks)
-#if DEBUG
-            debugLog("[ChapterImport] HJWZW catalog -> \(hjwzwLinks.count) chapters")
-#endif
-        }
-
         // Probe catalog URLs unless the source page already gave us a contiguous chapter list
-        // starting at 第1章. For 努努书坊 / 破万卷小说 / 黄金屋中文 the book detail page lists every
-        // chapter inline, so probing wastes HTTP requests. For 宙斯小说 the book detail page lists
-        // only the latest 30 chapters — count is high but the list starts at 第330章, so we still
-        // need /chapter/<id>.html.
+        // starting at 第1章. Some detail pages list every chapter inline (no probing needed);
+        // others list only the latest N chapters, in which case we still need to walk the
+        // catalog endpoint to find the earlier ones.
         let alreadyComplete = looksContiguousFromOne(primaryLinks)
             || looksContiguousFromOne(freshLinks)
-            || looksContiguousFromOne(apiLinks)
-            || looksContiguousFromOne(hjwzwLinks)
 
 #if DEBUG
-        debugLog("[ChapterImport] source=\(sourceURL.absoluteString) primary=\(primaryLinks.count) fresh=\(freshLinks.count) api=\(apiLinks.count) alreadyComplete=\(alreadyComplete)")
+        debugLog("[ChapterImport] source=\(sourceURL.absoluteString) primary=\(primaryLinks.count) fresh=\(freshLinks.count) alreadyComplete=\(alreadyComplete)")
 #endif
 
         if !alreadyComplete {
@@ -979,200 +848,6 @@ final class BookImportService: Sendable {
         return orderedChapterLinks(links)
     }
 
-    private func biqugeAPICatalogLinks(for sourceURL: URL, sourceBookID: String?) async -> [ChapterLink] {
-#if !LINGYUE_INTERNAL
-        return []
-#else
-        // Phase 2.4 cut-over: when the registry-routing flag is on,
-        // try the rule-engine path first. Failures or empty results
-        // fall through to the legacy parser below — this is a
-        // shadow-route, never a hard cutover, so a regression in the
-        // adapter can never make catalog resolution *worse* than
-        // legacy. Only the Biquge path is gated for now; 5dxs and
-        // HJWZW remain on legacy until their adapters mature.
-        if Self.useSourceRegistryForCatalog {
-            let routed = await registryRoutedBiqugeAPICatalogLinks(for: sourceURL)
-            if !routed.isEmpty {
-                return routed
-            }
-        }
-
-        guard isBiqugeAPISource(sourceURL),
-              let bookID = sourceBookID ?? bookID(from: sourceURL),
-              let data = try? await fetchBiqugeAPIData(
-                path: "/api/booklist",
-                queryItems: [URLQueryItem(name: "id", value: bookID)]
-              ),
-              let response = try? JSONDecoder().decode(BiqugeBookListResponse.self, from: data) else {
-            return []
-        }
-
-        return response.list.enumerated().compactMap { offset, rawTitle in
-            let title = cleanText(rawTitle)
-            guard !title.isEmpty else { return nil }
-            let chapterID = offset + 1
-            guard let url = absoluteURL(from: "/book/\(bookID)/\(chapterID).html", baseURL: sourceURL) else {
-                return nil
-            }
-            return ChapterLink(title: title, url: url)
-        }
-#endif
-    }
-
-    /// Build-time gate for the rule-engine catalog/chapter route.
-    /// Internal builds always go through `InternalSourceRegistry`
-    /// first and fall back to legacy on failure; App Store builds
-    /// stay on the legacy hand-written parsers.
-    static var useSourceRegistryForCatalog: Bool {
-#if LINGYUE_INTERNAL
-        return true
-#else
-        return false
-#endif
-    }
-
-    /// Phase 2.4 routed-Biquge path. Talks to the registry through
-    /// `SourceStack.live` instead of `fetchBiqugeAPIData` directly,
-    /// then maps `LingyueCore.ChapterLink` back to this file's
-    /// private struct (the latter only carries title + URL). Any
-    /// throw — host mismatch (`unsupportedURL`), decode failure,
-    /// transport error — is swallowed so the caller falls through
-    /// to legacy. We do NOT pre-check the URL host; that's the
-    /// adapter's job, and going through the throw path keeps the
-    /// dispatch layer ignorant of adapter internals.
-    private func registryRoutedBiqugeAPICatalogLinks(for sourceURL: URL) async -> [ChapterLink] {
-        do {
-            guard let source = try await SourceStack.live.registry.source(withID: "json-api:biquge-api") else {
-                return []
-            }
-            let coreLinks = try await source.fetchCatalog(url: sourceURL)
-            await ReaderDiagnostics.shared.log(.info, "registry route → catalog", context: [
-                "adapter": "biquge-api",
-                "count": String(coreLinks.count)
-            ])
-            return coreLinks.map { ChapterLink(title: $0.title, url: $0.url) }
-        } catch BookSourceError.unsupportedURL {
-            // Host didn't match — this URL isn't the registry's
-            // problem, no diagnostic noise.
-            return []
-        } catch {
-            await ReaderDiagnostics.shared.log(.info, "registry route fell back → legacy", context: [
-                "adapter": "biquge-api",
-                "url": sourceURL.absoluteString,
-                "error": String(describing: error)
-            ])
-            return []
-        }
-    }
-
-    /// Phase 2.4 routed-5dxs path. Same shadow-route pattern as
-    /// `registryRoutedBiqugeAPICatalogLinks` — any throw falls back
-    /// to legacy, host-mismatch (`unsupportedURL`) is silent, every
-    /// other error logs once for the TestFlight ramp.
-    private func registryRoutedFivedxsCatalogLinks(for sourceURL: URL) async -> [ChapterLink] {
-        do {
-            guard let source = try await SourceStack.live.registry.source(withID: "json-api:5dxs") else {
-                return []
-            }
-            let coreLinks = try await source.fetchCatalog(url: sourceURL)
-            await ReaderDiagnostics.shared.log(.info, "registry route → catalog", context: [
-                "adapter": "5dxs",
-                "count": String(coreLinks.count)
-            ])
-            return coreLinks.map { ChapterLink(title: $0.title, url: $0.url) }
-        } catch BookSourceError.unsupportedURL {
-            return []
-        } catch {
-            await ReaderDiagnostics.shared.log(.info, "registry route fell back → legacy", context: [
-                "adapter": "5dxs",
-                "url": sourceURL.absoluteString,
-                "error": String(describing: error)
-            ])
-            return []
-        }
-    }
-
-    /// 就爱读小说 (5dxs.net / adxs.net) paginates the chapter catalog 10-per-page on the book
-    /// detail page. The site's wap UI uses an /ajaxService endpoint that returns a JSON list
-    /// — calling it once with size=2000 retrieves the entire catalog in a single request,
-    /// avoiding the need to walk dozens of pages.
-    private func fivedxsCatalogLinks(for sourceURL: URL, sourceBookID: String?) async -> [ChapterLink] {
-#if !LINGYUE_INTERNAL
-        return []
-#else
-        if Self.useSourceRegistryForCatalog {
-            let routed = await registryRoutedFivedxsCatalogLinks(for: sourceURL)
-            if !routed.isEmpty {
-                return routed
-            }
-        }
-
-        guard let host = sourceURL.host(percentEncoded: false)?.lowercased(),
-              host.contains("5dxs.net") || host.contains("adxs.net") else {
-            return []
-        }
-        guard let bookID = sourceBookID ?? bookID(from: sourceURL),
-              !bookID.isEmpty else {
-            return []
-        }
-
-        let endpoints = [
-            "https://m.5dxs.net/ajaxService?action=chapterlist&articleno=\(bookID)&index=0&size=\(runawayChapterLimit)&sort=1",
-            "https://m.adxs.net/ajaxService?action=chapterlist&articleno=\(bookID)&index=0&size=\(runawayChapterLimit)&sort=1"
-        ]
-
-        for endpoint in endpoints {
-            guard let url = URL(string: endpoint) else { continue }
-            do {
-                let html = try await fetchHTML(from: url)
-                guard let data = html.data(using: .utf8),
-                      let response = try? JSONDecoder().decode(FivedxsCatalogResponse.self, from: data),
-                      let items = response.items, !items.isEmpty else {
-                    continue
-                }
-                return items.compactMap { item in
-                    guard let chapterURL = absoluteURL(from: item.url, baseURL: sourceURL) else {
-                        return nil
-                    }
-                    let title = cleanText(item.chaptername)
-                    guard !title.isEmpty else { return nil }
-                    return ChapterLink(title: title, url: chapterURL)
-                }
-            } catch {
-                continue
-            }
-        }
-        return []
-#endif
-    }
-
-    /// 黄金屋 reader pages only expose the nearby previous/next-ish chapter region in-page.
-    /// Its full catalog is a stable `/Book/Chapter/<book id>` page, so fetch that directly
-    /// whenever we can identify the book id from either the detail, catalog, or reader URL.
-    private func hjwzwCatalogLinks(for sourceURL: URL, sourceBookID: String?) async -> [ChapterLink] {
-#if !LINGYUE_INTERNAL
-        return []
-#else
-        guard isHJWZWHost(sourceURL),
-              let bookID = sourceBookID ?? bookID(from: sourceURL),
-              let catalogURL = absoluteURL(from: "/Book/Chapter/\(bookID)", baseURL: sourceURL),
-              catalogURL != sourceURL else {
-            return []
-        }
-
-        do {
-            let html = try await fetchHTML(from: catalogURL)
-            return await chapterLinksAcrossPagination(
-                startingHTML: html,
-                startingURL: catalogURL,
-                sourceBookID: bookID
-            )
-        } catch {
-            return []
-        }
-#endif
-    }
-
     private func chapterListScore(_ links: [ChapterLink]) -> Int {
         let numberedCount = links.filter { chapterNumber(from: $0.title) != nil }.count
         return links.count * 10 + numberedCount
@@ -1236,13 +911,6 @@ final class BookImportService: Sendable {
         if let ajaxURL = absoluteURL(from: "/ajax_novels/chapterlist/\(articleID).html", baseURL: baseURL) {
             urls.append(ajaxURL)
         }
-#if LINGYUE_INTERNAL
-        if isHJWZWHost(baseURL),
-           let hjwzwCatalogURL = absoluteURL(from: "/Book/Chapter/\(articleID)", baseURL: baseURL) {
-            urls.append(hjwzwCatalogURL)
-        }
-#endif
-
         return urls
     }
 
@@ -1308,10 +976,6 @@ final class BookImportService: Sendable {
     }
 
     private func fetchChapter(_ link: ChapterLink) async throws -> NovelChapter? {
-        if let chapter = try await fetchBiqugeAPIChapter(link) {
-            return chapter
-        }
-
         do {
             let html = try await fetchHTML(from: link.url)
             if isSourceContentBlocked(html: html) {
@@ -1370,25 +1034,8 @@ final class BookImportService: Sendable {
         } else {
             title = parsedTitle
         }
-        let bodyHTML: String
-#if LINGYUE_INTERNAL
-        if allowDynamicTextEndpoint {
-            bodyHTML = try await dynamicChapterBodyHTML(from: html, chapterURL: link.url)
-                ?? chapterBodyHTML(from: html)
-        } else {
-            bodyHTML = chapterBodyHTML(from: html)
-        }
-#else
-        // AppStore: the dynamic-text endpoint is an 8book.com-specific
-        // workaround and shipping the host literal in shared source
-        // would put it in the AppStore binary. The endpoint and its
-        // helpers (`dynamicChapterBodyHTML`, `currentChapterID`,
-        // `dynamicChapterIDList`) live under `#if LINGYUE_INTERNAL`.
-        // AppStore parses chapter bodies with the standard
-        // `chapterBodyHTML` path regardless of `allowDynamicTextEndpoint`.
         _ = allowDynamicTextEndpoint
-        bodyHTML = chapterBodyHTML(from: html)
-#endif
+        let bodyHTML: String = chapterBodyHTML(from: html)
         let content = cleanChapterBody(bodyHTML)
         let contentWithoutTitle = content
             .replacingOccurrences(of: title, with: "")
@@ -1397,129 +1044,6 @@ final class BookImportService: Sendable {
         guard contentWithoutTitle.count >= 30 else { return nil }
         let chapterContent = content.hasPrefix(title) ? content : "\(title)\n\n\(content)"
         return NovelChapter(title: title, content: chapterContent)
-    }
-
-    private func fetchBiqugeAPIChapter(_ link: ChapterLink) async throws -> NovelChapter? {
-        // Phase 2.4 shadow-route. Same gate as catalog: only when the
-        // flag is on, and only as a *first try*. Empty/failed registry
-        // result falls through to the legacy `fetchBiqugeAPIData` path
-        // below — so legacy stays authoritative until TestFlight clears
-        // the new route.
-        if Self.useSourceRegistryForCatalog {
-            if let routed = try await registryRoutedBiqugeAPIChapter(link) {
-                return routed
-            }
-        }
-
-        guard isBiqugeAPISource(link.url),
-              let (bookID, chapterID) = biqugeBookAndChapterID(from: link.url) else {
-            return nil
-        }
-
-        let data = try await fetchBiqugeAPIData(
-            path: "/api/chapter",
-            queryItems: [
-                URLQueryItem(name: "id", value: bookID),
-                URLQueryItem(name: "chapterid", value: chapterID)
-            ]
-        )
-        let response = try JSONDecoder().decode(BiqugeChapterResponse.self, from: data)
-        let title = cleanText(response.chaptername ?? link.title)
-        let content = cleanChapterBody(response.txt ?? "")
-        let contentWithoutTitle = content
-            .replacingOccurrences(of: title, with: "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-
-        guard !title.isEmpty, contentWithoutTitle.count >= 30 else { return nil }
-        let chapterContent = contentLooksPrefixedByTitle(content, title: title) ? content : "\(title)\n\n\(content)"
-        return NovelChapter(title: title, content: chapterContent)
-    }
-
-    /// Phase 2.4 routed-Biquge chapter path. Asks the registry adapter
-    /// for `fetchChapter`, maps `ChapterContent` to the legacy
-    /// `NovelChapter`. Host-mismatch is silent; other errors log once
-    /// and return nil so the caller falls through.
-    private func registryRoutedBiqugeAPIChapter(_ link: ChapterLink) async throws -> NovelChapter? {
-        do {
-            guard let source = try await SourceStack.live.registry.source(withID: "json-api:biquge-api") else {
-                return nil
-            }
-            let chapter = try await source.fetchChapter(url: link.url)
-            let title = cleanText(chapter.title.isEmpty ? link.title : chapter.title)
-            let body = chapter.paragraphs.joined(separator: "\n\n")
-            let content = cleanChapterBody(body)
-            let contentWithoutTitle = content
-                .replacingOccurrences(of: title, with: "")
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !title.isEmpty, contentWithoutTitle.count >= 30 else { return nil }
-            await ReaderDiagnostics.shared.log(.info, "registry route → chapter", context: [
-                "adapter": "biquge-api",
-                "bytes": String(content.count)
-            ])
-            let chapterContent = contentLooksPrefixedByTitle(content, title: title) ? content : "\(title)\n\n\(content)"
-            return NovelChapter(title: title, content: chapterContent)
-        } catch BookSourceError.unsupportedURL {
-            return nil
-        } catch {
-            await ReaderDiagnostics.shared.log(.info, "registry chapter fell back → legacy", context: [
-                "adapter": "biquge-api",
-                "url": link.url.absoluteString,
-                "error": String(describing: error)
-            ])
-            return nil
-        }
-    }
-
-    private func isBiqugeAPISource(_ url: URL) -> Bool {
-#if !LINGYUE_INTERNAL
-        return false
-#else
-        let host = url.host(percentEncoded: false)?.lowercased() ?? ""
-        return host.contains("bqg") && url.absoluteString.contains("/book/")
-#endif
-    }
-
-    private func biqugeBookAndChapterID(from url: URL) -> (bookID: String, chapterID: String)? {
-        let path = url.path
-        guard let bookID = firstMatch(#"/book/(\d+)/\d+(?:_\d+)?\.html?$"#, in: path),
-              let chapterID = firstMatch(#"/book/\d+/(\d+)(?:_\d+)?\.html?$"#, in: path) else {
-            return nil
-        }
-        return (bookID, chapterID)
-    }
-
-    private func fetchBiqugeAPIData(path: String, queryItems: [URLQueryItem]) async throws -> Data {
-        var lastError: Error?
-
-        for host in biqugeAPIHosts {
-            var components = URLComponents()
-            components.scheme = "https"
-            components.host = host
-            components.path = path
-            components.queryItems = queryItems
-            guard let url = components.url else { continue }
-
-            do {
-                var request = URLRequest(url: url)
-                request.timeoutInterval = 20
-                request.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1", forHTTPHeaderField: "User-Agent")
-                request.setValue("application/json,text/plain,*/*", forHTTPHeaderField: "Accept")
-                request.setValue("zh-CN,zh-Hans;q=0.9,zh;q=0.8,en;q=0.6", forHTTPHeaderField: "Accept-Language")
-
-                let (data, response) = try await URLSession.shared.data(for: request)
-                if let httpResponse = response as? HTTPURLResponse,
-                   !(200..<400).contains(httpResponse.statusCode) {
-                    lastError = WebBookImportError.badStatus(httpResponse.statusCode)
-                    continue
-                }
-                return data
-            } catch {
-                lastError = error
-                continue
-            }
-        }
-
-        throw lastError ?? WebBookImportError.badStatus(-1)
     }
 
     private func contentLooksPrefixedByTitle(_ content: String, title: String) -> Bool {
@@ -1634,56 +1158,6 @@ final class BookImportService: Sendable {
         }
         return nil
     }
-
-#if LINGYUE_INTERNAL
-    private func dynamicChapterBodyHTML(from html: String, chapterURL: URL) async throws -> String? {
-        guard html.contains("/js/read.js") || html.contains("i31pdbha_") else { return nil }
-        guard let itemID = metaContent(named: "itemid", in: html),
-              let categoryID = metaContent(named: "catid", in: html),
-              let chapterID = currentChapterID(from: chapterURL, html: html),
-              let idList = dynamicChapterIDList(in: html, currentChapterID: chapterID) else {
-            return nil
-        }
-
-        let salt = idList.last ?? ""
-        guard salt.count >= 5 else { return nil }
-
-        let suffixStart = (Int(chapterID) ?? 0) * 3 % 100
-        let suffix = substring(salt, start: suffixStart, length: 5)
-        guard suffix.count == 5 else { return nil }
-
-        let host = html.contains("8book.com") ? "www.8book.com" : (chapterURL.host(percentEncoded: false) ?? "")
-        guard !host.isEmpty,
-              let textURL = URL(string: "https://\(host)/txt/\(categoryID)/\(itemID)/\(chapterID)\(suffix).html") else {
-            return nil
-        }
-
-        let textHTML = try await fetchHTML(from: textURL)
-        return cleanText(textHTML).isEmpty ? nil : textHTML
-    }
-
-    private func currentChapterID(from url: URL, html: String) -> String? {
-        if let query = url.query(percentEncoded: false),
-           let id = query.split(separator: "_").first?.filter(\.isNumber),
-           !id.isEmpty {
-            return String(id)
-        }
-
-        return firstMatch(#"var\s+[A-Za-z0-9_]+\s*=\s*u\.indexOf\('\?'\)>0\?parseInt\(u\.split\('\?'\)\[1\]\):(\d+)"#, in: html)
-    }
-
-    private func dynamicChapterIDList(in html: String, currentChapterID: String) -> [String]? {
-        let lists = matches(#"var\s+[A-Za-z0-9_]+\s*=\s*"([\d,]+)"\.split\('\s*,\s*'\)"#, in: html, captureGroup: 1)
-
-        return lists
-            .map { $0.split(separator: ",").map(String.init) }
-            .first { list in
-                list.count > 10
-                    && list.contains(currentChapterID)
-                    && (list.last?.count ?? 0) > 20
-            }
-    }
-#endif
 
     private func substring(_ text: String, start: Int, length: Int) -> String {
         guard start >= 0, length > 0, start < text.count else { return "" }

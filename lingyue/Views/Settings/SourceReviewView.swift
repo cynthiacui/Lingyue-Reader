@@ -1,8 +1,5 @@
 import SwiftUI
 import LingyueCore
-#if LINGYUE_INTERNAL
-import LingyueInternalSources
-#endif
 
 /// Phase 3.3 — Review screen. Lands after `AddSourceURLView` and shows
 /// the analyzer's per-block confidence as the user's primary mental
@@ -444,12 +441,7 @@ struct SourceReviewView: View {
             // list. Used by `effectiveStatus` to trust authored
             // capabilities for bundle rules regardless of whether an
             // editable copy also exists.
-#if LINGYUE_INTERNAL
-            let bundledIDs = Set(LingyueInternalSources.bundledRules().map(\.id))
-            isSeededOriginal = bundledIDs.contains(draft.id)
-#else
             isSeededOriginal = false
-#endif
         } catch {
             saveError = String(describing: error)
         }

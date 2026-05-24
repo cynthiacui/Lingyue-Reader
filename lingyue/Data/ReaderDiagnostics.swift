@@ -22,17 +22,10 @@ import UIKit
 final class ReaderDiagnostics: ObservableObject {
     static let shared = ReaderDiagnostics()
 
-    /// Compile-time gate for diagnostics + lab surfaces. True in the
-    /// `LingyueInternal` target (which sets `LINGYUE_INTERNAL`); false in
-    /// the App Store target so neither section, nor its strings, ships in
-    /// the public binary.
-    static var isInternalBuild: Bool {
-        #if LINGYUE_INTERNAL
-        return true
-        #else
-        return false
-        #endif
-    }
+    /// Diagnostics surfaces are not exposed in the App Store build; this
+    /// stays as a stable hook in case a future internal-only build wants
+    /// to flip it back on.
+    static var isInternalBuild: Bool { false }
 
     @Published private(set) var current: [Entry] = []
     @Published private(set) var previous: [Entry] = []

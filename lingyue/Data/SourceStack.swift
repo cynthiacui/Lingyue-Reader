@@ -1,28 +1,11 @@
 import Foundation
 import SwiftUI
 import LingyueCore
-#if LINGYUE_INTERNAL
-import LingyueInternalSources
-#endif
 
 /// Bundle of the long-lived rule-engine values the rest of the app needs
 /// to reach: the HTTP/web composite loader, the user-authored rule store,
-/// and the `BookSourceRegistry` that resolves rules for both registry
-/// flavors.
-///
-/// The struct shape is shared across both Phase 5 targets — the only
-/// thing that differs is which registry `live` instantiates:
-///
-/// - `LINGYUE_INTERNAL` build → `InternalSourceRegistry` with seeded
-///   rules and fast-path adapters on top of the editable store.
-/// - App Store build → `AppStoreSourceRegistry`, which reads from the
-///   editable store alone. No seeded rules, no fast-path adapters, no
-///   `LingyueInternalSources` link at compile time.
-///
-/// Phase 5 specifically: keeping a single `SourceStack` (instead of a
-/// parallel `AppStoreSourceStack` type) means every call site —
-/// Settings, Discovery, the in-app browser, the rule editor — stays
-/// target-agnostic. The compile-time fork lives here, once.
+/// and the `BookSourceRegistry` that resolves rules from the editable
+/// store.
 struct SourceStack: Sendable {
     let loader: any SourceHTMLLoading
     let editableStore: any EditableSourceStore
@@ -43,33 +26,23 @@ struct SourceStack: Sendable {
     /// tests can inject their own stack without paying the WebView
     /// renderer's startup cost.
     ///
-    /// Sources whose parsing the rule schema can't express (5dxs catalog
-    /// JSON, biquge-api) ride in through seeded rules with a `jsonAPI`
-    /// config block — the rule's UUID is the persisted identity, and
+    /// Sources whose parsing the rule schema can't express in plain HTML
+    /// terms ride in through user-imported rules with a `jsonAPI` config
+    /// block — the rule's UUID is the persisted identity, and
     /// `SourceRule.makeBookSource(loader:)` swaps in `JSONAPIBookSource`
     /// at registry-build time. The engine is fully generic; every URL,
     /// ID-extraction regex, JSON path, and boilerplate fragment lives
-    /// in the rule JSON, so the App Store target runs the same sources
-    /// the moment the user imports the seeded JSON.
+    /// in the rule JSON.
     static let live: SourceStack = {
         let loader = CompositeSourceLoader()
         let store = FileEditableSourceStore()
         let preferenceStore = FileSourcePreferenceStore()
         let validationStore = FileSourceValidationStore()
-        let registry: any LingyueCore.BookSourceRegistry
-#if LINGYUE_INTERNAL
-        registry = InternalSourceRegistry(
+        let registry: any LingyueCore.BookSourceRegistry = AppStoreSourceRegistry(
             editableStore: store,
             loader: loader,
             preferenceStore: preferenceStore
         )
-#else
-        registry = AppStoreSourceRegistry(
-            editableStore: store,
-            loader: loader,
-            preferenceStore: preferenceStore
-        )
-#endif
         return SourceStack(
             loader: loader,
             editableStore: store,

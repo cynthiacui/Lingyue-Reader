@@ -73,8 +73,8 @@ public struct SourceRule: Codable, Sendable, Hashable, Identifiable {
     /// detail (endpoint templates, ID-extraction regexes, JSON paths,
     /// body transforms, boilerplate fragments) — the engine's Swift
     /// side is fully generic and contains no per-site URLs, which is
-    /// what lets the App Store target run a 笔趣阁-shaped or 5dxs-shaped
-    /// source after the user imports the JSON.
+    /// what lets the App Store target run a JSON-API-shaped source
+    /// after the user imports the JSON.
     ///
     /// The rule's step fields are still required by the schema when
     /// `jsonAPI != nil`, but the JSON-API engine ignores them at fetch

@@ -122,11 +122,5 @@ struct BackupService {
         return "lingyue-backup-\(formatter.string(from: date)).json"
     }
 
-    private var buildVariantTag: String {
-        #if LINGYUE_INTERNAL
-        return "internal"
-        #else
-        return "appstore"
-        #endif
-    }
+    private var buildVariantTag: String { "appstore" }
 }

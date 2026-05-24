@@ -2,7 +2,7 @@ import Foundation
 
 /// Declarative config for the JSON-API engine. Lives on a `SourceRule`
 /// whose backing site exposes catalog/chapter data over JSON endpoints
-/// instead of HTML (笔趣阁-shaped API mirrors, 5dxs's ajaxService, etc.).
+/// instead of HTML.
 /// Carries every site-specific bit — hosts, URL templates, ID-extraction
 /// regexes, JSON paths, body transforms, boilerplate fragments — so the
 /// engine itself stays generic and contains no per-site URLs. The
@@ -16,7 +16,7 @@ import Foundation
 public struct JSONAPIConfig: Codable, Sendable, Hashable {
     /// Stable string identity the runtime exposes via `BookSource.id`.
     /// Lets legacy import-service paths look up a specific adapter by
-    /// well-known string (e.g., `"json-api:biquge-api"`). Two rules
+    /// well-known string (e.g., `"json-api:my-adapter"`). Two rules
     /// claiming the same `sourceID` is a config bug — the loader does
     /// not deduplicate by this field, dedup remains UUID-based.
     public var sourceID: String
@@ -55,24 +55,23 @@ public struct JSONAPIConfig: Codable, Sendable, Hashable {
     // MARK: - Search
 
     /// JSON-API search step. Used by sites that load search results from
-    /// a JSON endpoint instead of an HTML search results page. Biquge's
-    /// `apiqu.cc/api/search?q=…` returns `{data:[{id,title,author,intro},…]}`;
-    /// the rule's HTML `search` block stays optional — if both are present
-    /// the JSON path wins.
+    /// a JSON endpoint instead of an HTML search results page. A typical
+    /// shape returns `{data:[{id,title,author,intro},…]}`; the rule's
+    /// HTML `search` block stays optional — if both are present the JSON
+    /// path wins.
     ///
     /// Two ways to resolve each result's detail URL:
     ///   1. `detailURLField` — path to a URL string inside the item.
     ///   2. `detailURLTemplate` + `idField` — synthesize from a numeric/string
     ///      ID. Required when the search endpoint returns IDs but not URLs
-    ///      (e.g., the biquge API only returns book IDs; the consumer must
-    ///      pivot back to `bqgl.cc/book/<id>/`).
+    ///      (the consumer then pivots from `{id}` back to a detail URL).
     /// Exactly one of these must be present; if both are set, the field path
     /// wins (it's the more authoritative source).
     public struct Search: Codable, Sendable, Hashable {
         /// Endpoint template list tried in order. First non-empty response
-        /// wins. `{query}` is substituted via `URLTemplate.expand`. Mirrors
-        /// land here — biquge's API serves identical responses from both
-        /// `apiqu.cc` and `apige.cc`.
+        /// wins. `{query}` is substituted via `URLTemplate.expand`.
+        /// Mirror endpoints land here (sites that serve identical
+        /// responses from multiple hostnames).
         public var endpointTemplates: [String]
         public var method: String?
         public var headers: [String: String]?
@@ -148,7 +147,7 @@ public struct JSONAPIConfig: Codable, Sendable, Hashable {
         public var itemsPath: String
 
         /// Path inside an item to the chapter title. `nil` means the
-        /// item is itself a bare string (笔趣阁 API shape: `{list:[...]}`).
+        /// item is itself a bare string (shape: `{list:[...]}`).
         public var titleField: String?
 
         /// Path inside an item to a relative or absolute URL. `nil`
@@ -244,7 +243,7 @@ public struct JSONAPIConfig: Codable, Sendable, Hashable {
         public var headers: [String: String]?
 
         /// Dotted path into the response JSON. Empty string = the JSON
-        /// root is itself the detail object (biquge API shape).
+        /// root is itself the detail object.
         public var itemsPath: String?
 
         public var titleField: String

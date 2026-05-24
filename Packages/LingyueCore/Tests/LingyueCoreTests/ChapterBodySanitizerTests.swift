@@ -16,7 +16,7 @@ final class ChapterBodySanitizerTests: XCTestCase {
     }
 
     func testStripsTitleWithPaginationSuffix() {
-        // xsw.tw / 52shuku stamp `(1/2)` on the duplicate title that
+        // A couple of sources stamp `(1/2)` on the duplicate title that
         // sits at the top of every page.
         let result = ChapterBodySanitizer.sanitize(
             paragraphs: ["第51章 暗杀！(1/2)", "正文第一段"],
@@ -53,7 +53,7 @@ final class ChapterBodySanitizerTests: XCTestCase {
     }
 
     func testStripsLeadingTitleAndAuthorComposite() {
-        // trxs.org template stamps "<book title> 作者：<name>" as the
+        // Some source templates stamp "<book title> 作者：<name>" as the
         // first paragraph inside `read_chapterDetail`.
         let result = ChapterBodySanitizer.sanitize(
             paragraphs: [

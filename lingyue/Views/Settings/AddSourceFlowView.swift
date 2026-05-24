@@ -23,11 +23,7 @@ struct AddSourceFlowView: View {
     let onComplete: () -> Void
 
     private var requiresAttestation: Bool {
-        #if LINGYUE_INTERNAL
-        return false
-        #else
         return !ipAttestationAccepted
-        #endif
     }
 
     var body: some View {

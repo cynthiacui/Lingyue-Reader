@@ -10,7 +10,7 @@ import Foundation
 ///    `第N章 …` heading even when the rule's `titleField` already
 ///    captured it).
 /// 2. **Author bylines** — `作者：XXX` lines that some sites stamp into
-///    every chapter body (trxs.org / tongrenquan.org templates).
+///    every chapter body.
 /// 3. **Pagination markers** — bare `(1/2)` style page indicators.
 /// 4. **Boilerplate fragments** — "请收藏本站", "上一章 下一章" footer
 ///    text that survives `stripHTML` because it's plain text inside the
@@ -89,9 +89,9 @@ public enum ChapterBodySanitizer {
             return true
         }
         if isAuthorByline(line) { return true }
-        // Leading "<book title> 作者：<name>" — trxs.org / tongrenquan
-        // templates stamp this into the body even when the rule's
-        // bodyField doesn't capture the surrounding metadata block.
+        // Leading "<book title> 作者：<name>" — some site templates
+        // stamp this into the body even when the rule's bodyField
+        // doesn't capture the surrounding metadata block.
         // Strict on length so a single mid-prose mention of an author
         // can't be dropped by mistake.
         if line.count <= 80, containsAuthorByline(line) {
@@ -103,7 +103,7 @@ public enum ChapterBodySanitizer {
 
     /// True when `line` contains a `作者：XXX` byline anywhere — used
     /// only for leading-line detection where the byline may sit after
-    /// a book-title prefix (trxs.org's `<p>综漫… 作者：爱晒太阳的橘猫</p>`).
+    /// a book-title prefix (a typical `<p>书名… 作者：作者名</p>` shape).
     private static func containsAuthorByline(_ line: String) -> Bool {
         let pattern = #"作\s*者\s*[：:]\s*\S"#
         return line.range(of: pattern, options: .regularExpression) != nil
@@ -169,10 +169,9 @@ public enum ChapterBodySanitizer {
         return line.range(of: pattern, options: .regularExpression) != nil
     }
 
-    /// Universal boilerplate substring match. List ported from the
-    /// biquge-api JSON config so HTML-path rules get the same coverage
-    /// without per-rule duplication. Length-capped so a long paragraph
-    /// that happens to contain "上一章" mid-sentence can't be dropped.
+    /// Universal boilerplate substring match. Length-capped so a long
+    /// paragraph that happens to contain "上一章" mid-sentence can't be
+    /// dropped.
     private static func isBoilerplate(_ line: String) -> Bool {
         guard line.count <= 60 else { return false }
         return boilerplateFragments.contains { line.localizedCaseInsensitiveContains($0) }

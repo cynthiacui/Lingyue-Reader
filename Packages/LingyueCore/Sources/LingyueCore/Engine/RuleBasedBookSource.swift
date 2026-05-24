@@ -221,7 +221,7 @@ public struct RuleBasedBookSource: BookSource {
     /// Heuristic: does `candidate` look like the site's banner rather than
     /// a book title? Used to skip h1 candidates that echo the rule's
     /// display name, including the common tagline shape
-    /// `<siteName><separator><tagline>` (e.g., `笔趣阁-免费小说阅读`).
+    /// `<siteName><separator><tagline>` (e.g., `站点名-标语副标题`).
     /// SPA mirrors render that as the visible h1 after their JS bootstraps;
     /// without this check the engine accepts it as the "book title",
     /// poisoning the import banner and downstream catalog title.
@@ -247,20 +247,20 @@ public struct RuleBasedBookSource: BookSource {
             return host == suffix || host.hasSuffix("." + suffix)
         }
         // Substring glob: `*foo*` matches any host containing `foo`. Lets
-        // rules cover a constellation of numbered mirrors (笔趣阁's
-        // bqg99/bqg128/bqgl/…) with one pattern instead of enumerating
-        // every variant. Bare `*` or empty interiors fall through to
-        // the equality branches below — never match-all.
+        // rules cover a constellation of numbered mirror domains with one
+        // pattern instead of enumerating every variant. Bare `*` or empty
+        // interiors fall through to the equality branches below — never
+        // match-all.
         if glob.count > 2, glob.hasPrefix("*"), glob.hasSuffix("*") {
             let needle = String(glob.dropFirst().dropLast())
             if !needle.isEmpty { return host.contains(needle) }
         }
         // `SourceAnalyzer.uniqueHosts` strips `www.` from stored patterns —
         // it treats `www.` as a no-op subdomain. Mirror that here so a
-        // pattern like `xbanxia.cc` matches a live page at `www.xbanxia.cc`
-        // without forcing the analyzer to author both variants. Seeded
-        // rules that list both explicitly still hit the equality branch
-        // above, so this is purely additive.
+        // bare host pattern matches a live page served from a `www.`
+        // subdomain without forcing the analyzer to author both
+        // variants. Seeded rules that list both explicitly still hit the
+        // equality branch above, so this is purely additive.
         let strippedHost = host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
         return glob == strippedHost
     }
@@ -559,8 +559,8 @@ public struct RuleBasedBookSource: BookSource {
     ) -> Bool {
         // Different site → not a chapter of this book. Compare registrable
         // domain rather than exact host so rules can mix subdomains —
-        // common when desktop catalog (www.xsw.tw) links chapters that
-        // only render server-side on a mobile mirror (m.xsw.tw).
+        // common when a desktop catalog links chapters that only render
+        // server-side on a sibling mobile mirror subdomain.
         if let chapHost = chapterURL.host, let catHost = catalogURL.host,
            !Self.sameSite(chapHost, catHost) {
             return true
@@ -602,10 +602,7 @@ public struct RuleBasedBookSource: BookSource {
                 // Several legacy CMS templates encode chapter URLs as
                 // `<bookID>_<chapterID>.html`, `<bookID>-<chapterID>` or
                 // `<bookID>,<chapterID>` rather than nesting the chapter
-                // under the book directory (zhswx's
-                // `/read/58860_19603916.html` against `/chapter/58860.html`,
-                // hjwzw's `/Book/Read/35120,7892358` against
-                // `/Book/Chapter/35120`). Splitting on these separators
+                // under the book directory. Splitting on these separators
                 // lets the bookID overlap with the catalog's segments so
                 // the path-overlap check doesn't false-positive every real
                 // chapter as a nav link.
@@ -639,10 +636,11 @@ public struct RuleBasedBookSource: BookSource {
     }
 
     /// Treat two hosts as the same site when they share the last two
-    /// DNS labels. Lets a rule mix `www.xsw.tw` and `m.xsw.tw` without
-    /// the nav-link filter rejecting cross-subdomain chapter URLs. Not
-    /// PSL-aware, but the catalog/chapter case only needs to recognize
-    /// sibling subdomains of a single book site.
+    /// DNS labels. Lets a rule mix sibling subdomains (e.g. `www.` and
+    /// `m.`) of the same site without the nav-link filter rejecting
+    /// cross-subdomain chapter URLs. Not PSL-aware, but the
+    /// catalog/chapter case only needs to recognize sibling subdomains
+    /// of a single book site.
     static func sameSite(_ a: String, _ b: String) -> Bool {
         if a.caseInsensitiveCompare(b) == .orderedSame { return true }
         let aLabels = a.lowercased().split(separator: ".")

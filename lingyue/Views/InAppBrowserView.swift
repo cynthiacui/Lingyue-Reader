@@ -365,14 +365,8 @@ struct InAppBrowserView: View {
         url: URL,
         pageTitle: String?
     ) async -> WebBookCandidate? {
-#if LINGYUE_INTERNAL
-        return await Task.detached(priority: .userInitiated) {
-            BookImportService.shared.detectBook(html: html, url: url, pageTitle: pageTitle)
-        }.value
-#else
         _ = (html, url, pageTitle)
         return nil
-#endif
     }
 
     private func shouldReplaceDetectedBook(_ existing: WebBookCandidate, with candidate: WebBookCandidate) -> Bool {
@@ -584,27 +578,7 @@ struct InAppBrowserView: View {
                         registry: registry
                     )
                 } catch {
-#if LINGYUE_INTERNAL
-#if DEBUG
-                    debugLog("[Browser] rule import failed (\(candidate.detection.sourceID)) — \(error). fallback=\(candidate.heuristicFallback != nil)")
-#endif
-                    // Phase 4 regression repair: seeded JSON rules'
-                    // fetchDetail/fetchCatalog can't always handle the
-                    // legacy mirrors the heuristic flow used to import
-                    // successfully. Fall back to the heuristic import
-                    // pipeline (in-browser HTML stitching, multi-URL
-                    // catalog expansion) when we have a candidate.
-                    // App Store gate: this branch is Internal-only. On
-                    // App Store there is no heuristic catalog, so we
-                    // rethrow and let the user see the rule-level
-                    // failure rather than silently routing through the
-                    // legacy importer.
-                    guard let fallback = candidate.heuristicFallback else { throw error }
-                    let enriched = await enrichedCandidateForImport(fallback)
-                    novel = try await BookImportService.shared.importBook(from: enriched)
-#else
                     throw error
-#endif
                 }
                 let inserted = libraryStore.addImportedNovel(novel, categoryName: categoryName)
                 importStatus = nil

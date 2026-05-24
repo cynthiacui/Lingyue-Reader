@@ -29,11 +29,7 @@ struct ContentView: View {
                 .tag(AppTab.library)
 
             NavigationStack {
-#if LINGYUE_INTERNAL
-                DiscoveryInternalView()
-#else
                 DiscoveryAppStoreView()
-#endif
             }
                 .tabItem {
                     Label("发现", systemImage: "sparkles")
