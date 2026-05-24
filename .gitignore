@@ -4,7 +4,15 @@ build/
 *.xcuserstate
 xcuserdata/
 *.moved-aside
-.claude/
+# Personal Claude Code state — DO NOT use `.claude/` here. Repo-scoped
+# skill definitions under `.claude/skills/<name>/` are reusable Claude
+# knowledge that should travel with the repo, so we ignore Claude's
+# personal/per-user state piecewise instead of blacklisting the whole
+# directory.
+.claude/settings.json
+.claude/settings.local.json
+.claude/worktrees/
+.claude/skills/huashu-design/
 
 # Swift Package Manager
 Packages/*/.build/
