@@ -56,10 +56,10 @@ iOS 17+ · SwiftUI · 单窗口应用 · 包名 `com.lingyue.reader`
 ### 发现
 
 <p>
-  <img src="docs/screenshots/03-discovery-empty.png" alt="发现页空状态" width="200">
-  <img src="docs/screenshots/04-discovery-with-source.png" alt="加入书源后" width="200">
-  <img src="docs/screenshots/05-discovery-search-results.png" alt="搜索结果" width="200">
-  <img src="docs/screenshots/06-sources-list.png" alt="书源管理" width="200">
+  <img src="docs/screenshots/03-discovery-empty.png" alt="发现页空状态" width="170">
+  <img src="docs/screenshots/04-discovery-with-source.png" alt="加入书源后" width="170">
+  <img src="docs/screenshots/05-discovery-search-results.png" alt="搜索结果" width="170">
+  <img src="docs/screenshots/06-sources-list.png" alt="书源管理" width="170">
 </p>
 
 「发现」页用于跨多个书源聚合搜索。添加了书源后（在「书源」页通过 JSON 导入、URL 分析或手动新建），「我添加的书源」区会列出每一个站点磁贴，轻点直接在内置浏览器中打开。顶部的搜索框聚合所有已启用的书源，每个书源返回结果后即刻流式展示，多个书源同时收录的同一本书会合并成一行并以小标签列出来源。右上角的「地球」按钮进入书源管理页面，可逐个启用 / 禁用、导入、导出或手动新建书源。
@@ -67,9 +67,9 @@ iOS 17+ · SwiftUI · 单窗口应用 · 包名 `com.lingyue.reader`
 ### 阅读器
 
 <p>
-  <img src="docs/screenshots/10-reader-paginated.png" alt="阅读器" width="280">
-  <img src="docs/screenshots/11-reader-preferences.png" alt="阅读偏好弹层" width="280">
-  <img src="docs/screenshots/12-reader-chapter-list.png" alt="章节目录" width="280">
+  <img src="docs/screenshots/10-reader-paginated.png" alt="阅读器" width="220">
+  <img src="docs/screenshots/11-reader-preferences.png" alt="阅读偏好弹层" width="220">
+  <img src="docs/screenshots/12-reader-chapter-list.png" alt="章节目录" width="220">
 </p>
 
 阅读器提供 5 种页面底色（纸张 / 米黄 / 护眼 / 雅蓝 / 夜读，夜读可跟随系统深色模式自动切换）、5 种字体（苹方、宋体、楷体（内置 LXGW 文楷 Screen）、黑体、圆体）、以及 3 种翻页动画（无动画 / 滑动 / 仿真翻页）。轻点页面即可仿照 Apple Books 同时显示顶部与底部工具栏及状态栏，正文位置在显隐切换时保持不动，不会重新分页。阅读页内的实时偏好弹层一处调整字号 / 行距 / 段距 / 字体 / 翻页效果 / 底色 / 繁体 / 自动滚读；右上角的章节列表带进度条，方便快速跳章。
@@ -94,10 +94,10 @@ iOS 17+ · SwiftUI · 单窗口应用 · 包名 `com.lingyue.reader`
 ### 外观主题
 
 <p>
-  <img src="docs/screenshots/14-theme-green.png" alt="叶绿" width="220">
-  <img src="docs/screenshots/15-theme-sakura.png" alt="樱粉" width="220">
-  <img src="docs/screenshots/16-theme-ink.png" alt="水墨" width="220">
-  <img src="docs/screenshots/17-theme-starry.png" alt="星夜" width="220">
+  <img src="docs/screenshots/14-theme-green.png" alt="叶绿" width="170">
+  <img src="docs/screenshots/15-theme-sakura.png" alt="樱粉" width="170">
+  <img src="docs/screenshots/16-theme-ink.png" alt="水墨" width="170">
+  <img src="docs/screenshots/17-theme-starry.png" alt="星夜" width="170">
 </p>
 
 5 套全局主题：**纸张**（默认米白，见前文）、**樱粉**（淡粉樱瓣）、**叶绿**（青绿藤叶）、**水墨**（中国画山水）、**星夜**（深空繁星）。主题作用于所有顶层页面以及内置浏览器，「跟随系统深色模式」开关可让 App 在系统切到深色模式时自动切到星夜主题。
@@ -152,10 +152,10 @@ iOS 17+ · SwiftUI · Bundle id `com.lingyue.reader`
 - **Discovery (发现)** — empty by default; once you add sources (via JSON import, URL-analyze, or manual creation in the Sources page) they show up as tiles in **我添加的书源**, tap one to open it in the in-app browser. The search box aggregates every enabled source; results stream in as each source replies, and the same book found on multiple sources collapses into one row with provenance chips. The globe icon opens **Sources** for enable/disable, JSON import/export, URL-analyze, and from-scratch rule editing.
 
 <p>
-  <img src="docs/screenshots/03-discovery-empty.png" alt="Discovery empty" width="200">
-  <img src="docs/screenshots/04-discovery-with-source.png" alt="Discovery with sources" width="200">
-  <img src="docs/screenshots/05-discovery-search-results.png" alt="Search results" width="200">
-  <img src="docs/screenshots/06-sources-list.png" alt="Source management" width="200">
+  <img src="docs/screenshots/03-discovery-empty.png" alt="Discovery empty" width="170">
+  <img src="docs/screenshots/04-discovery-with-source.png" alt="Discovery with sources" width="170">
+  <img src="docs/screenshots/05-discovery-search-results.png" alt="Search results" width="170">
+  <img src="docs/screenshots/06-sources-list.png" alt="Source management" width="170">
 </p>
 
 - **Stats (统计)** — TOTAL TIME hero card with today / streak / books-finished / page-turn counters, a calendar heatmap, time-spent breakdowns by book and by hour, and shareable cards for recently finished chapters and lifetime totals.
@@ -186,10 +186,10 @@ Five page tints (纸张 / 米黄 / 护眼 / 雅蓝 / 夜读, with optional syste
 Five global themes — 纸张 (default warm white), 樱粉 (cherry-blossom pink), 叶绿 (leaf green), 水墨 (ink-wash mountain), and 星夜 (starry night). Themes paint every top-level page and the in-app browser; an optional toggle switches to 星夜 whenever the system enters dark mode.
 
 <p>
-  <img src="docs/screenshots/14-theme-green.png" alt="Leaf green theme" width="200">
-  <img src="docs/screenshots/15-theme-sakura.png" alt="Sakura theme" width="200">
-  <img src="docs/screenshots/16-theme-ink.png" alt="Ink-wash theme" width="200">
-  <img src="docs/screenshots/17-theme-starry.png" alt="Starry-night theme" width="200">
+  <img src="docs/screenshots/14-theme-green.png" alt="Leaf green theme" width="170">
+  <img src="docs/screenshots/15-theme-sakura.png" alt="Sakura theme" width="170">
+  <img src="docs/screenshots/16-theme-ink.png" alt="Ink-wash theme" width="170">
+  <img src="docs/screenshots/17-theme-starry.png" alt="Starry-night theme" width="170">
 </p>
 
 ## In-app browser
