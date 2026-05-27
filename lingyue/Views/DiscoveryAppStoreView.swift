@@ -194,15 +194,22 @@ struct DiscoveryAppStoreView: View {
 
     @ViewBuilder
     private var websitesContent: some View {
-        if let loadError {
-            errorCard(loadError)
-        } else if !hasLoaded {
-            loadingCard
-        } else if sources.isEmpty {
-            emptyCard
-        } else {
-            sourceGrid
+        Group {
+            if let loadError {
+                errorCard(loadError)
+            } else if !hasLoaded {
+                loadingCard
+            } else if sources.isEmpty {
+                emptyCard
+            } else {
+                sourceGrid
+            }
         }
+        // Crossfade loading → grid, and animate tiles in/out when the user
+        // adds or removes a source and pops back here.
+        .transition(.opacity)
+        .animation(.easeInOut(duration: 0.25), value: hasLoaded)
+        .animation(.easeInOut(duration: 0.25), value: sources)
     }
 
     private var sourceGrid: some View {
@@ -213,6 +220,7 @@ struct DiscoveryAppStoreView: View {
         return LazyVGrid(columns: columns, spacing: 10) {
             ForEach(sources) { source in
                 sourceCard(source)
+                    .transition(.opacity)
             }
         }
     }

@@ -31,15 +31,22 @@ struct DiscoverySearchResultsView: View {
         ZStack {
             ThemeBackgroundView()
 
-            if !groupedResults.isEmpty {
-                resultsList
-            } else if isLoading {
-                loadingView
-            } else if let failedMessage {
-                errorView(message: failedMessage)
-            } else if groupedResults.isEmpty {
-                emptyView
+            Group {
+                if !groupedResults.isEmpty {
+                    resultsList
+                } else if isLoading {
+                    loadingView
+                } else if let failedMessage {
+                    errorView(message: failedMessage)
+                } else {
+                    emptyView
+                }
             }
+            // Crossfade loading → results → empty/error rather than a hard
+            // swap when the first results stream in.
+            .transition(.opacity)
+            .animation(.easeInOut(duration: 0.25), value: groupedResults.isEmpty)
+            .animation(.easeInOut(duration: 0.25), value: isLoading)
         }
         .navigationTitle("搜索结果")
         .navigationBarTitleDisplayMode(.inline)
@@ -198,11 +205,16 @@ struct DiscoverySearchResultsView: View {
                             .fill(theme.subtleCardBackground)
                     )
                     .shadow(color: theme.cardShadow, radius: 6, x: 0, y: 2)
+                    // Each result group fades in as the search stream yields it.
+                    .transition(.opacity)
                 }
             }
             .padding(.horizontal, 16)
             .padding(.top, 14)
             .padding(.bottom, 20)
+            // Animate insertions keyed on the set of result IDs, so newly
+            // streamed-in books animate without re-animating existing rows.
+            .animation(.easeInOut(duration: 0.25), value: groupedResults.map(\.id))
         }
     }
 
