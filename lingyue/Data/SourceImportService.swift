@@ -1,4 +1,5 @@
 import Foundation
+import Combine
 import LingyueCore
 
 /// JSON envelope for sharing one or more `SourceRule`s out-of-band — a
@@ -361,5 +362,180 @@ final class SourceVerificationService: ObservableObject {
             block: block,
             record: record
         )
+    }
+}
+
+/// Single funnel for every "import a source set" channel — the JSON file
+/// picker, a remote URL ("subscription"), the clipboard, a scanned QR
+/// code, and the `lingyue://import?url=…` deep link. Each channel resolves
+/// to bytes or a URL, then shares one decode → confirm → apply → verify
+/// pipeline so the confirm dialog, error surface, and post-import
+/// verification kickoff behave identically no matter how the user got here.
+///
+/// Lives at the app root (`ContentView` owns it as a `@StateObject` and
+/// injects it as an `@EnvironmentObject`) because the deep-link path must
+/// be handled regardless of which tab is foregrounded — the confirm
+/// dialog is presented at the root, not inside the Sources tab.
+@MainActor
+final class SourceImportCoordinator: ObservableObject {
+    /// A decoded-and-diffed import awaiting the user's confirm tap. Held
+    /// here (not written) so a wrong link or file costs a tap, never a
+    /// partial overwrite of the user's existing rules.
+    struct StagedImport: Identifiable {
+        let id = UUID()
+        let rules: [SourceRule]
+        let summary: SourceImportSummary
+    }
+
+    @Published var staged: StagedImport?
+    @Published var errorMessage: String?
+    /// Drives the root "正在下载书源…" overlay while a remote fetch is in
+    /// flight. Only the URL / QR / deep-link channels set this; file and
+    /// clipboard imports resolve to bytes synchronously.
+    @Published var isFetching = false
+
+    private let stack: SourceStack
+    private let verifier: SourceVerificationService
+
+    /// Cap on a fetched config so a hostile or mistyped URL can't stream an
+    /// unbounded body into memory before the JSON decoder rejects it.
+    private static let maxConfigBytes = 5_000_000
+
+    init(stack: SourceStack = .live, verifier: SourceVerificationService = .shared) {
+        self.stack = stack
+        self.verifier = verifier
+    }
+
+    private var service: SourceImportService {
+        SourceImportService(editableStore: stack.editableStore)
+    }
+
+    // MARK: - Staging
+
+    /// Decode raw JSON bytes (file picker, clipboard JSON, fetched body)
+    /// and stage the diff for confirmation.
+    func stage(data: Data) async {
+        do {
+            let rules = try service.decode(from: data)
+            let summary = try await service.summarize(incoming: rules)
+            staged = StagedImport(rules: rules, summary: summary)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    /// Fetch an http(s) URL that points at a `lingyue-sources` JSON config,
+    /// then stage it. Rejects non-http(s) schemes up front.
+    func stage(remoteURL url: URL) async {
+        guard let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" else {
+            errorMessage = "无效的链接，请使用 http(s) 网址。"
+            return
+        }
+        isFetching = true
+        do {
+            let data = try await fetch(url)
+            isFetching = false
+            await stage(data: data)
+        } catch {
+            isFetching = false
+            errorMessage = "下载书源失败：\(error.localizedDescription)"
+        }
+    }
+
+    /// Resolve a free-form string from the clipboard or a scanned QR code:
+    /// a `lingyue://` deep link, an http(s) URL to a JSON config, or raw
+    /// JSON text pasted directly.
+    func stage(text raw: String) async {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            errorMessage = "没有找到可导入的内容。"
+            return
+        }
+        if let url = URL(string: trimmed), let scheme = url.scheme?.lowercased() {
+            if scheme == "lingyue" { handleDeepLink(url); return }
+            if scheme == "http" || scheme == "https" { await stage(remoteURL: url); return }
+        }
+        await stage(data: Data(trimmed.utf8))
+    }
+
+    /// Entry point for `ContentView`'s `.onOpenURL`. Shape:
+    /// `lingyue://import?url=<percent-encoded http(s) url>`.
+    func handleDeepLink(_ url: URL) {
+        guard url.scheme?.lowercased() == "lingyue" else { return }
+        let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        // Accept both `lingyue://import?…` (host) and `lingyue:///import?…`
+        // (first path segment) so a link generator's trailing-slash choice
+        // doesn't break the route.
+        let action = url.host ?? components?.path.split(separator: "/").first.map(String.init)
+        guard action == "import" else {
+            errorMessage = "无法识别的链接。"
+            return
+        }
+        guard let target = components?.queryItems?.first(where: { $0.name == "url" })?.value,
+              let remote = URL(string: target) else {
+            errorMessage = "链接中缺少书源地址。"
+            return
+        }
+        Task { await stage(remoteURL: remote) }
+    }
+
+    // MARK: - Apply
+
+    /// Commit the staged import, refresh downstream caches, and kick off
+    /// background verification for every new / changed rule so their list
+    /// pills land at 可用 without the user toggling each one.
+    func apply() async {
+        guard let target = staged else { return }
+        staged = nil
+        do {
+            let summary = try await service.apply(incoming: target.rules)
+            await DiscoverySearchService.shared.invalidateRegistryCache()
+            await stack.pageDetector.invalidateCache()
+            let toVerify = summary.newRules + summary.updatedRules.map(\.incoming)
+            verifier.markVerifying(ruleIDs: toVerify.map(\.id))
+            for rule in toVerify {
+                verifier.verify(rule: rule)
+            }
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    /// Confirm-dialog body. Mirrors the per-bucket counts and appends a
+    /// short rights reminder so every import channel restates the
+    /// "you are the source of the rules" framing, not just the in-app
+    /// authoring flow's one-time attestation.
+    func dialogMessage(for summary: SourceImportSummary) -> String {
+        if summary.totalIncoming == 0 {
+            return "未发现可导入的书源。"
+        }
+        var lines: [String] = []
+        if summary.newRules.count > 0 {
+            lines.append("将新增 \(summary.newRules.count) 个书源。")
+        }
+        if summary.updatedRules.count > 0 {
+            lines.append("将覆盖 \(summary.updatedRules.count) 个同 ID 的本地书源。")
+        }
+        if summary.unchangedRules.count > 0 {
+            lines.append("有 \(summary.unchangedRules.count) 个书源与本地一致，无需更新。")
+        }
+        lines.append("请确认你有权访问并阅读以上来源的内容。")
+        return lines.joined(separator: "\n")
+    }
+
+    // MARK: - Fetch
+
+    private func fetch(_ url: URL) async throws -> Data {
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 20
+        request.setValue("application/json, text/plain, */*", forHTTPHeaderField: "Accept")
+        let (data, response) = try await URLSession.shared.data(for: request)
+        if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+            throw SourceImportError.decodeFailed("服务器返回状态码 \(http.statusCode)")
+        }
+        guard data.count <= Self.maxConfigBytes else {
+            throw SourceImportError.decodeFailed("配置文件过大（超过 5 MB）")
+        }
+        return data
     }
 }

@@ -1,4 +1,7 @@
 import SwiftUI
+import UIKit
+import PhotosUI
+import Vision
 import UniformTypeIdentifiers
 import LingyueCore
 
@@ -23,6 +26,11 @@ import LingyueCore
 struct SourcesListView: View {
     @Environment(\.sourceStack) private var sourceStack
     @Environment(\.appTheme) private var theme
+    /// Root-owned import funnel shared with the deep-link / clipboard / URL
+    /// / QR channels. Staging + the confirm dialog + apply all live here so
+    /// every entry point behaves identically; this view only kicks off a
+    /// staging call and lets the root present the confirm.
+    @EnvironmentObject private var importCoordinator: SourceImportCoordinator
 
     @State private var entries: [SourceEntry] = []
     @State private var loadError: String?
@@ -44,12 +52,20 @@ struct SourcesListView: View {
     /// correctly on return.
     @ObservedObject private var verifier = SourceVerificationService.shared
     /// Drives the JSON file-picker. Flipped from the "+" menu's
-    /// 从 JSON 导入 entry. After the picker resolves the rules are held
-    /// in `pendingImport` so the confirm dialog can surface the
-    /// add / overwrite / unchanged counts before any write happens.
+    /// 从 JSON 文件导入 entry. The picked file's bytes are handed to
+    /// `importCoordinator`, which stages the add / overwrite / unchanged
+    /// diff and presents the confirm dialog at the app root.
     @State private var isImportingJSON = false
-    @State private var pendingImport: PendingImport?
-    @State private var importError: String?
+    /// Presents the "从网址导入" URL-paste sheet.
+    @State private var isImportingURL = false
+    /// "二维码导入" reads a QR out of a *saved* image (no camera). The
+    /// action sheet lets the user pick the image's source; the picked
+    /// image's QR payload is decoded with Vision and routed through the
+    /// coordinator like any other channel.
+    @State private var isChoosingQRSource = false
+    @State private var isPickingQRPhoto = false
+    @State private var qrPhotoItem: PhotosPickerItem?
+    @State private var isImportingQRImageFile = false
     /// Multi-select state. Active when the user taps 选择 in the toolbar.
     /// Selection is restricted to editable rows — seeded rules can't be
     /// deleted (the bundle re-emits them on next launch), so they render
@@ -121,37 +137,34 @@ struct SourcesListView: View {
         ) { result in
             handleImporterResult(result)
         }
-        .alert(
-            "导入书源",
-            isPresented: Binding(
-                get: { pendingImport != nil },
-                set: { if !$0 { pendingImport = nil } }
-            ),
-            presenting: pendingImport
-        ) { incoming in
-            Button("取消", role: .cancel) {
-                pendingImport = nil
+        .sheet(isPresented: $isImportingURL) {
+            ImportFromURLView { url in
+                isImportingURL = false
+                Task { await importCoordinator.stage(remoteURL: url) }
             }
-            Button("导入（\(incoming.summary.totalChanging) 项）") {
-                let target = incoming
-                pendingImport = nil
-                Task { await applyImport(target) }
-            }
-            .disabled(incoming.summary.totalChanging == 0)
-        } message: { incoming in
-            Text(importDialogMessage(for: incoming.summary))
         }
-        .alert(
-            "导入失败",
-            isPresented: Binding(
-                get: { importError != nil },
-                set: { if !$0 { importError = nil } }
-            ),
-            presenting: importError
-        ) { _ in
-            Button("好") { importError = nil }
-        } message: { message in
-            Text(message)
+        .confirmationDialog(
+            "从二维码图片导入",
+            isPresented: $isChoosingQRSource,
+            titleVisibility: .visible
+        ) {
+            Button("从相册选择") { isPickingQRPhoto = true }
+            Button("从文件选择") { isImportingQRImageFile = true }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("选择一张包含二维码的图片，灵阅会识别其中的书源链接。")
+        }
+        .photosPicker(isPresented: $isPickingQRPhoto, selection: $qrPhotoItem, matching: .images)
+        .onChange(of: qrPhotoItem) { _, item in
+            guard let item else { return }
+            handleQRPhoto(item)
+        }
+        .fileImporter(
+            isPresented: $isImportingQRImageFile,
+            allowedContentTypes: [.image],
+            allowsMultipleSelection: false
+        ) { result in
+            handleQRImageFile(result)
         }
         .task { await refresh() }
         .onAppear {
@@ -292,11 +305,30 @@ struct SourcesListView: View {
                     } label: {
                         Label("手动添加", systemImage: "link.badge.plus")
                     }
+
+                    Divider()
+
                     Button {
                         isImportingJSON = true
                     } label: {
-                        Label("从 JSON 导入", systemImage: "square.and.arrow.down")
+                        Label("从 JSON 文件导入", systemImage: "doc")
                     }
+                    Button {
+                        isImportingURL = true
+                    } label: {
+                        Label("从网址导入", systemImage: "globe")
+                    }
+                    Button {
+                        importFromClipboard()
+                    } label: {
+                        Label("从剪贴板导入", systemImage: "doc.on.clipboard")
+                    }
+                    Button {
+                        isChoosingQRSource = true
+                    } label: {
+                        Label("从二维码图片导入", systemImage: "qrcode")
+                    }
+
                     if entries.contains(where: { $0.origin == .editable }) {
                         Divider()
                         Button {
@@ -368,88 +400,105 @@ struct SourcesListView: View {
         }
     }
 
-    // MARK: - JSON import
+    // MARK: - Import entry points
 
+    /// File-picker result handler. Reads the picked file's bytes while the
+    /// security-scoped resource is open, then hands them to the shared
+    /// coordinator — staging + the confirm dialog + apply all live at the
+    /// root so every import channel behaves identically. The list refreshes
+    /// reactively via `onChange(of: verifier.verifyingIDs)` once the
+    /// coordinator's apply kicks off verification.
     private func handleImporterResult(_ result: Result<[URL], Error>) {
         switch result {
         case .success(let urls):
             guard let url = urls.first else { return }
-            Task { await stageImport(at: url) }
-        case .failure(let error):
-            importError = error.localizedDescription
-        }
-    }
-
-    /// Read + decode the picked file and stage the result for the
-    /// confirm dialog. The file write itself doesn't run until the user
-    /// taps 导入, so a wrong file selection costs the user a tap, never
-    /// a partial overwrite of their existing rules.
-    private func stageImport(at url: URL) async {
-        let scoped = url.startAccessingSecurityScopedResource()
-        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-
-        let service = SourceImportService(editableStore: sourceStack.editableStore)
-        do {
-            let data = try Data(contentsOf: url)
-            let rules = try service.decode(from: data)
-            let summary = try await service.summarize(incoming: rules)
-            pendingImport = PendingImport(rules: rules, summary: summary)
-        } catch {
-            importError = error.localizedDescription
-        }
-    }
-
-    private func applyImport(_ incoming: PendingImport) async {
-        let service = SourceImportService(editableStore: sourceStack.editableStore)
-        do {
-            let summary = try await service.apply(incoming: incoming.rules)
-            await DiscoverySearchService.shared.invalidateRegistryCache()
-            await sourceStack.pageDetector.invalidateCache()
-            await refresh()
-            // Without this, every freshly-imported row sits at 需要检查
-            // until the user toggles each one off-and-on to trigger
-            // verifyAndPersist via toggleEnabled. Run the same chain
-            // automatically so the pills land at 可用 on first paint.
-            // Sequential keeps the per-source request throttle honest;
-            // verifyAndPersist already refreshes the row when it finishes.
-            // Search-less rules (jsonAPI, browser-import-only) reach the
-            // detail URL via homepage discovery inside verifyAndPersist,
-            // so they get verified too.
-            let toVerify = summary.newRules + summary.updatedRules.map(\.incoming)
-            // Pre-mark every queued rule as in-flight before kicking off
-            // the per-rule background tasks. Without this the rows that
-            // haven't started yet would render 需要检查 (orange) until
-            // their turn, which looks like verification already failed.
-            verifier.markVerifying(ruleIDs: toVerify.map(\.id))
-            await refresh()
-            // Fire each verification into the service. The tasks run
-            // outside this view's lifetime — if the user navigates back
-            // or opens "添加书源" mid-flight, the chains continue and
-            // the pill flips automatically on completion via the
-            // service's `@Published` state.
-            for rule in toVerify {
-                verifier.verify(rule: rule)
+            let scoped = url.startAccessingSecurityScopedResource()
+            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+            do {
+                let data = try Data(contentsOf: url)
+                Task { await importCoordinator.stage(data: data) }
+            } catch {
+                importCoordinator.errorMessage = error.localizedDescription
             }
-        } catch {
-            importError = error.localizedDescription
+        case .failure(let error):
+            importCoordinator.errorMessage = error.localizedDescription
         }
     }
 
-    private func importDialogMessage(for summary: SourceImportSummary) -> String {
-        if summary.totalIncoming == 0 {
-            return "未发现可导入的书源。"
+    /// Read a `lingyue://` link, an http(s) config URL, or raw JSON text
+    /// off the clipboard and route it through the coordinator.
+    private func importFromClipboard() {
+        if let payload = UIPasteboard.general.string {
+            Task { await importCoordinator.stage(text: payload) }
+        } else {
+            importCoordinator.errorMessage = "剪贴板没有可导入的内容。"
         }
-        var lines: [String] = []
-        if summary.newRules.count > 0 {
-            lines.append("将新增 \(summary.newRules.count) 个书源。")
+    }
+
+    /// A QR encodes the same payload as the deep link / clipboard channels
+    /// — a `lingyue://import?url=…` link, an http(s) config URL, or raw
+    /// JSON — so once it's decoded out of the image we hand it straight to
+    /// `stage(text:)`. Reading a saved image needs no camera permission;
+    /// a QR scanned by the system Camera app routes in via the registered
+    /// `lingyue://` scheme instead.
+    private func handleQRPhoto(_ item: PhotosPickerItem) {
+        Task {
+            defer { qrPhotoItem = nil }
+            do {
+                guard let data = try await item.loadTransferable(type: Data.self) else {
+                    importCoordinator.errorMessage = "无法读取所选图片。"
+                    return
+                }
+                await decodeQRAndStage(imageData: data)
+            } catch {
+                importCoordinator.errorMessage = error.localizedDescription
+            }
         }
-        if summary.updatedRules.count > 0 {
-            lines.append("将覆盖 \(summary.updatedRules.count) 个同 ID 的本地书源。")
+    }
+
+    private func handleQRImageFile(_ result: Result<[URL], Error>) {
+        switch result {
+        case .success(let urls):
+            guard let url = urls.first else { return }
+            let scoped = url.startAccessingSecurityScopedResource()
+            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+            do {
+                let data = try Data(contentsOf: url)
+                Task { await decodeQRAndStage(imageData: data) }
+            } catch {
+                importCoordinator.errorMessage = error.localizedDescription
+            }
+        case .failure(let error):
+            importCoordinator.errorMessage = error.localizedDescription
         }
-        if summary.unchangedRules.count > 0 {
-            lines.append("有 \(summary.unchangedRules.count) 个书源与本地一致，无需更新。")
+    }
+
+    private func decodeQRAndStage(imageData: Data) async {
+        let payload = await Task.detached(priority: .userInitiated) {
+            SourcesListView.firstQRPayload(in: imageData)
+        }.value
+        guard let payload else {
+            importCoordinator.errorMessage = "未在所选图片中找到二维码。"
+            return
         }
-        return lines.joined(separator: "\n")
+        await importCoordinator.stage(text: payload)
+    }
+
+    /// Decode the first QR payload in a still image with Vision. Runs off
+    /// the main actor (called from a detached task) since `perform` is
+    /// synchronous CPU work.
+    nonisolated private static func firstQRPayload(in data: Data) -> String? {
+        guard let image = UIImage(data: data), let cgImage = image.cgImage else { return nil }
+        let request = VNDetectBarcodesRequest()
+        request.symbologies = [.qr]
+        let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
+        guard (try? handler.perform([request])) != nil else { return nil }
+        for observation in request.results ?? [] {
+            if let payload = observation.payloadStringValue, !payload.isEmpty {
+                return payload
+            }
+        }
+        return nil
     }
 
     private func refresh() async {
@@ -703,15 +752,6 @@ struct SourcesListView: View {
     }
 }
 
-/// Local carrier for the JSON-import confirm dialog. Wraps the decoded
-/// rule list plus the pre-computed diff against the editable store so
-/// the dialog message and the apply step share one snapshot.
-private struct PendingImport: Identifiable {
-    let id = UUID()
-    let rules: [SourceRule]
-    let summary: SourceImportSummary
-}
-
 enum RowStatus: Hashable {
     case ready
     case needsCheck
@@ -752,3 +792,69 @@ private struct SourceEntry: Identifiable, Hashable {
 
     var id: UUID { rule.id }
 }
+
+/// "从网址导入" sheet — paste an http(s) link to a `lingyue-sources` JSON
+/// config (e.g. a raw gist URL). `onSubmit` hands a validated URL back to
+/// the caller, which routes it through `SourceImportCoordinator`. A bare
+/// host (no scheme) is upgraded to `https://` so a pasted "example.com/x"
+/// still resolves.
+private struct ImportFromURLView: View {
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.appTheme) private var theme
+    @State private var urlText = ""
+    let onSubmit: (URL) -> Void
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                ThemeBackgroundView()
+                Form {
+                    Section {
+                        TextField("https://example.com/sources.json", text: $urlText)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .keyboardType(.URL)
+                            .submitLabel(.go)
+                            .onSubmit(submit)
+                    } header: {
+                        Text("书源配置链接")
+                    } footer: {
+                        Text("粘贴一份 lingyue-sources JSON 配置的网址，灵阅会下载并预览要导入的书源。请确认你有权访问该来源的内容。")
+                    }
+                }
+                .scrollContentBackground(.hidden)
+            }
+            .navigationTitle("从网址导入")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("取消") { dismiss() }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("导入", action: submit)
+                        .fontWeight(.semibold)
+                        .disabled(normalizedURL == nil)
+                }
+            }
+        }
+    }
+
+    private var normalizedURL: URL? {
+        let trimmed = urlText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let withScheme = trimmed.contains("://") ? trimmed : "https://" + trimmed
+        guard let url = URL(string: withScheme),
+              let scheme = url.scheme?.lowercased(),
+              scheme == "http" || scheme == "https",
+              url.host != nil else {
+            return nil
+        }
+        return url
+    }
+
+    private func submit() {
+        guard let url = normalizedURL else { return }
+        onSubmit(url)
+    }
+}
+

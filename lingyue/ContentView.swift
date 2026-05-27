@@ -6,6 +6,11 @@ struct ContentView: View {
     @StateObject private var downloadManager = BookDownloadManager()
     @StateObject private var overlayManager = OverlayManager()
     @StateObject private var tabSelection = TabSelectionStore()
+    // Root-owned so `lingyue://import?url=…` deep links resolve regardless
+    // of the foreground tab; the confirm dialog is presented here, not
+    // inside the Sources tab. `SourcesListView` reaches the same instance
+    // via `@EnvironmentObject` for its in-app import entries.
+    @StateObject private var importCoordinator = SourceImportCoordinator()
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.colorScheme) private var systemColorScheme
 
@@ -73,8 +78,54 @@ struct ContentView: View {
         .environmentObject(downloadManager)
         .environmentObject(overlayManager)
         .environmentObject(tabSelection)
+        .environmentObject(importCoordinator)
         .environment(\.appTheme, effectiveTheme)
         .environment(\.sourceStack, .live)
+        .onOpenURL { url in
+            importCoordinator.handleDeepLink(url)
+        }
+        // Shared import confirm. Driven by `importCoordinator.staged`,
+        // which any channel (file picker, URL, clipboard, QR, deep link)
+        // sets after decode + diff. Presented at the root so a deep-link
+        // import works from any tab.
+        .alert(
+            "导入书源",
+            isPresented: Binding(
+                get: { importCoordinator.staged != nil },
+                set: { if !$0 { importCoordinator.staged = nil } }
+            ),
+            presenting: importCoordinator.staged
+        ) { staged in
+            Button("取消", role: .cancel) { importCoordinator.staged = nil }
+            Button("导入（\(staged.summary.totalChanging) 项）") {
+                Task { await importCoordinator.apply() }
+            }
+            .disabled(staged.summary.totalChanging == 0)
+        } message: { staged in
+            Text(importCoordinator.dialogMessage(for: staged.summary))
+        }
+        .alert(
+            "导入失败",
+            isPresented: Binding(
+                get: { importCoordinator.errorMessage != nil },
+                set: { if !$0 { importCoordinator.errorMessage = nil } }
+            ),
+            presenting: importCoordinator.errorMessage
+        ) { _ in
+            Button("好") { importCoordinator.errorMessage = nil }
+        } message: { message in
+            Text(message)
+        }
+        .overlay {
+            if importCoordinator.isFetching {
+                ZStack {
+                    Color.black.opacity(0.2).ignoresSafeArea()
+                    ProgressView("正在下载书源…")
+                        .padding(20)
+                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                }
+            }
+        }
         .onChange(of: scenePhase) { _, newPhase in
             if newPhase == .background {
                 Task { await libraryStore.flush() }
