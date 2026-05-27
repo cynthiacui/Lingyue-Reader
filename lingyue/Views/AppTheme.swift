@@ -149,20 +149,53 @@ enum AppTheme: String, CaseIterable, Identifiable, Hashable {
         }
     }
 
-    /// Top → bottom stops for the 我 hero card surface. A warm rice-paper gradient on
-    /// every light theme (the card is meant to feel like an actual bookmark/library
-    /// card, not a re-skinned chrome surface), and a deep slate band for night mode.
+    /// Top → bottom stops for the 我 hero card surface. The card deliberately
+    /// does NOT echo the theme hue — instead each theme pairs with a *muted
+    /// complement* (or a temperature flip) so the card reads as a distinct,
+    /// intentional surface that still sits in harmony: 樱粉(pink)→soft sage,
+    /// 叶绿(green)→warm clay, 水墨(cool ink)→warm amber, 纸张(warm cream)→soft
+    /// slate-blue, 星夜(cool navy)→warm charcoal. Kept desaturated so the
+    /// contrast reads sophisticated, light enough for the dark card text, and
+    /// clear of red so the terracotta 灵阅 seal keeps popping.
+    /// Kept as a *pale wash* of the complement — light enough not to feel
+    /// heavy, but a distinct hue from the themed background so the card still
+    /// reads as its own surface (the card shadow does the rest of the lifting).
     var heroGradientStops: [Color] {
         switch self {
         case .starryNight:
+            // Soft warm charcoal against the cool navy night sky.
             return [
-                Color(red: 0.14, green: 0.16, blue: 0.22),
-                Color(red: 0.10, green: 0.12, blue: 0.17)
+                Color(red: 0.198, green: 0.184, blue: 0.156),
+                Color(red: 0.152, green: 0.140, blue: 0.116)
             ]
-        case .paperGreen, .pink, .leafGreen, .ink:
+        case .paperGreen:
+            // Cool complements fought the app's warm palette + terracotta
+            // seal, so 纸张 stays warm too: a faint peach/apricot, distinct
+            // from its near-white cream background.
             return [
-                Color(red: 0.973, green: 0.949, blue: 0.871),
-                Color(red: 0.945, green: 0.910, blue: 0.800)
+                Color(red: 0.976, green: 0.932, blue: 0.888),
+                Color(red: 0.962, green: 0.902, blue: 0.840)
+            ]
+        case .pink:
+            // Blush background → a bright, clean near-white that reads
+            // *lighter* than the soft pink behind it (a crisp white card on a
+            // colored bg), with only a whisper of warmth so it doesn't go
+            // clinical-cold against the warm theme.
+            return [
+                Color(red: 1.000, green: 0.998, blue: 0.995),
+                Color(red: 0.996, green: 0.988, blue: 0.980)
+            ]
+        case .leafGreen:
+            // Green background → faint warm sand (cool ↔ warm).
+            return [
+                Color(red: 0.974, green: 0.952, blue: 0.916),
+                Color(red: 0.956, green: 0.924, blue: 0.866)
+            ]
+        case .ink:
+            // Cool grayscale ink-wash background → faint warm amber.
+            return [
+                Color(red: 0.977, green: 0.955, blue: 0.895),
+                Color(red: 0.963, green: 0.932, blue: 0.844)
             ]
         }
     }
