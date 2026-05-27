@@ -440,31 +440,67 @@ extension EnvironmentValues {
 struct ThemeBackgroundView: View {
     @Environment(\.appTheme) private var theme
 
+    // Two-layer cross-dissolve. SwiftUI's `.transition`/`.id` crossfade was
+    // unreliable here: every themed background is rooted in a `GeometryReader`
+    // (image + starry views), and GeometryReader suppresses transitions — so
+    // only some swaps animated. Animating a plain `.opacity` on stacked layers
+    // is deterministic for every theme. `settled` is the fully-shown layer;
+    // on a change we keep it underneath and fade the new theme in on top.
+    @State private var settled: AppTheme?
+    @State private var incoming: AppTheme?
+    @State private var incomingOpacity: Double = 0
+
     var body: some View {
-        Group {
-            switch theme.backgroundStyle {
-            case .solid(let color):
-                color
-
-            case .linearGradient(let colors, let start, let end):
-                LinearGradient(colors: colors, startPoint: start, endPoint: end)
-
-            case .blushPattern(let gradient):
-                BlushPatternBackground(gradient: gradient)
-
-            case .imagePattern(let imageName, let gradient, let imageOpacity, let imageScale):
-                ImagePatternBackground(
-                    imageName: imageName,
-                    gradient: gradient,
-                    imageOpacity: imageOpacity,
-                    imageScale: imageScale
-                )
-
-            case .starryNight:
-                StarryNightBackground()
+        ZStack {
+            background(for: settled ?? theme)
+            if let incoming {
+                background(for: incoming)
+                    .opacity(incomingOpacity)
             }
         }
         .ignoresSafeArea()
+        .onAppear { if settled == nil { settled = theme } }
+        .onChange(of: theme) { oldValue, newValue in
+            guard newValue != (settled ?? oldValue) else { return }
+            // Pin the old theme as the base, fade the new one in over it.
+            settled = oldValue
+            incoming = newValue
+            incomingOpacity = 0
+            withAnimation(.easeInOut(duration: 0.5)) {
+                incomingOpacity = 1
+            } completion: {
+                // Skip if a newer switch superseded this fade mid-flight.
+                guard incoming == newValue else { return }
+                settled = newValue
+                incoming = nil
+                incomingOpacity = 0
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func background(for theme: AppTheme) -> some View {
+        switch theme.backgroundStyle {
+        case .solid(let color):
+            color
+
+        case .linearGradient(let colors, let start, let end):
+            LinearGradient(colors: colors, startPoint: start, endPoint: end)
+
+        case .blushPattern(let gradient):
+            BlushPatternBackground(gradient: gradient)
+
+        case .imagePattern(let imageName, let gradient, let imageOpacity, let imageScale):
+            ImagePatternBackground(
+                imageName: imageName,
+                gradient: gradient,
+                imageOpacity: imageOpacity,
+                imageScale: imageScale
+            )
+
+        case .starryNight:
+            StarryNightBackground()
+        }
     }
 }
 

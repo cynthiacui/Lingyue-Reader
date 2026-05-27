@@ -630,7 +630,10 @@ struct AppearanceThemeView: View {
                     let isSelected = themeManager.current == option
                     let isAutoManaged = themeManager.followSystemDark && option == .starryNight
                     Button {
-                        withAnimation(.easeInOut(duration: 0.2)) {
+                        // 0.5s so the theme-driven chrome colors (cards, text,
+                        // pills, accent) cross-dissolve in step with the page
+                        // background's cross-fade in ThemeBackgroundView.
+                        withAnimation(.easeInOut(duration: 0.5)) {
                             themeManager.select(option)
                         }
                     } label: {
@@ -653,7 +656,7 @@ struct AppearanceThemeView: View {
             Toggle(isOn: Binding(
                 get: { themeManager.followSystemDark },
                 set: { newValue in
-                    withAnimation(.easeInOut(duration: 0.2)) {
+                    withAnimation(.easeInOut(duration: 0.5)) {
                         themeManager.setFollowSystemDark(newValue)
                     }
                 }
