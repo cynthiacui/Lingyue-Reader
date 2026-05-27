@@ -70,7 +70,10 @@ struct SourcesListView: View {
             contentBody
         }
         .navigationTitle(editMode == .active ? selectionTitle : "书源")
-        .navigationBarTitleDisplayMode(editMode == .active ? .inline : .large)
+        // Keep the title large in both modes. Toggling .inline → .large
+        // programmatically is a known SwiftUI bug: the large title doesn't
+        // re-expand on exit and stays collapsed/small even at scroll-top.
+        .navigationBarTitleDisplayMode(.large)
         // Selection mode mirrors Mail / Photos: drop the back chevron and
         // tab bar so the screen is dedicated to selecting, with 全选 / 取消
         // in the nav bar and 删除 in a bottom bar where the tab bar was.
@@ -82,9 +85,16 @@ struct SourcesListView: View {
         // bottom center over the list. The selection count stays in the nav
         // title, so the icon alone carries the action.
         .overlay(alignment: .bottom) {
-            if editMode == .active {
-                deleteFloatingButton
-            }
+            // Always present, shown/hidden via opacity+offset rather than an
+            // `if`, so the *editMode change itself* never rides an animation
+            // transaction. Wrapping editMode in withAnimation left the List's
+            // selection circles stuck on after 取消; the animation is scoped
+            // here to this button only.
+            deleteFloatingButton
+                .opacity(editMode == .active ? 1 : 0)
+                .offset(y: editMode == .active ? 0 : 56)
+                .allowsHitTesting(editMode == .active)
+                .animation(.snappy, value: editMode)
         }
         .alert(
             "删除该书源？",
@@ -305,9 +315,6 @@ struct SourcesListView: View {
         .buttonStyle(.plain)
         .disabled(count == 0)
         .padding(.bottom, 28)
-        // Animates in/out with the editMode toggle (which is wrapped in
-        // withAnimation) instead of popping.
-        .transition(.move(edge: .bottom).combined(with: .opacity))
     }
 
     @ToolbarContentBuilder
@@ -321,7 +328,7 @@ struct SourcesListView: View {
             ToolbarItem(placement: .topBarTrailing) {
                 Button("取消") {
                     selectedIDs.removeAll()
-                    withAnimation(.snappy) { editMode = .inactive }
+                    editMode = .inactive
                 }
             }
         } else {
@@ -333,7 +340,7 @@ struct SourcesListView: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("选择") {
                         selectedIDs.removeAll()
-                        withAnimation(.snappy) { editMode = .active }
+                        editMode = .active
                     }
                 }
             }
@@ -400,7 +407,7 @@ struct SourcesListView: View {
         let targets = selectedIDs.intersection(editableIDs)
         guard !targets.isEmpty else {
             selectedIDs.removeAll()
-            withAnimation(.snappy) { editMode = .inactive }
+            editMode = .inactive
             return
         }
         do {
@@ -412,7 +419,7 @@ struct SourcesListView: View {
             await DiscoverySearchService.shared.invalidateRegistryCache()
             await sourceStack.pageDetector.invalidateCache()
             selectedIDs.removeAll()
-            withAnimation(.snappy) { editMode = .inactive }
+            editMode = .inactive
             await refresh()
         } catch {
             loadError = String(describing: error)
