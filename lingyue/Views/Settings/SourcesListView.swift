@@ -475,8 +475,14 @@ struct SourcesListView: View {
                     )
                 )
             }
-            entries = merged.sorted { lhs, rhs in
+            let sorted = merged.sorted { lhs, rhs in
                 lhs.rule.name.localizedStandardCompare(rhs.rule.name) == .orderedAscending
+            }
+            // Animate so freshly-imported rows slide in and status-pill
+            // changes (需要检查 → 检查中 → 可用) settle smoothly rather than
+            // snapping on each refresh.
+            withAnimation(.easeInOut(duration: 0.25)) {
+                entries = sorted
             }
             loadError = nil
         } catch {
@@ -593,11 +599,17 @@ struct SourcesListView: View {
 
             HStack(spacing: 6) {
                 originBadge(entry.origin)
-                if verifier.verifyingIDs.contains(entry.rule.id) {
-                    verifyingPill
-                } else {
-                    statusPill(entry.rowStatus)
+                Group {
+                    if verifier.verifyingIDs.contains(entry.rule.id) {
+                        verifyingPill
+                            .transition(.opacity)
+                    } else {
+                        statusPill(entry.rowStatus)
+                            .transition(.opacity)
+                    }
                 }
+                // Crossfade the 检查中 ↔ 可用/需要检查 pill swap.
+                .animation(.easeInOut(duration: 0.2), value: verifier.verifyingIDs.contains(entry.rule.id))
                 Spacer(minLength: 0)
             }
         }
