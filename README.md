@@ -8,20 +8,31 @@ iOS 17+ · SwiftUI · 单窗口应用 · 包名 `com.lingyue.reader`
 
 ## 使用指南
 
-灵阅支持在「书源」页面通过 **从 JSON 导入 / 从 URL 分析 / 手动新建** 三种方式添加自定义书源。本节介绍如何导入一份你手头已有的书源 JSON 文件。
+灵阅支持在「书源」页面通过 **手动添加 / 从 JSON 文件导入 / 从网址导入** 三种方式添加自定义书源。本节介绍两种最常用的导入方式：导入手头已有的书源 JSON 文件，以及从一个网址直接导入。
 
 ### 导入书源 JSON
 
 1. 把 `*.json` 文件保存到 iPhone 的「文件」App（iCloud Drive、本机或任意位置都可以）
 2. 打开灵阅，切到底部「**发现**」标签
 3. 点击右上角的「**地球**」图标进入「**书源**」页面
-4. 点击右上角的「**＋**」，选择「**从 JSON 导入**」
+4. 点击右上角的「**＋**」，选择「**从 JSON 文件导入**」
 5. 在文件选择器里找到你保存的 JSON 文件
 6. 确认对话框会提示「新增 / 覆盖 / 未变更」的条数，点击「**导入**」完成
 
 导入完成后，「**发现**」页的搜索框就能跨所有已启用的书源搜索小说了。
 
-如果手头没有现成的 JSON，也可以在「书源」页直接通过「**从 URL 分析**」或「**手动新建**」自行创建一份，再用「**导出**」按钮分享给他人。
+### 从网址导入书源
+
+如果书源 JSON 已经托管在网上（例如一份公开的 raw gist 链接），不必先下载到本地，直接粘贴网址即可导入：
+
+1. 打开灵阅，切到底部「**发现**」标签，点击右上角的「**地球**」图标进入「**书源**」页面
+2. 点击右上角的「**＋**」，选择「**从网址导入**」
+3. 粘贴指向 lingyue-sources JSON 配置的 `http(s)` 网址（只填域名时会自动补全为 `https://`），点击「**导入**」
+4. 灵阅会下载该配置并弹出确认对话框，同样提示「新增 / 覆盖 / 未变更」的条数，确认后即可完成
+
+> 从网址导入与从本地 JSON 文件导入的逻辑完全一致，只是来源换成了远程链接。请确认你有权访问该网址的内容。
+
+如果手头没有现成的 JSON，也可以在「书源」页通过「**手动添加**」粘贴书源站点首页，让灵阅自动分析并生成规则，再用每条书源的「**导出**」按钮分享给他人。
 
 ### 导入本地小说文件
 
@@ -149,7 +160,7 @@ iOS 17+ · SwiftUI · Bundle id `com.lingyue.reader`
   <img src="docs/screenshots/02-bookshelf-download-manager.png" alt="Download manager" width="240">
 </p>
 
-- **Discovery (发现)** — empty by default; once you add sources (via JSON import, URL-analyze, or manual creation in the Sources page) they show up as tiles in **我添加的书源**, tap one to open it in the in-app browser. The search box aggregates every enabled source; results stream in as each source replies, and the same book found on multiple sources collapses into one row with provenance chips. The globe icon opens **Sources** for enable/disable, JSON import/export, URL-analyze, and from-scratch rule editing.
+- **Discovery (发现)** — empty by default; once you add sources (via JSON import, URL-analyze, or manual creation in the Sources page) they show up as tiles in **我添加的书源**, tap one to open it in the in-app browser. The search box aggregates every enabled source; results stream in as each source replies, and the same book found on multiple sources collapses into one row with provenance chips. The globe icon opens **Sources** for enable/disable, JSON file import/export, remote-URL import (paste an `http(s)` link to a hosted `lingyue-sources` config), and URL-analyze rule creation.
 
 <p>
   <img src="docs/screenshots/03-discovery-empty.png" alt="Discovery empty" width="170">
