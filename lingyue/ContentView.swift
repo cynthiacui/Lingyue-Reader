@@ -85,9 +85,9 @@ struct ContentView: View {
             importCoordinator.handleDeepLink(url)
         }
         // Shared import confirm. Driven by `importCoordinator.staged`,
-        // which any channel (file picker, URL, clipboard, QR, deep link)
-        // sets after decode + diff. Presented at the root so a deep-link
-        // import works from any tab.
+        // which any channel (file picker, URL, deep link) sets after
+        // decode + diff. Presented at the root so a deep-link import
+        // works from any tab.
         .alert(
             "导入书源",
             isPresented: Binding(
@@ -98,7 +98,10 @@ struct ContentView: View {
         ) { staged in
             Button("取消", role: .cancel) { importCoordinator.staged = nil }
             Button("导入（\(staged.summary.totalChanging) 项）") {
-                Task { await importCoordinator.apply() }
+                // Capture `staged` and hand it to apply — SwiftUI clears
+                // `importCoordinator.staged` on dismissal before the async
+                // task runs, so apply can't read it back off the coordinator.
+                Task { await importCoordinator.apply(staged) }
             }
             .disabled(staged.summary.totalChanging == 0)
         } message: { staged in

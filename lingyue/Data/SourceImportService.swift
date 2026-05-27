@@ -465,11 +465,17 @@ final class SourceImportCoordinator: ObservableObject {
 
     // MARK: - Apply
 
-    /// Commit the staged import, refresh downstream caches, and kick off
+    /// Commit a staged import, refresh downstream caches, and kick off
     /// background verification for every new / changed rule so their list
     /// pills land at 可用 without the user toggling each one.
-    func apply() async {
-        guard let target = staged else { return }
+    ///
+    /// Takes `target` explicitly rather than reading `self.staged`: when the
+    /// confirm alert's button is tapped, SwiftUI dismisses the alert and
+    /// clears `staged` (via the isPresented binding) *synchronously*, before
+    /// this async task runs — so reading `self.staged` here would always
+    /// find nil and silently no-op. The caller captures the value at tap
+    /// time and hands it in.
+    func apply(_ target: StagedImport) async {
         staged = nil
         do {
             let summary = try await service.apply(incoming: target.rules)
