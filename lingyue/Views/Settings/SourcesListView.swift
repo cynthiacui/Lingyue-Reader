@@ -86,10 +86,13 @@ struct SourcesListView: View {
         // title, so the icon alone carries the action.
         .overlay(alignment: .bottom) {
             // Always present, shown/hidden via opacity+offset rather than an
-            // `if`, so the *editMode change itself* never rides an animation
-            // transaction. Wrapping editMode in withAnimation left the List's
-            // selection circles stuck on after 取消; the animation is scoped
-            // here to this button only.
+            // `if`. The `.animation(value: editMode)` below drives this button
+            // on BOTH transitions regardless of whether the mutation rode a
+            // withAnimation block — so the button still slides out on 取消,
+            // where the editMode flip is deliberately left unanimated (an
+            // animated exit leaves the List's selection circles stuck on).
+            // The enter transition (选择) does ride withAnimation so the
+            // circles and this button animate in together.
             deleteFloatingButton
                 .opacity(editMode == .active ? 1 : 0)
                 .offset(y: editMode == .active ? 0 : 56)
@@ -340,7 +343,16 @@ struct SourcesListView: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("选择") {
                         selectedIDs.removeAll()
-                        editMode = .active
+                        // Animate ONLY the enter transition: the List's
+                        // selection circles slide in together with the
+                        // floating delete button rising, matching Mail.
+                        // Exit (取消) stays unanimated — wrapping the
+                        // editMode = .inactive flip in withAnimation is what
+                        // left the circles stuck on; the floating button
+                        // still slides out via its own scoped .animation.
+                        withAnimation(.snappy) {
+                            editMode = .active
+                        }
                     }
                 }
             }
@@ -555,6 +567,11 @@ struct SourcesListView: View {
             Text("点击右上角 + 添加您要读取的网页来源。")
                 .font(.subheadline)
                 .foregroundStyle(theme.secondaryText)
+                .fixedSize(horizontal: false, vertical: true)
+            Text("想了解如何导入书源，请查看 [GitHub 使用指南](https://github.com/cynthiacui/Lingyue-Reader#%E4%BD%BF%E7%94%A8%E6%8C%87%E5%8D%97)。")
+                .font(.subheadline)
+                .foregroundStyle(theme.secondaryText)
+                .tint(theme.accent)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
