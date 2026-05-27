@@ -494,12 +494,18 @@ struct SourcesListView: View {
                     )
                 )
             }
-            let sorted = merged.sorted { lhs, rhs in
-                lhs.rule.name.localizedStandardCompare(rhs.rule.name) == .orderedAscending
-            }
+            // Newest-added first: the editable store appends on add and
+            // replaces edits in place, so its array is oldest→newest —
+            // reversing puts a freshly-imported source at the top, where the
+            // row-insertion animation lands. Order is independent of
+            // enabled/verification state, so rows never reshuffle as a pill
+            // settles (需要检查 → 检查中 → 可用). Seeded rules (Internal target
+            // only; empty on App Store) trail after, in their bundled order.
+            let editableEntries = merged.filter { $0.origin == .editable }.reversed()
+            let seededEntries = merged.filter { $0.origin == .seeded }
+            let sorted = Array(editableEntries) + seededEntries
             // Animate so freshly-imported rows slide in and status-pill
-            // changes (需要检查 → 检查中 → 可用) settle smoothly rather than
-            // snapping on each refresh.
+            // changes settle smoothly rather than snapping on each refresh.
             withAnimation(.easeInOut(duration: 0.25)) {
                 entries = sorted
             }
