@@ -1,7 +1,4 @@
 import SwiftUI
-import UIKit
-import PhotosUI
-import Vision
 import UniformTypeIdentifiers
 import LingyueCore
 
@@ -26,10 +23,10 @@ import LingyueCore
 struct SourcesListView: View {
     @Environment(\.sourceStack) private var sourceStack
     @Environment(\.appTheme) private var theme
-    /// Root-owned import funnel shared with the deep-link / clipboard / URL
-    /// / QR channels. Staging + the confirm dialog + apply all live here so
-    /// every entry point behaves identically; this view only kicks off a
-    /// staging call and lets the root present the confirm.
+    /// Root-owned import funnel shared with the URL and deep-link channels.
+    /// Staging + the confirm dialog + apply all live here so every entry
+    /// point behaves identically; this view only kicks off a staging call
+    /// and lets the root present the confirm.
     @EnvironmentObject private var importCoordinator: SourceImportCoordinator
 
     @State private var entries: [SourceEntry] = []
@@ -58,14 +55,6 @@ struct SourcesListView: View {
     @State private var isImportingJSON = false
     /// Presents the "从网址导入" URL-paste sheet.
     @State private var isImportingURL = false
-    /// "二维码导入" reads a QR out of a *saved* image (no camera). The
-    /// action sheet lets the user pick the image's source; the picked
-    /// image's QR payload is decoded with Vision and routed through the
-    /// coordinator like any other channel.
-    @State private var isChoosingQRSource = false
-    @State private var isPickingQRPhoto = false
-    @State private var qrPhotoItem: PhotosPickerItem?
-    @State private var isImportingQRImageFile = false
     /// Multi-select state. Active when the user taps 选择 in the toolbar.
     /// Selection is restricted to editable rows — seeded rules can't be
     /// deleted (the bundle re-emits them on next launch), so they render
@@ -142,29 +131,6 @@ struct SourcesListView: View {
                 isImportingURL = false
                 Task { await importCoordinator.stage(remoteURL: url) }
             }
-        }
-        .confirmationDialog(
-            "从二维码图片导入",
-            isPresented: $isChoosingQRSource,
-            titleVisibility: .visible
-        ) {
-            Button("从相册选择") { isPickingQRPhoto = true }
-            Button("从文件选择") { isImportingQRImageFile = true }
-            Button("取消", role: .cancel) {}
-        } message: {
-            Text("选择一张包含二维码的图片，灵阅会识别其中的书源链接。")
-        }
-        .photosPicker(isPresented: $isPickingQRPhoto, selection: $qrPhotoItem, matching: .images)
-        .onChange(of: qrPhotoItem) { _, item in
-            guard let item else { return }
-            handleQRPhoto(item)
-        }
-        .fileImporter(
-            isPresented: $isImportingQRImageFile,
-            allowedContentTypes: [.image],
-            allowsMultipleSelection: false
-        ) { result in
-            handleQRImageFile(result)
         }
         .task { await refresh() }
         .onAppear {
@@ -318,16 +284,6 @@ struct SourcesListView: View {
                     } label: {
                         Label("从网址导入", systemImage: "globe")
                     }
-                    Button {
-                        importFromClipboard()
-                    } label: {
-                        Label("从剪贴板导入", systemImage: "doc.on.clipboard")
-                    }
-                    Button {
-                        isChoosingQRSource = true
-                    } label: {
-                        Label("从二维码图片导入", systemImage: "qrcode")
-                    }
 
                     if entries.contains(where: { $0.origin == .editable }) {
                         Divider()
@@ -423,82 +379,6 @@ struct SourcesListView: View {
         case .failure(let error):
             importCoordinator.errorMessage = error.localizedDescription
         }
-    }
-
-    /// Read a `lingyue://` link, an http(s) config URL, or raw JSON text
-    /// off the clipboard and route it through the coordinator.
-    private func importFromClipboard() {
-        if let payload = UIPasteboard.general.string {
-            Task { await importCoordinator.stage(text: payload) }
-        } else {
-            importCoordinator.errorMessage = "剪贴板没有可导入的内容。"
-        }
-    }
-
-    /// A QR encodes the same payload as the deep link / clipboard channels
-    /// — a `lingyue://import?url=…` link, an http(s) config URL, or raw
-    /// JSON — so once it's decoded out of the image we hand it straight to
-    /// `stage(text:)`. Reading a saved image needs no camera permission;
-    /// a QR scanned by the system Camera app routes in via the registered
-    /// `lingyue://` scheme instead.
-    private func handleQRPhoto(_ item: PhotosPickerItem) {
-        Task {
-            defer { qrPhotoItem = nil }
-            do {
-                guard let data = try await item.loadTransferable(type: Data.self) else {
-                    importCoordinator.errorMessage = "无法读取所选图片。"
-                    return
-                }
-                await decodeQRAndStage(imageData: data)
-            } catch {
-                importCoordinator.errorMessage = error.localizedDescription
-            }
-        }
-    }
-
-    private func handleQRImageFile(_ result: Result<[URL], Error>) {
-        switch result {
-        case .success(let urls):
-            guard let url = urls.first else { return }
-            let scoped = url.startAccessingSecurityScopedResource()
-            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-            do {
-                let data = try Data(contentsOf: url)
-                Task { await decodeQRAndStage(imageData: data) }
-            } catch {
-                importCoordinator.errorMessage = error.localizedDescription
-            }
-        case .failure(let error):
-            importCoordinator.errorMessage = error.localizedDescription
-        }
-    }
-
-    private func decodeQRAndStage(imageData: Data) async {
-        let payload = await Task.detached(priority: .userInitiated) {
-            SourcesListView.firstQRPayload(in: imageData)
-        }.value
-        guard let payload else {
-            importCoordinator.errorMessage = "未在所选图片中找到二维码。"
-            return
-        }
-        await importCoordinator.stage(text: payload)
-    }
-
-    /// Decode the first QR payload in a still image with Vision. Runs off
-    /// the main actor (called from a detached task) since `perform` is
-    /// synchronous CPU work.
-    nonisolated private static func firstQRPayload(in data: Data) -> String? {
-        guard let image = UIImage(data: data), let cgImage = image.cgImage else { return nil }
-        let request = VNDetectBarcodesRequest()
-        request.symbologies = [.qr]
-        let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
-        guard (try? handler.perform([request])) != nil else { return nil }
-        for observation in request.results ?? [] {
-            if let payload = observation.payloadStringValue, !payload.isEmpty {
-                return payload
-            }
-        }
-        return nil
     }
 
     private func refresh() async {

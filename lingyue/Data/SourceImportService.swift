@@ -442,22 +442,6 @@ final class SourceImportCoordinator: ObservableObject {
         }
     }
 
-    /// Resolve a free-form string from the clipboard or a scanned QR code:
-    /// a `lingyue://` deep link, an http(s) URL to a JSON config, or raw
-    /// JSON text pasted directly.
-    func stage(text raw: String) async {
-        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            errorMessage = "没有找到可导入的内容。"
-            return
-        }
-        if let url = URL(string: trimmed), let scheme = url.scheme?.lowercased() {
-            if scheme == "lingyue" { handleDeepLink(url); return }
-            if scheme == "http" || scheme == "https" { await stage(remoteURL: url); return }
-        }
-        await stage(data: Data(trimmed.utf8))
-    }
-
     /// Entry point for `ContentView`'s `.onOpenURL`. Shape:
     /// `lingyue://import?url=<percent-encoded http(s) url>`.
     func handleDeepLink(_ url: URL) {
