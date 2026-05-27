@@ -69,9 +69,23 @@ struct SourcesListView: View {
 
             contentBody
         }
-        .navigationTitle("书源")
-        .navigationBarTitleDisplayMode(.large)
+        .navigationTitle(editMode == .active ? selectionTitle : "书源")
+        .navigationBarTitleDisplayMode(editMode == .active ? .inline : .large)
+        // Selection mode mirrors Mail / Photos: drop the back chevron and
+        // tab bar so the screen is dedicated to selecting, with 全选 / 取消
+        // in the nav bar and 删除 in a bottom bar where the tab bar was.
+        .navigationBarBackButtonHidden(editMode == .active)
+        .toolbar(editMode == .active ? .hidden : .automatic, for: .tabBar)
         .toolbar { toolbarContent }
+        // Floating delete button (replaces the tab bar while selecting):
+        // a circular frosted button with a red trash glyph, floating at the
+        // bottom center over the list. The selection count stays in the nav
+        // title, so the icon alone carries the action.
+        .overlay(alignment: .bottom) {
+            if editMode == .active {
+                deleteFloatingButton
+            }
+        }
         .alert(
             "删除该书源？",
             isPresented: Binding(
@@ -245,25 +259,84 @@ struct SourcesListView: View {
         }
     }
 
+    /// Inline nav title while selecting — shows the running count the way
+    /// Mail / Photos do ("已选择 N 项"), or a prompt when nothing's picked.
+    private var selectionTitle: String {
+        selectedIDs.isEmpty ? "选择书源" : "已选择 \(selectedIDs.count) 项"
+    }
+
+    /// Every deletable (user-authored) row. Seeded rows can't be deleted,
+    /// so 全选 targets only these — matching the per-row `selectionDisabled`.
+    private var editableEntryIDs: Set<UUID> {
+        Set(entries.filter { $0.origin == .editable }.map(\.id))
+    }
+
+    private var allEditableSelected: Bool {
+        let ids = editableEntryIDs
+        return !ids.isEmpty && ids.isSubset(of: selectedIDs)
+    }
+
+    private func toggleSelectAll() {
+        if allEditableSelected {
+            selectedIDs.removeAll()
+        } else {
+            selectedIDs = editableEntryIDs
+        }
+    }
+
+    /// Floating destructive button shown while selecting: a circular frosted
+    /// button (matching the frosted tab bar it replaces) with a red trash
+    /// glyph, floating bottom-center over the list. Dims to neutral and
+    /// disables until at least one row is selected.
+    @ViewBuilder
+    private var deleteFloatingButton: some View {
+        let count = selectedIDs.count
+        Button {
+            pendingBatchDelete = true
+        } label: {
+            Image(systemName: "trash")
+                .font(.system(size: 22, weight: .semibold))
+                .foregroundStyle(count == 0 ? Color.secondary : Color.red)
+                .frame(width: 58, height: 58)
+                .background(.regularMaterial, in: Circle())
+                .overlay(Circle().strokeBorder(Color.primary.opacity(0.06), lineWidth: 0.5))
+                .shadow(color: .black.opacity(0.18), radius: 12, y: 5)
+        }
+        .buttonStyle(.plain)
+        .disabled(count == 0)
+        .padding(.bottom, 28)
+        // Animates in/out with the editMode toggle (which is wrapped in
+        // withAnimation) instead of popping.
+        .transition(.move(edge: .bottom).combined(with: .opacity))
+    }
+
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
         if editMode == .active {
             ToolbarItem(placement: .topBarLeading) {
-                Button("取消") {
-                    editMode = .inactive
-                    selectedIDs.removeAll()
+                Button(allEditableSelected ? "取消全选" : "全选") {
+                    toggleSelectAll()
                 }
             }
             ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    pendingBatchDelete = true
-                } label: {
-                    Text(selectedIDs.isEmpty ? "删除" : "删除 (\(selectedIDs.count))")
-                        .foregroundStyle(.red)
+                Button("取消") {
+                    selectedIDs.removeAll()
+                    withAnimation(.snappy) { editMode = .inactive }
                 }
-                .disabled(selectedIDs.isEmpty)
             }
         } else {
+            // Separate toolbar items so 选择 and + each render as their own
+            // pill (a ToolbarItemGroup crams both into one capsule). "+" stays
+            // purely "add a source"; 选择 owns the destructive flow, matching
+            // Mail / Files.
+            if entries.contains(where: { $0.origin == .editable }) {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("选择") {
+                        selectedIDs.removeAll()
+                        withAnimation(.snappy) { editMode = .active }
+                    }
+                }
+            }
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
                     Button {
@@ -283,16 +356,6 @@ struct SourcesListView: View {
                         isImportingURL = true
                     } label: {
                         Label("从网址导入", systemImage: "globe")
-                    }
-
-                    if entries.contains(where: { $0.origin == .editable }) {
-                        Divider()
-                        Button {
-                            editMode = .active
-                            selectedIDs.removeAll()
-                        } label: {
-                            Label("批量删除", systemImage: "checkmark.circle")
-                        }
                     }
                 } label: {
                     Image(systemName: "plus")
@@ -336,8 +399,8 @@ struct SourcesListView: View {
         )
         let targets = selectedIDs.intersection(editableIDs)
         guard !targets.isEmpty else {
-            editMode = .inactive
             selectedIDs.removeAll()
+            withAnimation(.snappy) { editMode = .inactive }
             return
         }
         do {
@@ -348,8 +411,8 @@ struct SourcesListView: View {
             }
             await DiscoverySearchService.shared.invalidateRegistryCache()
             await sourceStack.pageDetector.invalidateCache()
-            editMode = .inactive
             selectedIDs.removeAll()
+            withAnimation(.snappy) { editMode = .inactive }
             await refresh()
         } catch {
             loadError = String(describing: error)
