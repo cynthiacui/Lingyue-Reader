@@ -8,31 +8,90 @@ iOS 17+ · SwiftUI · 单窗口应用 · 包名 `com.lingyue.reader`
 
 ## 使用指南
 
-灵阅支持在「书源」页面通过 **手动添加 / 从 JSON 文件导入 / 从网址导入** 三种方式添加自定义书源。本节介绍两种最常用的导入方式：导入手头已有的书源 JSON 文件，以及从一个网址直接导入。
+灵阅支持在「书源」页面通过 **手动添加 / 从 JSON 文件导入 / 从网址导入** 三种方式添加书源。下面先讲如何**手动添加一个书源**（以公版的维基文库为例），再讲如何**导入现成的 JSON**，以及如何**把书源分享给别人**。
 
-### 导入书源 JSON
+> 进入「书源」页的路径：底部「**发现**」标签 → 右上角「**地球**」图标。下文统称「书源」页。
+
+### 手动添加书源（以维基文库为例）
+
+「手动添加」让灵阅根据你**在浏览器里实际打开过的几个页面 URL** 自动识别书源结构，你不必懂任何选择器或正则。
+
+**① 进入「书源」页，点右上角「＋」→「手动添加」。**
+
+**② 填写下表。** 只有**书源主页**必填，其余「示例 URL」建议尽量都填——给得越全，自动识别越准：
+
+| 字段 | 含义 | 维基文库示例 |
+|---|---|---|
+| **书源主页 URL**（必填） | 网站首页 | `https://zh.wikisource.org/` |
+| 书源名称（可选） | 留空则取网站标题 | `维基文库` |
+| 书籍详情页 URL | 一本书的总目录页 | `https://zh.wikisource.org/wiki/紅樓夢` |
+| 章节正文 URL | 其中某一章的正文页 | `https://zh.wikisource.org/wiki/紅樓夢/第001回` |
+| 搜索结果页 URL | 站内搜索某关键词后的结果页 | `https://zh.wikisource.org/w/index.php?search=紅樓夢&fulltext=1&ns0=1` |
+| 搜索时使用的关键词 | 上面那个搜索 URL 里实际搜的词 | `紅樓夢` |
+
+**③ 点右上角「分析」。** 灵阅会抓取这些页面、自动推断出「搜索 / 目录 / 章节正文」的解析规则，并进入「**书源详情**」审核页。
+
+**④ 在审核页逐个点「测试」** 验证「搜索 / 目录 / 章节」是否正常；个别环节识别不准时，点「**高级修复（手动编辑规则）**」微调。
+
+**⑤ 点「保存与启用」完成。** 该书源随即出现在列表中，「**发现**」页也能直接搜到它的书。
+
+> 小贴士：那几个示例 URL 直接从浏览器地址栏复制最稳妥——确保它们是你**确实能打开**的真实页面。维基文库、古腾堡、公版经典这类**版权自由**的站点最适合拿来练手，分享出去也没有任何顾虑。
+
+### 导入现成的书源 JSON
+
+如果别人已经给了你一份打包好的书源配置（`lingyue-sources` 格式的 JSON），用下面任意一种方式导入即可。
+
+#### 从 JSON 文件导入
 
 1. 把 `*.json` 文件保存到 iPhone 的「文件」App（iCloud Drive、本机或任意位置都可以）
-2. 打开灵阅，切到底部「**发现**」标签
-3. 点击右上角的「**地球**」图标进入「**书源**」页面
-4. 点击右上角的「**＋**」，选择「**从 JSON 文件导入**」
-5. 在文件选择器里找到你保存的 JSON 文件
-6. 确认对话框会提示「新增 / 覆盖 / 未变更」的条数，点击「**导入**」完成
+2. 进入「书源」页，点右上角「**＋**」→「**从 JSON 文件导入**」
+3. 在文件选择器里选中该 JSON 文件
+4. 确认对话框会提示「新增 / 覆盖 / 未变更」的条数，点「**导入**」完成
 
-导入完成后，「**发现**」页的搜索框就能跨所有已启用的书源搜索小说了。
+#### 从网址导入
 
-### 从网址导入书源
+如果配置已经托管在网上（一个能直接返回 JSON 原文的网址），不必先下载到本地：
 
-如果书源 JSON 已经托管在网上（例如一份公开的 raw gist 链接），不必先下载到本地，直接粘贴网址即可导入：
+1. 进入「书源」页，点右上角「**＋**」→「**从网址导入**」
+2. 粘贴指向 `lingyue-sources` JSON 的 `http(s)` 网址（只填域名时会自动补全为 `https://`），点「**导入**」
+3. 灵阅会下载该配置，同样弹出「新增 / 覆盖 / 未变更」确认，确认后完成
 
-1. 打开灵阅，切到底部「**发现**」标签，点击右上角的「**地球**」图标进入「**书源**」页面
-2. 点击右上角的「**＋**」，选择「**从网址导入**」
-3. 粘贴指向 lingyue-sources JSON 配置的 `http(s)` 网址（只填域名时会自动补全为 `https://`），点击「**导入**」
-4. 灵阅会下载该配置并弹出确认对话框，同样提示「新增 / 覆盖 / 未变更」的条数，确认后即可完成
+> 也可以用 `lingyue://import?url=<网址>` 深链一键唤起导入。两种网址方式与「从 JSON 文件导入」逻辑完全一致，只是来源换成了远程链接；请确认你有权访问该网址的内容。
 
-> 从网址导入与从本地 JSON 文件导入的逻辑完全一致，只是来源换成了远程链接。请确认你有权访问该网址的内容。
+导入完成后，「**发现**」页的搜索框就能跨所有已启用的书源搜索了。
 
-如果手头没有现成的 JSON，也可以在「书源」页通过「**手动添加**」粘贴书源站点首页，让灵阅自动分析并生成规则，再用每条书源的「**导出**」按钮分享给他人。
+### 把书源分享给别人
+
+分发的最小单位是一份 **`lingyue-sources` JSON**——一个信封套着一个 `sources` 数组，数组里每个元素就是一个书源规则：
+
+```json
+{
+  "kind": "lingyue-sources",
+  "version": 1,
+  "sources": [
+    {
+      "id": "00000000-0000-0000-0000-000000005701",
+      "schemaVersion": 1,
+      "name": "维基文库",
+      "homepage": "https://zh.wikisource.org/",
+      "capabilities": { "supportsSearch": true, "showInSearchBar": true },
+      "search":  { "…": "搜索规则" },
+      "detail":  { "…": "书籍详情规则" },
+      "catalog": { "…": "章节目录规则" },
+      "chapter": { "…": "正文提取规则" }
+    }
+  ]
+}
+```
+
+> 上面为方便阅读省略了 `capabilities` 以及 `search / detail / catalog / chapter` 内部的选择器等字段——这些规则正是「**手动添加 → 分析**」自动生成的内容，一般不用手写。
+
+拿到这份 JSON 后，分享方式有两种：
+
+- **发文件**——直接把 `.json` 发给对方，对方用「**从 JSON 文件导入**」。
+- **挂网址**——把 JSON 放到一个能直接返回原文的网址（raw 链接），对方用「**从网址导入**」或 `lingyue://import?url=…` 深链一键导入。
+
+> ⚠️ 目前 App 内**没有**单条书源 / 书源包的「导出」按钮。要凑出上面的 JSON，可以从 **我 → 数据 → 「导出备份」** 导出的备份文件里取出 `editableSources` 数组，套上 `kind` / `version` / `sources` 信封即可。注意「导出备份」是**整机备份**（含书架、统计、个人偏好），其导入会**覆盖**对方的全部数据，所以它只适合自己换设备迁移，**不适合**直接拿来分享书源。
 
 ### 导入本地小说文件
 
@@ -73,7 +132,7 @@ iOS 17+ · SwiftUI · 单窗口应用 · 包名 `com.lingyue.reader`
   <img src="docs/screenshots/06-sources-list.png" alt="书源管理" width="170">
 </p>
 
-「发现」页用于跨多个书源聚合搜索。添加了书源后（在「书源」页通过 JSON 导入、URL 分析或手动新建），「我添加的书源」区会列出每一个站点磁贴，轻点直接在内置浏览器中打开。顶部的搜索框聚合所有已启用的书源，每个书源返回结果后即刻流式展示，多个书源同时收录的同一本书会合并成一行并以小标签列出来源。右上角的「地球」按钮进入书源管理页面，可逐个启用 / 禁用、导入、导出或手动新建书源。
+「发现」页用于跨多个书源聚合搜索。添加了书源后（在「书源」页通过 JSON 导入、URL 分析或手动新建），「我添加的书源」区会列出每一个站点磁贴，轻点直接在内置浏览器中打开。顶部的搜索框聚合所有已启用的书源，每个书源返回结果后即刻流式展示，多个书源同时收录的同一本书会合并成一行并以小标签列出来源。右上角的「地球」按钮进入书源管理页面，可逐个启用 / 禁用，并通过「手动添加 / 从 JSON 文件导入 / 从网址导入」新增书源。
 
 ### 阅读器
 
@@ -160,7 +219,7 @@ iOS 17+ · SwiftUI · Bundle id `com.lingyue.reader`
   <img src="docs/screenshots/02-bookshelf-download-manager.png" alt="Download manager" width="240">
 </p>
 
-- **Discovery (发现)** — empty by default; once you add sources (via JSON import, URL-analyze, or manual creation in the Sources page) they show up as tiles in **我添加的书源**, tap one to open it in the in-app browser. The search box aggregates every enabled source; results stream in as each source replies, and the same book found on multiple sources collapses into one row with provenance chips. The globe icon opens **Sources** for enable/disable, JSON file import/export, remote-URL import (paste an `http(s)` link to a hosted `lingyue-sources` config), and URL-analyze rule creation.
+- **Discovery (发现)** — empty by default; once you add sources (via JSON import, URL-analyze, or manual creation in the Sources page) they show up as tiles in **我添加的书源**, tap one to open it in the in-app browser. The search box aggregates every enabled source; results stream in as each source replies, and the same book found on multiple sources collapses into one row with provenance chips. The globe icon opens **Sources** for enable/disable plus three ways to add a source: URL-analyze manual add, JSON file import, and remote-URL import (paste an `http(s)` link to a hosted `lingyue-sources` config).
 
 <p>
   <img src="docs/screenshots/03-discovery-empty.png" alt="Discovery empty" width="170">
