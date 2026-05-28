@@ -670,11 +670,19 @@ struct SourcesListView: View {
                 .font(.subheadline)
                 .foregroundStyle(theme.secondaryText)
                 .fixedSize(horizontal: false, vertical: true)
-            Text("想了解如何导入书源，请查看 [GitHub 使用指南](https://github.com/cynthiacui/Lingyue-Reader#%E4%BD%BF%E7%94%A8%E6%8C%87%E5%8D%97)。")
+            NavigationLink {
+                SourceGuideView()
+            } label: {
+                HStack(spacing: 4) {
+                    Text("想了解如何导入书源？查看使用指南")
+                    Image(systemName: "chevron.right")
+                        .font(.caption2.weight(.semibold))
+                }
                 .font(.subheadline)
-                .foregroundStyle(theme.secondaryText)
-                .tint(theme.accent)
+                .foregroundStyle(theme.accent)
                 .fixedSize(horizontal: false, vertical: true)
+            }
+            .buttonStyle(.plain)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .sourcesListCard()
@@ -900,7 +908,7 @@ private struct ImportFromURLView: View {
                     } header: {
                         Text("书源配置链接")
                     } footer: {
-                        Text("粘贴一份 lingyue-sources JSON 配置的网址，灵阅会下载并预览要导入的书源。请确认你有权访问该来源的内容。")
+                        Text("粘贴一份书源配置文件（JSON）的网址，灵阅会下载并预览要导入的书源。请确认你有权访问该来源的内容。")
                     }
                 }
                 .scrollContentBackground(.hidden)
@@ -936,6 +944,170 @@ private struct ImportFromURLView: View {
     private func submit() {
         guard let url = normalizedURL else { return }
         onSubmit(url)
+    }
+}
+
+/// In-app copy of the repo's 使用指南 — so users who can't reach GitHub can
+/// still learn how to add / import / share book sources. Pushed from the
+/// 书源 empty-state card and from 我 → 关于. Content mirrors README.md's
+/// 使用指南 (manual add with the public-domain Wikisource example, the two
+/// JSON import paths, and exporting a source pack via 选择 → 导出). Defined
+/// here rather than in its own file because the project references sources
+/// explicitly in the pbxproj (no synchronized groups), so a new file would
+/// need manual build-phase surgery; co-locating it keeps the add reliable.
+struct SourceGuideView: View {
+    @Environment(\.appTheme) private var theme
+
+    var body: some View {
+        ZStack {
+            ThemeBackgroundView()
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 22) {
+                    introCard
+                    manualAddCard
+                    importCard
+                    shareCard
+                }
+                .padding(.top, 12)
+                .padding(.bottom, 32)
+            }
+            .contentMargins(.horizontal, 16, for: .scrollContent)
+        }
+        .navigationTitle("使用指南")
+        .navigationBarTitleDisplayMode(.large)
+    }
+
+    // MARK: - Cards
+
+    private var introCard: some View {
+        Text("灵阅支持「手动添加 / 从 JSON 文件导入 / 从网址导入」三种方式添加书源。下面以版权自由的「维基文库」为例，讲解如何手动添加、导入现成的 JSON，以及把书源分享给别人。")
+            .font(.subheadline)
+            .foregroundStyle(theme.secondaryText)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .readerCard()
+    }
+
+    private var manualAddCard: some View {
+        section("手动添加书源（以维基文库为例）") {
+            paragraph("「手动添加」让灵阅根据你在浏览器里实际打开过的几个页面 URL 自动识别书源结构，你不必懂任何选择器或正则。")
+            step("①", "进入「书源」页，点右上角「＋」→「手动添加」。")
+            step("②", "按下面的字段填写。只有「书源主页」必填，其余示例 URL 建议尽量都填——给得越全，识别越准：")
+            field("书源主页 URL（必填）", "网站首页", "https://zh.wikisource.org/")
+            field("书源名称（可选）", "留空则取网站标题", "维基文库")
+            field("书籍详情页 URL", "一本书的总目录页", "https://zh.wikisource.org/wiki/紅樓夢")
+            field("章节正文 URL", "其中某一章的正文页", "https://zh.wikisource.org/wiki/紅樓夢/第001回")
+            field("搜索结果页 URL", "站内搜索某关键词后的结果页", "https://zh.wikisource.org/w/index.php?search=紅樓夢&fulltext=1&ns0=1")
+            field("搜索关键词", "上面那个搜索 URL 里实际搜的词", "紅樓夢")
+            step("③", "点右上角「分析」。灵阅会抓取这些页面、自动推断出「搜索 / 目录 / 章节正文」的解析规则，并进入「书源详情」审核页。")
+            step("④", "在审核页逐个点「测试」验证；个别环节识别不准时，点「高级修复（手动编辑规则）」微调。")
+            step("⑤", "点「保存与启用」完成。该书源随即出现在列表中，「发现」页也能直接搜到它的书。")
+            note("示例 URL 直接从浏览器地址栏复制最稳妥。维基文库、古腾堡、公版经典这类版权自由的站点最适合练手，分享出去也没有任何顾虑。")
+        }
+    }
+
+    private var importCard: some View {
+        section("导入现成的书源 JSON") {
+            paragraph("如果别人已经给了你一份打包好的书源配置文件（JSON 格式），用下面任意一种方式导入即可。")
+            subheading("从 JSON 文件导入")
+            step("1", "把 .json 文件存到 iPhone 的「文件」App。")
+            step("2", "进入「书源」页，点「＋」→「从 JSON 文件导入」，选中该文件。")
+            step("3", "确认对话框提示「新增 / 覆盖 / 未变更」的条数，点「导入」完成。")
+            subheading("从网址导入")
+            step("1", "进入「书源」页，点「＋」→「从网址导入」。")
+            step("2", "粘贴指向该书源 JSON 文件的 http(s) 网址（只填域名会自动补全为 https://），点「导入」。")
+            step("3", "灵阅会下载该配置，并同样弹出「新增 / 覆盖 / 未变更」确认。")
+            note("也可以用 lingyue://import?url=<网址> 深链一键唤起导入。请确认你有权访问该网址的内容。")
+        }
+    }
+
+    private var shareCard: some View {
+        section("把书源分享给别人") {
+            paragraph("把你添加好的书源导出成一份书源 JSON 文件，发给别人即可导入。")
+            step("①", "进入「书源」页，点右上角「选择」。")
+            step("②", "勾选要分享的书源（只有自己添加的书源可选）。")
+            step("③", "点底部的「导出」按钮（分享图标）。")
+            step("④", "在系统面板里选「存储到文件」「隔空投送」等方式发出去。")
+            note("对方收到后用「从 JSON 文件导入」即可。若把它放到一个能直接返回原文的网址上，对方还能用「从网址导入」一键添加。")
+        }
+    }
+
+    // MARK: - Building blocks
+
+    private func section<Content: View>(
+        _ title: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            SectionHeader(title: title)
+            VStack(alignment: .leading, spacing: 12) {
+                content()
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .readerCard()
+        }
+    }
+
+    private func paragraph(_ text: String) -> some View {
+        Text(text)
+            .font(.subheadline)
+            .foregroundStyle(theme.primaryText)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func subheading(_ text: String) -> some View {
+        Text(text)
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(theme.primaryText)
+            .padding(.top, 2)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func step(_ marker: String, _ text: String) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Text(marker)
+                .font(.subheadline.weight(.bold))
+                .foregroundStyle(theme.accent)
+                .frame(minWidth: 18, alignment: .leading)
+            Text(text)
+                .font(.subheadline)
+                .foregroundStyle(theme.primaryText)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private func field(_ name: String, _ desc: String, _ example: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(name)
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(theme.primaryText)
+            Text(desc)
+                .font(.caption)
+                .foregroundStyle(theme.secondaryText)
+            Text(example)
+                .font(.caption.monospaced())
+                .foregroundStyle(theme.accent)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.leading, 26)
+    }
+
+    private func note(_ text: String) -> some View {
+        HStack(alignment: .top, spacing: 6) {
+            Image(systemName: "lightbulb")
+                .font(.caption)
+                .foregroundStyle(theme.secondaryText)
+            Text(text)
+                .font(.footnote)
+                .foregroundStyle(theme.secondaryText)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.top, 2)
     }
 }
 

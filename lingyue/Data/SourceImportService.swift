@@ -30,7 +30,7 @@ enum SourceImportError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .unsupportedKind(let kind):
-            return "无法识别的文件类型：\(kind)。请选择 lingyue-sources 书源文件。"
+            return "无法识别的文件类型：\(kind)。请选择灵阅的书源 JSON 文件。"
         case .unsupportedVersion(let v):
             return "不支持的书源文件版本：\(v)。请使用更新版本的灵阅打开此文件。"
         case .decodeFailed(let detail):

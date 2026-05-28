@@ -39,7 +39,7 @@ iOS 17+ · SwiftUI · 单窗口应用 · 包名 `com.lingyue.reader`
 
 ### 导入现成的书源 JSON
 
-如果别人已经给了你一份打包好的书源配置（`lingyue-sources` 格式的 JSON），用下面任意一种方式导入即可。
+如果别人已经给了你一份打包好的书源配置文件（JSON 格式），用下面任意一种方式导入即可。
 
 #### 从 JSON 文件导入
 
@@ -53,7 +53,7 @@ iOS 17+ · SwiftUI · 单窗口应用 · 包名 `com.lingyue.reader`
 如果配置已经托管在网上（一个能直接返回 JSON 原文的网址），不必先下载到本地：
 
 1. 进入「书源」页，点右上角「**＋**」→「**从网址导入**」
-2. 粘贴指向 `lingyue-sources` JSON 的 `http(s)` 网址（只填域名时会自动补全为 `https://`），点「**导入**」
+2. 粘贴指向该书源 JSON 文件的 `http(s)` 网址（只填域名时会自动补全为 `https://`），点「**导入**」
 3. 灵阅会下载该配置，同样弹出「新增 / 覆盖 / 未变更」确认，确认后完成
 
 > 也可以用 `lingyue://import?url=<网址>` 深链一键唤起导入。两种网址方式与「从 JSON 文件导入」逻辑完全一致，只是来源换成了远程链接；请确认你有权访问该网址的内容。
@@ -62,7 +62,16 @@ iOS 17+ · SwiftUI · 单窗口应用 · 包名 `com.lingyue.reader`
 
 ### 把书源分享给别人
 
-分发的最小单位是一份 **`lingyue-sources` JSON**——一个信封套着一个 `sources` 数组，数组里每个元素就是一个书源规则：
+在 App 内选中书源就能直接导出成一份**书源 JSON 文件**，发给别人导入。
+
+**导出步骤：**
+
+1. 进入「书源」页，点右上角「**选择**」进入多选模式
+2. 勾选要分享的书源（只有自己添加的书源可选）
+3. 点底部的「**导出**」按钮（分享图标）
+4. 在系统弹出的存储 / 分享面板里选「**存储到文件**」「**隔空投送**」等方式发出去
+
+**文件长什么样？** 一个信封套着一个 `sources` 数组，数组里每个元素就是一个书源规则：
 
 ```json
 {
@@ -84,14 +93,14 @@ iOS 17+ · SwiftUI · 单窗口应用 · 包名 `com.lingyue.reader`
 }
 ```
 
-> 上面为方便阅读省略了 `capabilities` 以及 `search / detail / catalog / chapter` 内部的选择器等字段——这些规则正是「**手动添加 → 分析**」自动生成的内容，一般不用手写。
+> 其中 `kind` 固定为 `lingyue-sources`，是灵阅用来识别书源文件的标记。`capabilities` 与 `search / detail / catalog / chapter` 内部的选择器等字段为方便阅读已省略——它们都是「**手动添加 → 分析**」自动生成的，一般不用手写。
 
-拿到这份 JSON 后，分享方式有两种：
+**对方怎么导入？** 两种方式：
 
-- **发文件**——直接把 `.json` 发给对方，对方用「**从 JSON 文件导入**」。
+- **发文件**——把导出的 `.json` 发给对方，对方用「**从 JSON 文件导入**」。
 - **挂网址**——把 JSON 放到一个能直接返回原文的网址（raw 链接），对方用「**从网址导入**」或 `lingyue://import?url=…` 深链一键导入。
 
-> ⚠️ 目前 App 内**没有**单条书源 / 书源包的「导出」按钮。要凑出上面的 JSON，可以从 **我 → 数据 → 「导出备份」** 导出的备份文件里取出 `editableSources` 数组，套上 `kind` / `version` / `sources` 信封即可。注意「导出备份」是**整机备份**（含书架、统计、个人偏好），其导入会**覆盖**对方的全部数据，所以它只适合自己换设备迁移，**不适合**直接拿来分享书源。
+> 想整机迁移（书架 + 书源 + 统计）请用 **我 → 数据 → 导出备份**；那是整机备份，导入会**覆盖**对方的全部数据，**不适合**用来分享书源。
 
 ### 导入本地小说文件
 
@@ -219,7 +228,7 @@ iOS 17+ · SwiftUI · Bundle id `com.lingyue.reader`
   <img src="docs/screenshots/02-bookshelf-download-manager.png" alt="Download manager" width="240">
 </p>
 
-- **Discovery (发现)** — empty by default; once you add sources (via JSON import, URL-analyze, or manual creation in the Sources page) they show up as tiles in **我添加的书源**, tap one to open it in the in-app browser. The search box aggregates every enabled source; results stream in as each source replies, and the same book found on multiple sources collapses into one row with provenance chips. The globe icon opens **Sources** for enable/disable plus three ways to add a source: URL-analyze manual add, JSON file import, and remote-URL import (paste an `http(s)` link to a hosted `lingyue-sources` config).
+- **Discovery (发现)** — empty by default; once you add sources (via JSON import, URL-analyze, or manual creation in the Sources page) they show up as tiles in **我添加的书源**, tap one to open it in the in-app browser. The search box aggregates every enabled source; results stream in as each source replies, and the same book found on multiple sources collapses into one row with provenance chips. The globe icon opens **Sources** for enable/disable plus three ways to add a source: URL-analyze manual add, JSON file import, and remote-URL import (paste an `http(s)` link to a hosted book-source JSON).
 
 <p>
   <img src="docs/screenshots/03-discovery-empty.png" alt="Discovery empty" width="170">

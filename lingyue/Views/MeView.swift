@@ -851,6 +851,7 @@ struct AboutSettingsView: View {
             List {
                 Section {
                     aboutVersionRow
+                    guideRow
                     githubLinkRow
                 }
                 .listRowBackground(theme.cardBackground)
@@ -876,6 +877,23 @@ struct AboutSettingsView: View {
             Spacer()
             Text(appVersionString)
                 .foregroundStyle(theme.secondaryText)
+        }
+    }
+
+    /// In-app 使用指南 — same content as the GitHub guide, pushed as a native
+    /// page so users who can't reach GitHub still get the import/share help.
+    private var guideRow: some View {
+        NavigationLink {
+            SourceGuideView()
+        } label: {
+            Label {
+                Text("使用指南")
+                    .font(.headline)
+                    .foregroundStyle(theme.primaryText)
+            } icon: {
+                Image(systemName: "book")
+                    .font(.system(size: 16))
+            }
         }
     }
 
