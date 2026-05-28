@@ -65,5 +65,5 @@ If you do uninstall, say so explicitly *before* the command runs so the user can
 If you ran `simctl uninstall` and the user is upset (legitimately):
 
 1. **You can't recover the books / library / reading stats from inside the simulator** — that container is gone.
-2. The bundled source rules CAN be re-imported: the gist holds the canonical copy (`REDACTED-SOURCE-GIST-URL`), and `docs/lingyue-sources.json` should also be on the user's Mac (gitignored, restored from git history during this session's earlier work).
+2. The bundled source rules CAN be re-imported: the canonical copy lives in a secret gist whose URL is kept in the private `release-and-source-distribution` memory (deliberately **not** published in this repo — the repo is reachable from the App Store listing), and `docs/lingyue-sources.json` should also be on the user's Mac (gitignored).
 3. Apologize, acknowledge the loss, and don't repeat the mistake.
