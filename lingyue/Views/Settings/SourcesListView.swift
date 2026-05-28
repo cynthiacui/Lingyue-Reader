@@ -62,6 +62,14 @@ struct SourcesListView: View {
     @State private var editMode: EditMode = .inactive
     @State private var selectedIDs: Set<UUID> = []
     @State private var pendingBatchDelete = false
+    /// Drives the "导出所选书源" file exporter. The selected editable rules
+    /// are encoded into a `lingyue-sources` envelope (the same shape the
+    /// import channels read) and wrapped in `BackupJSONDocument` so
+    /// SwiftUI's `.fileExporter` can hand it to the system save/share sheet.
+    @State private var exportDocument: BackupJSONDocument?
+    @State private var exportFilename = "lingyue-sources.json"
+    @State private var isExportingSelection = false
+    @State private var exportError: String?
 
     var body: some View {
         ZStack {
@@ -85,19 +93,24 @@ struct SourcesListView: View {
         // bottom center over the list. The selection count stays in the nav
         // title, so the icon alone carries the action.
         .overlay(alignment: .bottom) {
-            // Always present, shown/hidden via opacity+offset rather than an
-            // `if`. The `.animation(value: editMode)` below drives this button
-            // on BOTH transitions regardless of whether the mutation rode a
-            // withAnimation block — so the button still slides out on 取消,
-            // where the editMode flip is deliberately left unanimated (an
-            // animated exit leaves the List's selection circles stuck on).
-            // The enter transition (选择) does ride withAnimation so the
-            // circles and this button animate in together.
-            deleteFloatingButton
-                .opacity(editMode == .active ? 1 : 0)
-                .offset(y: editMode == .active ? 0 : 56)
-                .allowsHitTesting(editMode == .active)
-                .animation(.snappy, value: editMode)
+            // Selection-mode action bar: 导出 + 删除, two frosted circles
+            // matching the tab bar they replace. Always present, shown/hidden
+            // via opacity+offset rather than an `if`. The `.animation(value:
+            // editMode)` below drives the bar on BOTH transitions regardless
+            // of whether the mutation rode a withAnimation block — so it still
+            // slides out on 取消, where the editMode flip is deliberately left
+            // unanimated (an animated exit leaves the List's selection circles
+            // stuck on). The enter transition (选择) does ride withAnimation so
+            // the circles and this bar animate in together.
+            HStack(spacing: 24) {
+                exportFloatingButton
+                deleteFloatingButton
+            }
+            .padding(.bottom, 28)
+            .opacity(editMode == .active ? 1 : 0)
+            .offset(y: editMode == .active ? 0 : 56)
+            .allowsHitTesting(editMode == .active)
+            .animation(.snappy, value: editMode)
         }
         .alert(
             "删除该书源？",
@@ -152,6 +165,37 @@ struct SourcesListView: View {
             allowsMultipleSelection: false
         ) { result in
             handleImporterResult(result)
+        }
+        // Export side of the same JSON picker: the selected editable rules
+        // go out as a `lingyue-sources` envelope — the exact shape the
+        // 从 JSON 文件导入 / 从网址导入 channels read back in.
+        .fileExporter(
+            isPresented: $isExportingSelection,
+            document: exportDocument,
+            contentType: .json,
+            defaultFilename: exportFilename
+        ) { result in
+            switch result {
+            case .success:
+                // Saved/shared — drop out of selection mode the way a
+                // finished batch action would.
+                selectedIDs.removeAll()
+                editMode = .inactive
+            case .failure(let error):
+                exportError = error.localizedDescription
+            }
+            exportDocument = nil
+        }
+        .alert(
+            "导出失败",
+            isPresented: Binding(
+                get: { exportError != nil },
+                set: { if !$0 { exportError = nil } }
+            )
+        ) {
+            Button("好", role: .cancel) { exportError = nil }
+        } message: {
+            Text(exportError ?? "")
         }
         .sheet(isPresented: $isImportingURL) {
             ImportFromURLView { url in
@@ -299,8 +343,7 @@ struct SourcesListView: View {
 
     /// Floating destructive button shown while selecting: a circular frosted
     /// button (matching the frosted tab bar it replaces) with a red trash
-    /// glyph, floating bottom-center over the list. Dims to neutral and
-    /// disables until at least one row is selected.
+    /// glyph. Dims to neutral and disables until at least one row is selected.
     @ViewBuilder
     private var deleteFloatingButton: some View {
         let count = selectedIDs.count
@@ -317,7 +360,60 @@ struct SourcesListView: View {
         }
         .buttonStyle(.plain)
         .disabled(count == 0)
-        .padding(.bottom, 28)
+        .accessibilityLabel("删除所选书源")
+    }
+
+    /// Floating share button beside 删除: encodes the selected editable rules
+    /// into a `lingyue-sources` JSON and hands it to `.fileExporter`. Same
+    /// frosted-circle treatment as 删除, tinted to the theme accent.
+    @ViewBuilder
+    private var exportFloatingButton: some View {
+        let count = selectedIDs.count
+        Button {
+            beginExportSelection()
+        } label: {
+            Image(systemName: "square.and.arrow.up")
+                .font(.system(size: 22, weight: .semibold))
+                .foregroundStyle(count == 0 ? Color.secondary : theme.accent)
+                .frame(width: 58, height: 58)
+                .background(.regularMaterial, in: Circle())
+                .overlay(Circle().strokeBorder(Color.primary.opacity(0.06), lineWidth: 0.5))
+                .shadow(color: .black.opacity(0.18), radius: 12, y: 5)
+        }
+        .buttonStyle(.plain)
+        .disabled(count == 0)
+        .accessibilityLabel("导出所选书源")
+    }
+
+    /// Encode the selected editable rules into the canonical
+    /// `lingyue-sources` envelope and trigger the file exporter. List order
+    /// is preserved. Seeded rows can't be selected (see `selectionDisabled`),
+    /// so we filter on `.editable` defensively and bail if nothing remains.
+    private func beginExportSelection() {
+        let rules = entries
+            .filter { $0.origin == .editable && selectedIDs.contains($0.id) }
+            .map(\.rule)
+        guard !rules.isEmpty else { return }
+        let payload = SourceImportPayload(
+            kind: SourceImportPayload.kindTag,
+            version: SourceImportPayload.currentVersion,
+            createdAt: Date(),
+            sources: rules
+        )
+        let encoder = JSONEncoder()
+        // Match the import decoder (ISO8601 dates) and the editable store's
+        // on-disk shape (pretty-printed, sorted keys); unescaped slashes keep
+        // URLs readable for anyone who opens the file in a text editor.
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        encoder.dateEncodingStrategy = .iso8601
+        do {
+            let data = try encoder.encode(payload)
+            exportDocument = BackupJSONDocument(data: data)
+            exportFilename = "lingyue-sources.json"
+            isExportingSelection = true
+        } catch {
+            exportError = error.localizedDescription
+        }
     }
 
     @ToolbarContentBuilder
