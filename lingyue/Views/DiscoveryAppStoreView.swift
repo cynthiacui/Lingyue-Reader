@@ -21,6 +21,7 @@ struct DiscoveryAppStoreView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.appTheme) private var theme
     @Environment(\.sourceStack) private var sourceStack
+    @EnvironmentObject private var importCoordinator: SourceImportCoordinator
 
     @State private var sources: [SavedSource] = []
     @State private var hasLoaded = false
@@ -123,6 +124,19 @@ struct DiscoveryAppStoreView: View {
         }
         .navigationDestination(item: $browserDestination) { destination in
             InAppBrowserView(url: destination.url, title: destination.title)
+        }
+        // Auto-push the 书源 page after an external import (deep link / shared
+        // file). ContentView switches to this tab; the coordinator flag drives
+        // the push here. Popping back clears the flag via the binding setter.
+        .navigationDestination(
+            isPresented: Binding(
+                get: { importCoordinator.shouldShowSources },
+                set: { isActive in
+                    if !isActive { importCoordinator.shouldShowSources = false }
+                }
+            )
+        ) {
+            SourcesListView()
         }
     }
 

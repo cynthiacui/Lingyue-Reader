@@ -385,10 +385,19 @@ final class SourceImportCoordinator: ObservableObject {
         let id = UUID()
         let rules: [SourceRule]
         let summary: SourceImportSummary
+        /// When true, a successful apply auto-navigates to the 书源 page so the
+        /// user sees the result. Set for imports started *outside* that page
+        /// (a `lingyue://` deep link or a shared `.json` file); left false for
+        /// the 书源 page's own file / URL pickers — the user is already there.
+        var navigateAfterApply = false
     }
 
     @Published var staged: StagedImport?
     @Published var errorMessage: String?
+    /// Set true after a successful external import. `ContentView` switches to the
+    /// 发现 tab and `DiscoveryAppStoreView` pushes the 书源 page in response;
+    /// the navigation binding resets it to false when that page is popped.
+    @Published var shouldShowSources = false
     /// Drives the root "正在下载书源…" overlay while a remote fetch is in
     /// flight. Only the URL / QR / deep-link channels set this; file and
     /// clipboard imports resolve to bytes synchronously.
@@ -414,11 +423,11 @@ final class SourceImportCoordinator: ObservableObject {
 
     /// Decode raw JSON bytes (file picker, clipboard JSON, fetched body)
     /// and stage the diff for confirmation.
-    func stage(data: Data) async {
+    func stage(data: Data, navigateAfterImport: Bool = false) async {
         do {
             let rules = try service.decode(from: data)
             let summary = try await service.summarize(incoming: rules)
-            staged = StagedImport(rules: rules, summary: summary)
+            staged = StagedImport(rules: rules, summary: summary, navigateAfterApply: navigateAfterImport)
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -426,7 +435,7 @@ final class SourceImportCoordinator: ObservableObject {
 
     /// Fetch an http(s) URL that points at a `lingyue-sources` JSON config,
     /// then stage it. Rejects non-http(s) schemes up front.
-    func stage(remoteURL url: URL) async {
+    func stage(remoteURL url: URL, navigateAfterImport: Bool = false) async {
         guard let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" else {
             errorMessage = "无效的链接，请使用 http(s) 网址。"
             return
@@ -435,7 +444,7 @@ final class SourceImportCoordinator: ObservableObject {
         do {
             let data = try await fetch(url)
             isFetching = false
-            await stage(data: data)
+            await stage(data: data, navigateAfterImport: navigateAfterImport)
         } catch {
             isFetching = false
             errorMessage = "下载书源失败：\(error.localizedDescription)"
@@ -460,7 +469,33 @@ final class SourceImportCoordinator: ObservableObject {
             errorMessage = "链接中缺少书源地址。"
             return
         }
-        Task { await stage(remoteURL: remote) }
+        Task { await stage(remoteURL: remote, navigateAfterImport: true) }
+    }
+
+    /// Entry point for `ContentView`'s `.onOpenURL` when iOS hands us a *file*
+    /// instead of a `lingyue://` link — i.e. the user picked **灵阅书屋** from
+    /// another app's share sheet / "打开方式" for a `.json` book-source config
+    /// (registered via `CFBundleDocumentTypes` → `public.json`).
+    ///
+    /// iOS copies the shared file into our `Documents/Inbox/`, so we read the
+    /// bytes (bracketing security-scoped access, matching the in-app file
+    /// picker), feed them through the same decode → confirm → apply pipeline,
+    /// then delete the Inbox copy so they don't accumulate.
+    func handleIncomingFile(_ url: URL) {
+        guard url.isFileURL else { return }
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        let data: Data
+        do {
+            data = try Data(contentsOf: url)
+        } catch {
+            errorMessage = "无法读取文件：\(error.localizedDescription)"
+            return
+        }
+        // The Inbox copy is ours to clean up. (No-op / harmless if the file was
+        // somehow handed to us in place, outside our container.)
+        try? FileManager.default.removeItem(at: url)
+        Task { await stage(data: data, navigateAfterImport: true) }
     }
 
     // MARK: - Apply
@@ -486,6 +521,11 @@ final class SourceImportCoordinator: ObservableObject {
             for rule in toVerify {
                 verifier.verify(rule: rule)
             }
+            // Imports started outside the 书源 page land the user there so they
+            // can see the freshly imported rules verify to 可用.
+            if target.navigateAfterApply {
+                shouldShowSources = true
+            }
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -509,7 +549,12 @@ final class SourceImportCoordinator: ObservableObject {
         if summary.unchangedRules.count > 0 {
             lines.append("有 \(summary.unchangedRules.count) 个书源与本地一致，无需更新。")
         }
-        lines.append("请确认你有权访问并阅读以上来源的内容。")
+        // The rights reminder only matters when something will actually be
+        // imported / overwritten. If everything already matches local (nothing
+        // to change), drop it — there's nothing to attest to.
+        if summary.newRules.count > 0 || summary.updatedRules.count > 0 {
+            lines.append("请确认你有权访问并阅读以上来源的内容。")
+        }
         return lines.joined(separator: "\n")
     }
 

@@ -33,6 +33,23 @@
 			</array>
 		</dict>
 	</array>
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>书源配置（JSON）</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<!-- Alternate: not the default opener for .json, just an extra
+			     "打开方式 / 拷贝到灵阅书屋" target in the share sheet. -->
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>public.json</string>
+			</array>
+		</dict>
+	</array>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>LSApplicationCategoryType</key>

@@ -89,7 +89,20 @@ struct ContentView: View {
             ThemeTransition.shared.transition(from: oldValue, to: newValue)
         }
         .onOpenURL { url in
-            importCoordinator.handleDeepLink(url)
+            // Two delivery shapes funnel through here: a `lingyue://import?url=…`
+            // deep link, or a `.json` file the user shared into 灵阅书屋 from
+            // another app's share sheet / "打开方式" (see CFBundleDocumentTypes).
+            if url.isFileURL {
+                importCoordinator.handleIncomingFile(url)
+            } else {
+                importCoordinator.handleDeepLink(url)
+            }
+        }
+        // After an external import (deep link / shared file) applies, jump to the
+        // 发现 tab; DiscoveryAppStoreView then pushes the 书源 page so the user
+        // sees the result. The destination binding clears the flag on pop-back.
+        .onChange(of: importCoordinator.shouldShowSources) { _, show in
+            if show { tabSelection.selectedTab = .discovery }
         }
         // Shared import confirm. Driven by `importCoordinator.staged`,
         // which any channel (file picker, URL, deep link) sets after
