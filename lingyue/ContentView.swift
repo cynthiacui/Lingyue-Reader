@@ -81,6 +81,13 @@ struct ContentView: View {
         .environmentObject(importCoordinator)
         .environment(\.appTheme, effectiveTheme)
         .environment(\.sourceStack, .live)
+        // Drive the background cross-fade from one central place so it animates
+        // exactly once (on the visible page) instead of every page replaying it
+        // when navigated to. Every `ThemeBackgroundView` observes the shared
+        // `ThemeTransition` rather than running its own per-instance fade.
+        .onChange(of: effectiveTheme) { oldValue, newValue in
+            ThemeTransition.shared.transition(from: oldValue, to: newValue)
+        }
         .onOpenURL { url in
             importCoordinator.handleDeepLink(url)
         }

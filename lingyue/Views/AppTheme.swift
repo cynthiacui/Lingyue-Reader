@@ -470,45 +470,84 @@ extension EnvironmentValues {
 ///
 /// The view reads the active theme from `\.appTheme`, so consumers don't need to
 /// thread the theme themselves.
-struct ThemeBackgroundView: View {
-    @Environment(\.appTheme) private var theme
+/// Single, app-wide cross-fade timeline for the theme background.
+///
+/// Every chrome screen renders its own `ThemeBackgroundView`, but they all observe
+/// this one shared object. That makes a theme change cross-fade *exactly once* — on
+/// whatever page is visible when the change happens — instead of each page replaying
+/// the fade when you navigate to it. (Previously each `ThemeBackgroundView` owned its
+/// own `@State` crossfade, so inactive tabs set up the fade off-screen and replayed it
+/// the moment they became visible.)
+///
+/// The cross-fade itself is a two-layer opacity dissolve. SwiftUI's `.transition`/`.id`
+/// crossfade was unreliable here: every themed background is rooted in a `GeometryReader`
+/// (image + starry views), and GeometryReader suppresses transitions — so only some swaps
+/// animated. Animating a plain `.opacity` on stacked layers is deterministic for every
+/// theme. `base` is the fully-shown layer; on a change we keep it underneath and fade the
+/// new theme in on top.
+@MainActor
+final class ThemeTransition: ObservableObject {
+    static let shared = ThemeTransition()
 
-    // Two-layer cross-dissolve. SwiftUI's `.transition`/`.id` crossfade was
-    // unreliable here: every themed background is rooted in a `GeometryReader`
-    // (image + starry views), and GeometryReader suppresses transitions — so
-    // only some swaps animated. Animating a plain `.opacity` on stacked layers
-    // is deterministic for every theme. `settled` is the fully-shown layer;
-    // on a change we keep it underneath and fade the new theme in on top.
-    @State private var settled: AppTheme?
-    @State private var incoming: AppTheme?
-    @State private var incomingOpacity: Double = 0
+    /// The fully-shown base layer. `nil` until the first transition, so the very first
+    /// render falls back to the live `\.appTheme` (correct, no flash, no spurious fade).
+    @Published private(set) var base: AppTheme?
+    /// Theme fading in over `base` (nil when no fade is in flight).
+    @Published private(set) var incoming: AppTheme?
+    @Published private(set) var incomingOpacity: Double = 0
 
-    var body: some View {
-        ZStack {
-            background(for: settled ?? theme)
-            if let incoming {
-                background(for: incoming)
-                    .opacity(incomingOpacity)
-            }
-        }
-        .ignoresSafeArea()
-        .onAppear { if settled == nil { settled = theme } }
-        .onChange(of: theme) { oldValue, newValue in
-            guard newValue != (settled ?? oldValue) else { return }
-            // Pin the old theme as the base, fade the new one in over it.
-            settled = oldValue
-            incoming = newValue
-            incomingOpacity = 0
-            withAnimation(.easeInOut(duration: 0.5)) {
-                incomingOpacity = 1
-            } completion: {
-                // Skip if a newer switch superseded this fade mid-flight.
-                guard incoming == newValue else { return }
-                settled = newValue
+    private init() {}
+
+    /// Drive a single cross-fade from `oldValue` to `newValue`. Called once, centrally,
+    /// from `ContentView` whenever the effective theme changes.
+    func transition(from oldValue: AppTheme, to newValue: AppTheme) {
+        let currentBase = base ?? oldValue
+        // Already settled on the new theme. If a fade to a *different* incoming theme is
+        // mid-flight, cancel it — otherwise that fade's completion handler would commit
+        // the now-stale incoming as `base`. This is the follow-system-dark bug:
+        // backgrounding renders an app-switcher snapshot in the opposite appearance
+        // (flipping the theme away and back), so on return-to-foreground the theme lands
+        // back on `base` while a fade to the snapshot's theme is still running — leaving
+        // the background stuck on the wrong appearance.
+        if newValue == currentBase {
+            if incoming != nil {
                 incoming = nil
                 incomingOpacity = 0
             }
+            return
         }
+        // A fade to this exact theme is already running — let it finish.
+        guard newValue != incoming else { return }
+        // Pin the old theme as the base, fade the new one in over it.
+        base = oldValue
+        incoming = newValue
+        incomingOpacity = 0
+        withAnimation(.easeInOut(duration: 0.5)) {
+            incomingOpacity = 1
+        } completion: { [weak self] in
+            guard let self, self.incoming == newValue else { return }
+            self.base = newValue
+            self.incoming = nil
+            self.incomingOpacity = 0
+        }
+    }
+}
+
+struct ThemeBackgroundView: View {
+    @Environment(\.appTheme) private var theme
+    @ObservedObject private var transition = ThemeTransition.shared
+
+    var body: some View {
+        ZStack {
+            // Fall back to the live theme until the first transition pins `base`, so the
+            // initial render is correct with no flash and no spurious fade.
+            background(for: transition.base ?? theme)
+            if let incoming = transition.incoming {
+                background(for: incoming)
+                    .opacity(transition.incomingOpacity)
+            }
+        }
+        .ignoresSafeArea()
     }
 
     @ViewBuilder
