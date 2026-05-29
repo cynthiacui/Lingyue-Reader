@@ -22,7 +22,14 @@ struct DiscoverySearchBar: View {
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled(true)
                 .submitLabel(.search)
-                .onSubmit(onSubmit)
+                .lineLimit(1)
+                // Pin the field to the available width. Without this, pasting a
+                // very long single-line string makes the TextField report a huge
+                // intrinsic content width, which blows the HStack out past the
+                // screen edge and pushes the icon / clear / 搜索 button off-screen.
+                // Capping at maxWidth: .infinity forces the text to scroll inside
+                // the field instead of dictating the bar's width.
+                .frame(maxWidth: .infinity)
 
             if !text.isEmpty {
                 Button {
