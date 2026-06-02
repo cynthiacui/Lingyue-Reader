@@ -28,6 +28,68 @@ public struct RuleBasedBookSource: BookSource {
         guard let step = rule.search else {
             throw BookSourceError.searchUnsupported
         }
+
+        // Rewrite `书名_作者【完结】`-style queries into space-separated tokens
+        // when the rule opts in. See `SearchStep.normalizeQuerySeparators`.
+        let normalized = step.normalizeQuerySeparators == true
+            ? Self.normalizeQuerySeparators(query)
+            : query
+        // Guard against a query that normalized to nothing (e.g. it was all
+        // bracket annotations) — fall back to the user's original text.
+        let baseQuery = normalized.isEmpty ? query : normalized
+
+        // Build the ordered set of queries to run: the user's query first,
+        // then the top title-autocomplete suggestions. The suggestions are
+        // what let a bare-title search ("霸宠") surface a munged-title book
+        // ("霸宠_笑佳人【完结】") whose own full-text search buries it; see
+        // `SearchStep.suggest`.
+        var queries: [String] = [baseQuery]
+        if let suggest = step.suggest {
+            let suggestions = (try? await fetchSuggestions(suggest, query: baseQuery)) ?? []
+            let cap = max(0, suggest.maxSuggestions ?? 5)
+            for suggestion in suggestions.prefix(cap)
+            where !queries.contains(where: { $0.caseInsensitiveCompare(suggestion) == .orderedSame }) {
+                queries.append(suggestion)
+            }
+        }
+
+        // Single query → keep the original one-request behaviour.
+        if queries.count == 1 {
+            return try await runSingleSearch(step: step, query: queries[0])
+        }
+
+        // Fan out concurrently, then flatten in query order so the user's own
+        // query and the most-relevant suggestions stay first. A per-query
+        // failure drops to an empty list rather than failing the whole search.
+        let indexed = await withTaskGroup(of: (Int, [BookSearchResult]).self) { group in
+            for (index, candidate) in queries.enumerated() {
+                group.addTask {
+                    let hits = (try? await self.runSingleSearch(step: step, query: candidate)) ?? []
+                    return (index, hits)
+                }
+            }
+            var collected: [(Int, [BookSearchResult])] = []
+            for await pair in group { collected.append(pair) }
+            return collected.sorted { $0.0 < $1.0 }
+        }
+
+        var seen = Set<URL>()
+        var merged: [BookSearchResult] = []
+        for (_, hits) in indexed {
+            for hit in hits where seen.insert(hit.detailURL).inserted {
+                merged.append(hit)
+            }
+        }
+        return merged
+    }
+
+    /// Run one search request + parse its result rows into `BookSearchResult`s.
+    /// Factored out of `search` so the suggest-driven path can fan a single
+    /// rule across several queries and merge the hits.
+    private func runSingleSearch(
+        step: SearchStep,
+        query: String
+    ) async throws -> [BookSearchResult] {
         let snapshot = try await runSearchRequest(step: step, query: query)
         let document = try SelectorEngine.parse(snapshot.html, baseURL: snapshot.finalURL)
         let rows = try SelectorEngine.selectAll(step.resultsSelector, in: document)
@@ -121,6 +183,75 @@ public struct RuleBasedBookSource: BookSource {
             referer: rule.homepage
         )
         return try await load(request, step: .search)
+    }
+
+    /// Fetch + decode a title-autocomplete endpoint into raw suggestion
+    /// strings (trimmed, de-duplicated, empties dropped). The endpoint is
+    /// expected to return a JSON array of strings; a challenge page, an HTML
+    /// body, or `[]` all decode to "no suggestions" rather than throwing, so
+    /// the caller transparently falls back to the plain query search.
+    private func fetchSuggestions(
+        _ suggest: SuggestStep,
+        query: String
+    ) async throws -> [String] {
+        let expandedURL = try URLTemplate.expand(
+            suggest.urlTemplate, query: query, encoding: .utf8
+        )
+        guard let url = URL(string: expandedURL) else { return [] }
+        let request = SourceRequest(
+            url: url,
+            method: .get,
+            headers: rule.defaultHeaders,
+            body: nil,
+            encoding: rule.encoding,
+            referer: rule.homepage
+        )
+        let snapshot = try await load(request, step: .search)
+        guard
+            let data = snapshot.html.data(using: .utf8),
+            let decoded = try? JSONDecoder().decode([String].self, from: data)
+        else {
+            return []
+        }
+        var seen = Set<String>()
+        var out: [String] = []
+        for raw in decoded {
+            let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty, seen.insert(trimmed).inserted else { continue }
+            out.append(trimmed)
+        }
+        return out
+    }
+
+    /// Rewrite a munged `书名_作者【完结】` query into space-separated tokens:
+    /// `_ ＿ | ｜ · ・` separators become spaces, and `【…】（…）[…]` annotation
+    /// blocks are dropped. Pure + static so it's trivially unit-testable.
+    /// Why this shape: the sites this targets store the book's title fused
+    /// with its author plus a status tag, and their search backend tokenizes
+    /// on spaces with AND semantics — a literal `霸宠_笑佳人` matches nothing,
+    /// but the rewritten `霸宠 笑佳人` matches exactly that book.
+    static func normalizeQuerySeparators(_ query: String) -> String {
+        var value = query
+        // Drop bracketed annotation blocks (status tags, genre chips):
+        // 【完结】, （番外）, [快穿]. Non-greedy, any of the three bracket pairs.
+        value = value.replacingOccurrences(
+            of: #"[【（(\[][^】）)\]]*[】）)\]]"#,
+            with: " ",
+            options: .regularExpression
+        )
+        // Token separators → space.
+        value = value.replacingOccurrences(
+            of: #"[_＿|｜·・]+"#,
+            with: " ",
+            options: .regularExpression
+        )
+        // Collapse runs of whitespace.
+        value = value.replacingOccurrences(
+            of: #"\s+"#,
+            with: " ",
+            options: .regularExpression
+        )
+        return value.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     // MARK: - Detection

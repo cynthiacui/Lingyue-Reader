@@ -220,6 +220,27 @@ public struct SearchStep: Codable, Sendable, Hashable {
     public var coverField: FieldSelector?
     public var snippetField: FieldSelector?
 
+    /// When `true`, the engine rewrites the user's query before it is sent:
+    /// `_ | ｜ · ・` separators become spaces and `【…】（…）[…]` annotation
+    /// blocks are dropped. Why: some sites store a book's title munged with
+    /// its author and a status tag — `霸宠_笑佳人【完结】` — and their search
+    /// backend tokenizes on spaces with AND semantics. A literal `霸宠_笑佳人`
+    /// matches nothing, but `霸宠 笑佳人` matches. This makes pasting a
+    /// displayed result title (or a `书名_作者` string) actually find the
+    /// book. `nil` ⇒ no rewrite (the default; required for path-based query
+    /// templates like `/list/{query}.html` where a space would break the URL).
+    public var normalizeQuerySeparators: Bool?
+
+    /// Optional title-autocomplete endpoint. When present, the engine first
+    /// queries it, then runs the normal search for the user's query *plus*
+    /// the top suggestions, merging the hits. Why: a class of sites
+    /// (52书库 et al.) expose `/so/search.php` as a *full-text* search that
+    /// dilutes short title queries into unrelated filler — searching the real
+    /// title `霸宠` never surfaces `霸宠_笑佳人`. Their autocomplete endpoint,
+    /// by contrast, prefix-matches titles (`term=霸宠` → `["霸宠暗卫","霸宠 笑佳人",…]`),
+    /// and each suggestion fed back into the search returns the exact book.
+    public var suggest: SuggestStep?
+
     public init(
         method: Method = .get,
         urlTemplate: String,
@@ -230,7 +251,9 @@ public struct SearchStep: Codable, Sendable, Hashable {
         detailURLField: FieldSelector,
         authorField: FieldSelector? = nil,
         coverField: FieldSelector? = nil,
-        snippetField: FieldSelector? = nil
+        snippetField: FieldSelector? = nil,
+        normalizeQuerySeparators: Bool? = nil,
+        suggest: SuggestStep? = nil
     ) {
         self.method = method
         self.urlTemplate = urlTemplate
@@ -242,6 +265,30 @@ public struct SearchStep: Codable, Sendable, Hashable {
         self.authorField = authorField
         self.coverField = coverField
         self.snippetField = snippetField
+        self.normalizeQuerySeparators = normalizeQuerySeparators
+        self.suggest = suggest
+    }
+}
+
+// MARK: - Suggest
+
+/// Title-autocomplete endpoint paired with a `SearchStep`. The endpoint is
+/// expected to return a JSON array of strings — the shape every mainstream
+/// Chinese novel site's search-box autocomplete uses, e.g.
+/// `["霸宠暗卫","霸宠 笑佳人","霸宠天下"]`.
+public struct SuggestStep: Codable, Sendable, Hashable {
+    /// URL template for the autocomplete endpoint. `{query}` is replaced
+    /// with the URL-encoded query. Example:
+    /// `https://www.52shuku.net/so/suggest.php?term={query}`.
+    public var urlTemplate: String
+
+    /// How many of the returned suggestions to expand into real searches.
+    /// `nil` ⇒ a conservative default (5). Capped to bound request fan-out.
+    public var maxSuggestions: Int?
+
+    public init(urlTemplate: String, maxSuggestions: Int? = nil) {
+        self.urlTemplate = urlTemplate
+        self.maxSuggestions = maxSuggestions
     }
 }
 

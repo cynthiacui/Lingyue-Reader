@@ -11,17 +11,15 @@ Shared core for the source / rule / parsing engine. Owns:
 
 ## Dependency rule
 
-This package is the **only** rule-engine module the App Store target depends on.
+This package is the **only** rule-engine module the app target depends on.
 
-- `LingyueAppStore` (App Store app target) **depends on LingyueCore only**.
-- `LingyueInternal` (internal/TestFlight app target) depends on
-  `LingyueCore` **and** `LingyueInternalSources`.
+- `LingyueAppStore` (the app target) **depends on LingyueCore only**.
 
 Anything that names a specific external source — host strings, seeded
-catalog rules, fast-path adapters — lives in `LingyueInternalSources`,
-not here. This is a structural guarantee: code outside `LingyueCore`
-cannot accidentally leak into the App Store binary because the App Store
-target has no edge to that module.
+catalog rules — is data, not code: it lives in the out-of-band
+`docs/lingyue-sources.json` bundle the user imports at runtime, never in
+the binary. `LingyueCore`'s engine is fully generic, so the App Store
+build ships no site-specific URLs.
 
 ## Platform purity
 

@@ -77,11 +77,11 @@ struct SourceImportService {
     /// "wrong file type" before we surface garbled rule errors.
     func decode(from data: Data) throws -> [SourceRule] {
         let decoder = JSONDecoder()
-        // The envelope's `createdAt` is written as an ISO8601 string by
-        // `Scripts/build-sources-json.sh` and any hand-authored file is
-        // expected to follow suit. Without this strategy the envelope
-        // path silently falls through to the bare-array fallback for
-        // every well-formed envelope that includes a timestamp.
+        // The envelope's `createdAt` is written as an ISO8601 string by the
+        // out-of-band source bundle (and any hand-authored file is expected
+        // to follow suit). Without this strategy the envelope path silently
+        // falls through to the bare-array fallback for every well-formed
+        // envelope that includes a timestamp.
         decoder.dateDecodingStrategy = .iso8601
 
         if let payload = try? decoder.decode(SourceImportPayload.self, from: data) {

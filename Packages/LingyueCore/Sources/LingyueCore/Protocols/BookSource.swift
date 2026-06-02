@@ -1,22 +1,21 @@
 import Foundation
 
 /// A usable source at runtime — searchable, browsable, and able to resolve
-/// detail/catalog/chapter pages. Constructed from a `SourceRule` (the
-/// rule-driven `RuleBasedBookSource`) or from a hand-written internal
-/// adapter (`LingyueInternalSources`). Consumers — Discovery search bar,
-/// reader, import flow — only see this protocol; they never reach
-/// `SourceRule` directly. That keeps editing concerns (`EditableSourceStore`)
-/// orthogonal to runtime concerns.
+/// detail/catalog/chapter pages. Constructed from a `SourceRule`, via either
+/// the HTML rule engine (`RuleBasedBookSource`) or the JSON-API engine
+/// (`JSONAPIBookSource`). Consumers — Discovery search bar, reader, import
+/// flow — only see this protocol; they never reach `SourceRule` directly.
+/// That keeps editing concerns (`EditableSourceStore`) orthogonal to runtime
+/// concerns.
 public protocol BookSource: Sendable {
-    /// Stable, namespaced identifier. User rules use `rule:<uuid>`,
-    /// internal adapters use `internal:<slug>`. Stable across launches so
-    /// it can key caches, group search results, and survive diagnostics
-    /// without exposing UUIDs to the user.
+    /// Stable, namespaced identifier (e.g. `rule:<uuid>` for a
+    /// `SourceRule`-backed source). Stable across launches so it can key
+    /// caches, group search results, and survive diagnostics without
+    /// exposing UUIDs to the user.
     var id: String { get }
 
     /// Display name shown in source pickers, search-result groupings, and
-    /// diagnostics. User-editable for rule-based sources; fixed for
-    /// internal adapters.
+    /// diagnostics. User-editable for rule-based sources.
     var displayName: String { get }
 
     /// Declares what this source can do — programmatic search vs. browse-only,
