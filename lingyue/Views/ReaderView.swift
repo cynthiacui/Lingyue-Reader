@@ -718,7 +718,17 @@ struct ReaderView: View {
     /// about the current chapter's pages (its dataSource returns nil at either end); this
     /// catches boundary swipes and routes them to `goToChapter` so the user can swipe through
     /// to the previous/next chapter (instant transition — V1 doesn't animate across chapters).
-    private func boundarySwipeGesture(pages: [ReaderPageItem]) -> some Gesture {
+    /// `suppressForward` / `suppressBackward` are set on the continuous path when a bookend
+    /// exists for that direction: the swipe is then handled natively by UIPageViewController
+    /// (curling into the bookend) + `onCommit`, so this parallel gesture must NOT also fire a
+    /// `goToChapter` or the chapter would advance twice. For the omitted-bookend sides (first/
+    /// last chapter, or neighbor not yet cached) and the entire legacy path, suppression is off
+    /// and this stays the canonical boundary handler.
+    private func boundarySwipeGesture(
+        pages: [ReaderPageItem],
+        suppressForward: Bool = false,
+        suppressBackward: Bool = false
+    ) -> some Gesture {
         DragGesture(minimumDistance: 20)
             .onChanged { _ in
                 if boundarySwipeStartPageIndex == nil {
@@ -732,7 +742,9 @@ struct ReaderView: View {
                     startPageIndex: startIndex,
                     pageCount: pages.count,
                     translation: value.translation,
-                    predictedEnd: value.predictedEndTranslation
+                    predictedEnd: value.predictedEndTranslation,
+                    suppressForward: suppressForward,
+                    suppressBackward: suppressBackward
                 )
             }
     }
@@ -741,7 +753,9 @@ struct ReaderView: View {
         startPageIndex: Int,
         pageCount: Int,
         translation: CGSize,
-        predictedEnd: CGSize
+        predictedEnd: CGSize,
+        suppressForward: Bool = false,
+        suppressBackward: Bool = false
     ) {
         guard abs(predictedEnd.width) > abs(predictedEnd.height) else { return }
 
@@ -765,10 +779,10 @@ struct ReaderView: View {
         }
         let overlayVisible = showControls || showChapterPicker || showPreferences || showBrightness
 
-        if effective < 0, atLastPage, currentChapterIndex < baseChapters.count - 1 {
+        if effective < 0, atLastPage, !suppressForward, currentChapterIndex < baseChapters.count - 1 {
             if overlayVisible { hideControls() }
             goToChapter(currentChapterIndex + 1, pageIndex: 0)
-        } else if effective > 0, atFirstPage, currentChapterIndex > 0 {
+        } else if effective > 0, atFirstPage, !suppressBackward, currentChapterIndex > 0 {
             if overlayVisible { hideControls() }
             goToChapter(currentChapterIndex - 1, pageIndex: 0, landOnLastPage: true)
         } else if overlayVisible {
@@ -858,6 +872,15 @@ struct ReaderView: View {
             && containerSize.width > 0
     }
 
+    /// Whether the continuous cross-chapter turn (bookend / identity-pager) path is active
+    /// for the current render. Always on for single-column slide/pageCurl; `.instant` (no
+    /// animation to make continuous) and two-column (spread bookends not implemented) fall
+    /// back to the legacy per-chapter pager.
+    private func usesContinuousChapterTurn(containerSize: CGSize) -> Bool {
+        pageTransitionStyle != .instant
+            && !useTwoColumn(containerSize: containerSize)
+    }
+
     /// Follow-finger horizontal slide via UIPageViewController(.scroll). Used to be a
     /// SwiftUI TabView(.page), but TabView wrote its post-bounce selection to the binding
     /// asynchronously — racing with `boundarySwipeGesture.onEnded` and stranding the user
@@ -897,6 +920,25 @@ struct ReaderView: View {
         )
     }
 
+    /// Resolve a chapter's already-paginated pages from `paginationCache`, or nil if the
+    /// chapter isn't loaded + pre-paginated for the current layout. Used to build the
+    /// cross-chapter bookend pages (neighbor first/last page) and to keep the current
+    /// chapter's content stable during the one-frame window where `currentChapterIndex`
+    /// has advanced after a commit but `visiblePages` hasn't caught up yet.
+    private func cachedPageItems(forChapterIndex index: Int, textSize: CGSize) -> [ReaderPageItem]? {
+        guard baseChapters.indices.contains(index) else { return nil }
+        let baseChapter = baseChapters[index]
+        let chapter = loadedChapterOverrides[chapterCacheKey(baseChapter)] ?? baseChapter
+        let signature = paginationSignature(
+            chapterIndex: index,
+            chapter: chapter,
+            contentLength: chapter.content.count,
+            textSize: textSize
+        )
+        guard let cached = paginationCache[signature], !cached.isEmpty else { return nil }
+        return pageItems(from: cached, chapterIndex: index, chapterTitle: displayed(chapter.title))
+    }
+
     private func kitPagerContent(
         transitionStyle: UIPageViewController.TransitionStyle,
         pages: [ReaderPageItem],
@@ -905,37 +947,126 @@ struct ReaderView: View {
         containerSize: CGSize
     ) -> some View {
         let usingTwoColumn = useTwoColumn(containerSize: containerSize)
-        let pagerCount = usingTwoColumn ? (pages.count + 1) / 2 : pages.count
-        let pagerBinding: Binding<Int> = usingTwoColumn
-            ? Binding(
+        let continuous = usesContinuousChapterTurn(containerSize: containerSize)
+
+        // Ordered slot identities + a lookup so the pager can render lazily by stable id.
+        // Continuous (single-column, opt-in): the current chapter's body pages are bracketed
+        // by cross-chapter bookends — the previous chapter's last page and the next chapter's
+        // first page — so a swipe curls straight into the neighbor. The pager is identity-
+        // driven, so when a bookend landing commits the chapter change the same host re-bases
+        // seamlessly. Legacy single column: one slot per page. Two column: one slot per spread.
+        var slotIdentities: [String] = []
+        var itemsByID: [String: ReaderPageItem] = [:]
+        var spreadsByID: [String: (left: ReaderPageItem, right: ReaderPageItem?)] = [:]
+        var leadingBookendCount = 0
+        var hasTrailingBookend = false
+        var bodyCount = 0
+
+        if continuous {
+            // Prefer the cache for the current chapter so the content shown the frame after a
+            // commit (currentChapterIndex advanced, visiblePages not yet rebuilt) matches the
+            // bookend the user just curled onto — no flash.
+            let body = cachedPageItems(forChapterIndex: currentChapterIndex, textSize: textSize) ?? pages
+            bodyCount = body.count
+
+            if currentChapterIndex > 0,
+               let prevPages = cachedPageItems(forChapterIndex: currentChapterIndex - 1, textSize: textSize),
+               let prevLast = prevPages.last {
+                slotIdentities.append(prevLast.id)
+                itemsByID[prevLast.id] = prevLast
+                leadingBookendCount = 1
+            }
+            for page in body {
+                slotIdentities.append(page.id)
+                itemsByID[page.id] = page
+            }
+            if currentChapterIndex < baseChapters.count - 1,
+               let nextPages = cachedPageItems(forChapterIndex: currentChapterIndex + 1, textSize: textSize),
+               let nextFirst = nextPages.first {
+                slotIdentities.append(nextFirst.id)
+                itemsByID[nextFirst.id] = nextFirst
+                hasTrailingBookend = true
+            }
+        } else if usingTwoColumn {
+            for leftIdx in stride(from: 0, to: max(pages.count, 1), by: 2) {
+                guard let leftPage = pages.indices.contains(leftIdx) ? pages[leftIdx] : pages.last else { continue }
+                let rightPage = pages.indices.contains(leftIdx + 1) ? pages[leftIdx + 1] : nil
+                slotIdentities.append(leftPage.id)
+                spreadsByID[leftPage.id] = (leftPage, rightPage)
+            }
+        } else {
+            for page in pages {
+                slotIdentities.append(page.id)
+                itemsByID[page.id] = page
+            }
+        }
+
+        let pagerBinding: Binding<Int>
+        if continuous {
+            // pager-index space ↔ chapter-page space: body pages sit after the optional
+            // leading bookend. Bookend indices are ignored on write — those commit via
+            // `onCommit`, never by mutating the page index out of range.
+            let leadingCount = leadingBookendCount
+            let bodyN = bodyCount
+            pagerBinding = Binding(
+                get: { currentChapterPageIndex + leadingCount },
+                set: { newPagerIndex in
+                    let bodyIdx = newPagerIndex - leadingCount
+                    if bodyIdx >= 0 && bodyIdx < bodyN {
+                        currentChapterPageIndex = bodyIdx
+                    }
+                }
+            )
+        } else if usingTwoColumn {
+            pagerBinding = Binding(
                 get: { currentChapterPageIndex / 2 },
                 set: { newSpread in currentChapterPageIndex = newSpread * 2 }
             )
-            : $currentChapterPageIndex
+        } else {
+            pagerBinding = $currentChapterPageIndex
+        }
+
+        // Commit a bookend landing by re-basing onto the neighbor chapter. `item.pageIndex`
+        // is exact (the bookend was built from the same cache entry that becomes the body
+        // after re-base), so the shown identity stays put and no spurious transition fires.
+        // A repeat/late callback after the commit sees delta 0 → no-op (idempotent).
+        let onCommit: (String) -> Void = { identity in
+            guard continuous, let item = itemsByID[identity] else { return }
+            let delta = item.chapterIndex - currentChapterIndex
+            guard delta == 1 || delta == -1 else { return }
+            ReaderDiagnostics.shared.log(.chapterJump, "bookend commit", context: [
+                "landedID": identity,
+                "from": String(currentChapterIndex),
+                "to": String(item.chapterIndex),
+                "dir": delta == 1 ? "fwd" : "rev"
+            ])
+            goToChapter(item.chapterIndex, pageIndex: item.pageIndex)
+        }
+
+        let idValue = continuous
+            ? "continuous-\(rotationLayoutVersion)"
+            : "\(currentChapterIndex)-\(rotationLayoutVersion)-\(usingTwoColumn ? "2" : "1")"
 
         return PageCurlPager(
             transitionStyle: transitionStyle,
-            pageCount: pagerCount,
+            slotIdentities: slotIdentities,
             currentIndex: pagerBinding,
             backgroundColor: UIColor(pageBackground),
-            renderPage: { [pages] index in
+            renderPage: { identity in
                 if usingTwoColumn {
-                    let leftIdx = index * 2
-                    let rightIdx = leftIdx + 1
-                    guard let leftPage = pages.indices.contains(leftIdx) ? pages[leftIdx] : pages.last else {
+                    guard let spread = spreadsByID[identity] else {
                         return AnyView(self.pageBackground.ignoresSafeArea())
                     }
-                    let rightPage = pages.indices.contains(rightIdx) ? pages[rightIdx] : nil
                     return AnyView(
-                        spreadView(leftPage: leftPage,
-                                   rightPage: rightPage,
+                        spreadView(leftPage: spread.left,
+                                   rightPage: spread.right,
                                    safeAreaInsets: safeAreaInsets,
                                    textSize: textSize)
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                             .background(self.pageBackground)
                     )
                 }
-                guard let page = pages.indices.contains(index) ? pages[index] : pages.last else {
+                guard let page = itemsByID[identity] else {
                     return AnyView(self.pageBackground.ignoresSafeArea())
                 }
                 return AnyView(
@@ -943,17 +1074,24 @@ struct ReaderView: View {
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .background(self.pageBackground)
                 )
-            }
+            },
+            onCommit: onCommit
         )
         .ignoresSafeArea()
-        .id("\(currentChapterIndex)-\(rotationLayoutVersion)-\(usingTwoColumn ? "2" : "1")")
+        .id(idValue)
         .simultaneousGesture(
             SpatialTapGesture(coordinateSpace: .local)
                 .onEnded { event in
                     handleReaderTap(at: event.location, in: containerSize, pages: pages)
                 }
         )
-        .simultaneousGesture(boundarySwipeGesture(pages: pages))
+        .simultaneousGesture(
+            boundarySwipeGesture(
+                pages: pages,
+                suppressForward: hasTrailingBookend,
+                suppressBackward: leadingBookendCount > 0
+            )
+        )
     }
 
     private func readerHeader(safeTop: CGFloat, safeLeading: CGFloat, safeTrailing: CGFloat) -> some View {
@@ -1960,10 +2098,24 @@ struct ReaderView: View {
             ])
             return
         }
+        // When landing on the last page and the target chapter is ALREADY paginated
+        // (the common case at a boundary — it's the leading bookend, so it's cached),
+        // resolve its true last page index now and set it directly. Otherwise we'd set
+        // page 0 here and let `clampCurrentPage` snap to the last page only after async
+        // pagination — which, in the continuous pager, produces a spurious intermediate
+        // transition (chapter shows page 0, then jumps to the last page) that races with
+        // the next tap/swipe and can leave the user unable to turn. `shouldJumpToLast…`
+        // stays set as the fallback for the uncached / re-paginate path.
+        var resolvedPageIndex = max(pageIndex, 0)
+        if landOnLastPage,
+           let cached = cachedPageItems(forChapterIndex: chapterIndex, textSize: lastKnownTextSize),
+           let lastIdx = cached.indices.last {
+            resolvedPageIndex = lastIdx
+        }
         ReaderDiagnostics.shared.log(.chapterJump, "goToChapter", context: [
             "from": String(currentChapterIndex),
             "to": String(chapterIndex),
-            "page": String(pageIndex),
+            "page": String(resolvedPageIndex),
             "landLast": landOnLastPage ? "1" : "0"
         ])
         // Suppress pager animation: changing currentChapterPageIndex (e.g., 5 → 0) while
@@ -1976,7 +2128,7 @@ struct ReaderView: View {
         transaction.disablesAnimations = true
         withTransaction(transaction) {
             currentChapterIndex = chapterIndex
-            currentChapterPageIndex = max(pageIndex, 0)
+            currentChapterPageIndex = resolvedPageIndex
             shouldJumpToLastPageAfterPagination = landOnLastPage
         }
         // Stale boundary-swipe state from an interrupted drag in the previous chapter must
@@ -2373,51 +2525,74 @@ struct ReaderView: View {
     private func prefetchUpcomingChapters(after index: Int) {
         guard cacheEnabled else { return }
 
-        let upcomingChapters = Array(baseChapters.dropFirst(index + 1).prefix(2)).enumerated()
-        for (offset, chapter) in upcomingChapters {
-            let chapterIndex = index + 1 + offset
-            guard chapter.sourceURLString != nil,
-                  chapter.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                continue
-            }
+        // Next 2 chapters (forward reading) plus the previous chapter. The previous one is
+        // what makes the continuous *backward* turn's leading bookend land — without it the
+        // prior chapter is rarely paginated in `paginationCache` after a jump or relaunch.
+        for offset in [1, 2, -1] {
+            prefetchChapterContent(at: index + offset)
+        }
+    }
 
-            let key = chapterCacheKey(chapter)
-            guard loadedChapterOverrides[key] == nil,
-                  !loadingChapterKeys.contains(key),
-                  !prefetchingChapterKeys.contains(key) else {
-                continue
-            }
+    /// Ensure a neighbor chapter is pre-paginated into `paginationCache` so the continuous
+    /// cross-chapter turn can build its bookend from it. Two cases:
+    ///   - Local / already-loaded chapters (content inline): pagination is pure layout and
+    ///     needs no network, so pre-paginate directly. This is what makes the continuous turn
+    ///     work for imported (TXT / EPUB) books, whose neighbors are never network-loaded.
+    ///   - Remote + not-yet-loaded chapters: fetch the content first, then pre-paginate.
+    /// `prePaginate` itself is a no-op when the signature is already cached, so repeated calls
+    /// are cheap.
+    @MainActor
+    private func prefetchChapterContent(at chapterIndex: Int) {
+        guard cacheEnabled, baseChapters.indices.contains(chapterIndex) else { return }
 
-            prefetchingChapterKeys.insert(key)
-            ReaderDiagnostics.shared.log(.taskStart, "chapter prefetch", context: [
-                "ch": String(chapterIndex),
-                "key": String(key.prefix(16))
-            ])
-            Task {
-                let start = Date()
-                do {
-                    let loadedChapter = try await ChapterContentCache.shared.chapter(for: chapter)
-                    let merged = mergedOverride(loaded: loadedChapter, matching: chapter)
-                    await MainActor.run {
-                        loadedChapterOverrides[key] = merged
-                        downloadedChapterKeys.insert(key)
-                        _ = prefetchingChapterKeys.remove(key)
-                    }
-                    await prePaginate(chapter: merged, originalChapter: chapter, chapterIndex: chapterIndex)
-                    ReaderDiagnostics.shared.log(.taskEnd, "chapter prefetch", context: [
-                        "ch": String(chapterIndex),
-                        "durMs": String(Int(Date().timeIntervalSince(start) * 1000))
-                    ])
-                } catch {
-                    await MainActor.run {
-                        _ = prefetchingChapterKeys.remove(key)
-                    }
-                    ReaderDiagnostics.shared.log(.taskEnd, "chapter prefetch failed", context: [
-                        "ch": String(chapterIndex),
-                        "durMs": String(Int(Date().timeIntervalSince(start) * 1000)),
-                        "err": String(describing: error).prefix(80).description
-                    ])
+        let chapter = baseChapters[chapterIndex]
+        let key = chapterCacheKey(chapter)
+        let resolved = loadedChapterOverrides[key] ?? chapter
+        let hasInlineContent = !resolved.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+
+        // Local or already-loaded: pre-paginate without any network fetch.
+        if hasInlineContent {
+            Task { await prePaginate(chapter: resolved, originalChapter: chapter, chapterIndex: chapterIndex) }
+            return
+        }
+
+        // Remote + not loaded: fetch, then pre-paginate.
+        guard chapter.sourceURLString != nil,
+              loadedChapterOverrides[key] == nil,
+              !loadingChapterKeys.contains(key),
+              !prefetchingChapterKeys.contains(key) else {
+            return
+        }
+
+        prefetchingChapterKeys.insert(key)
+        ReaderDiagnostics.shared.log(.taskStart, "chapter prefetch", context: [
+            "ch": String(chapterIndex),
+            "key": String(key.prefix(16))
+        ])
+        Task {
+            let start = Date()
+            do {
+                let loadedChapter = try await ChapterContentCache.shared.chapter(for: chapter)
+                let merged = mergedOverride(loaded: loadedChapter, matching: chapter)
+                await MainActor.run {
+                    loadedChapterOverrides[key] = merged
+                    downloadedChapterKeys.insert(key)
+                    _ = prefetchingChapterKeys.remove(key)
                 }
+                await prePaginate(chapter: merged, originalChapter: chapter, chapterIndex: chapterIndex)
+                ReaderDiagnostics.shared.log(.taskEnd, "chapter prefetch", context: [
+                    "ch": String(chapterIndex),
+                    "durMs": String(Int(Date().timeIntervalSince(start) * 1000))
+                ])
+            } catch {
+                await MainActor.run {
+                    _ = prefetchingChapterKeys.remove(key)
+                }
+                ReaderDiagnostics.shared.log(.taskEnd, "chapter prefetch failed", context: [
+                    "ch": String(chapterIndex),
+                    "durMs": String(Int(Date().timeIntervalSince(start) * 1000)),
+                    "err": String(describing: error).prefix(80).description
+                ])
             }
         }
     }
