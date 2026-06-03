@@ -50,6 +50,13 @@
 			</array>
 		</dict>
 	</array>
+	<!-- We import a copy of the shared .json (the system drops it in
+	     Documents/Inbox) and delete that copy after applying — we never
+	     edit the original in place. NO is the accurate declaration and
+	     preserves the existing handleIncomingFile flow; it also silences
+	     the App Store Connect "Missing Document Configuration" warning. -->
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<false/>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>LSApplicationCategoryType</key>
