@@ -10,6 +10,9 @@ struct MeView: View {
     @AppStorage("reader.fontFamily") private var fontFamilyRaw = ReaderFontFamily.system.rawValue
 
     @State private var cacheSizeText = "—"
+    // Toggled on each hero-card tap so `.sensoryFeedback` fires only for this
+    // tap, not for every `selectedTab` change observed while 我 is alive.
+    @State private var heroTapTrigger = false
 
     private var selectedFontFamily: ReaderFontFamily {
         ReaderFontFamily(rawValue: fontFamilyRaw) ?? .system
@@ -54,6 +57,7 @@ struct MeView: View {
     /// hits in iOS 26, so we don't use one here.
     private func heroBanner(metrics: HeroMetrics) -> some View {
         Button {
+            heroTapTrigger.toggle()
             tabSelection.selectedTab = .stats
         } label: {
             ReadingIdentityCard(
@@ -63,7 +67,12 @@ struct MeView: View {
             )
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        // Press-down spring (reused from the modal cards) so the card visibly
+        // responds to the tap before the tab bar jumps to 统计. A standard
+        // TabView can't cross-fade its content swap, so this press feedback +
+        // the selection haptic is what makes the jump feel intentional.
+        .buttonStyle(ModalPressableButtonStyle())
+        .sensoryFeedback(.selection, trigger: heroTapTrigger)
     }
 
     private func metricsRow(metrics: HeroMetrics) -> some View {

@@ -2211,41 +2211,35 @@ private struct EmptyCategoryCard: View {
     }
 }
 
+/// Placeholder shown inside a category that has no books yet. The section header
+/// already reports "0 本", so this row's job is purely to tell the user *how* to
+/// fill it — and the accurate answer is "move a book in", not "import from 发现"
+/// (imports land in 无分类, never directly into a user category). Kept slim and on
+/// the same solid-fill card language as real book rows, so an empty category reads
+/// as a quiet placeholder rather than a heavy dashed call-out that bloats the shelf.
 private struct EmptyCategoryRow: View {
     @Environment(\.appTheme) private var theme
 
     var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: "book.closed")
-                .font(.system(size: 17, weight: .light))
-                .foregroundStyle(theme.accent.opacity(0.85))
-                .frame(width: 36, height: 36)
-                .background(Circle().fill(theme.accent.opacity(0.10)))
+        HStack(spacing: 8) {
+            Image(systemName: "tray")
+                .font(.system(size: 14, weight: .regular))
+                .foregroundStyle(theme.secondaryText.opacity(0.65))
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text("暂无书籍")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(theme.primaryText.opacity(0.85))
-                Text("前往「发现」搜索并导入")
-                    .font(.system(size: 12))
-                    .foregroundStyle(theme.secondaryText)
-            }
+            Text("暂无书籍 · 长按任意书籍可移入此分类")
+                .font(.system(size: 13))
+                .foregroundStyle(theme.secondaryText)
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
 
-            Spacer()
+            Spacer(minLength: 0)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 14)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(theme.cardBackground.opacity(0.45))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .strokeBorder(
-                    theme.accent.opacity(0.28),
-                    style: StrokeStyle(lineWidth: 1, dash: [5, 4])
-                )
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(theme.cardBackground.opacity(0.5))
         )
     }
 }

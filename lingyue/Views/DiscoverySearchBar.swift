@@ -22,6 +22,9 @@ struct DiscoverySearchBar: View {
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled(true)
                 .submitLabel(.search)
+                // Fire the same search action when the user taps the keyboard's
+                // "search" return key, not just the trailing 搜索 button.
+                .onSubmit(onSubmit)
                 .lineLimit(1)
                 // Pin the field to the available width. Without this, pasting a
                 // very long single-line string makes the TextField report a huge
@@ -34,6 +37,10 @@ struct DiscoverySearchBar: View {
             if !text.isEmpty {
                 Button {
                     text = ""
+                    // Keep editing after clearing: if the keyboard was dismissed
+                    // (e.g. user scrolled it away), tapping the clear button brings
+                    // it back so they can immediately type a new query.
+                    focus.wrappedValue = true
                 } label: {
                     Image(systemName: "xmark.circle.fill")
                         .font(.body)
@@ -49,6 +56,10 @@ struct DiscoverySearchBar: View {
                     .foregroundStyle(theme.accent)
             }
             .buttonStyle(.plain)
+            // An empty query is a no-op, so render the button as inactive rather
+            // than letting it look tappable while doing nothing.
+            .opacity(text.isEmpty ? 0.4 : 1)
+            .disabled(text.isEmpty)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 11)
@@ -56,5 +67,13 @@ struct DiscoverySearchBar: View {
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .fill(theme.cardBackground)
         )
+        // Tapping anywhere in the bar (icon, padding, the dimmed 搜索 button's
+        // area) starts editing, matching a native search field. Guard on the
+        // current focus so taps that land on the TextField still position the
+        // cursor normally instead of being intercepted.
+        .contentShape(Rectangle())
+        .onTapGesture {
+            if !focus.wrappedValue { focus.wrappedValue = true }
+        }
     }
 }
