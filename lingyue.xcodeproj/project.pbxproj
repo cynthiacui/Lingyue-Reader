@@ -49,6 +49,7 @@
 		64AE68262FB6C76D004058EE /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000009 /* Assets.xcassets */; };
 		64AE68272FB6C76D004058EE /* SourceHanSerifSC-Regular.otf in Resources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000021 /* SourceHanSerifSC-Regular.otf */; };
 		64AE68282FB6C76D004058EE /* MiSans-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000022 /* MiSans-Regular.ttf */; };
+		64AE68FC2FB6C76D004058EE /* LXGWWenKaiGBLite-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000804 /* LXGWWenKaiGBLite-Regular.ttf */; };
 		64AE68292FB6C76D004058EE /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000019 /* PrivacyInfo.xcprivacy */; };
 		64AE68F02FB6C76D004058EE /* BackupService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000030 /* BackupService.swift */; };
 		64AE68F12FB6C76D004058EE /* BackupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000031 /* BackupView.swift */; };
@@ -96,6 +97,7 @@
 		010000000000000000000020 /* ReaderDiagnosticsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReaderDiagnosticsView.swift; sourceTree = "<group>"; };
 		010000000000000000000021 /* SourceHanSerifSC-Regular.otf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "SourceHanSerifSC-Regular.otf"; sourceTree = "<group>"; };
 		010000000000000000000022 /* MiSans-Regular.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "MiSans-Regular.ttf"; sourceTree = "<group>"; };
+		010000000000000000000804 /* LXGWWenKaiGBLite-Regular.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "LXGWWenKaiGBLite-Regular.ttf"; sourceTree = "<group>"; };
 		010000000000000000000023 /* WebViewSourceLoader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebViewSourceLoader.swift; sourceTree = "<group>"; };
 		010000000000000000000024 /* CompositeSourceLoader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompositeSourceLoader.swift; sourceTree = "<group>"; };
 		010000000000000000000025 /* FileEditableSourceStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileEditableSourceStore.swift; sourceTree = "<group>"; };
@@ -241,6 +243,7 @@
 			children = (
 				010000000000000000000021 /* SourceHanSerifSC-Regular.otf */,
 				010000000000000000000022 /* MiSans-Regular.ttf */,
+				010000000000000000000804 /* LXGWWenKaiGBLite-Regular.ttf */,
 				010000000000000000000801 /* DMSerifDisplay-Regular.ttf */,
 				010000000000000000000802 /* DMSerifDisplay-Italic.ttf */,
 				010000000000000000000803 /* DMSerifDisplay-OFL.txt */,
@@ -326,6 +329,7 @@
 				64AE68262FB6C76D004058EE /* Assets.xcassets in Resources */,
 				64AE68272FB6C76D004058EE /* SourceHanSerifSC-Regular.otf in Resources */,
 				64AE68282FB6C76D004058EE /* MiSans-Regular.ttf in Resources */,
+				64AE68FC2FB6C76D004058EE /* LXGWWenKaiGBLite-Regular.ttf in Resources */,
 				64AE68F92FB6C76D004058EE /* DMSerifDisplay-Regular.ttf in Resources */,
 				64AE68FA2FB6C76D004058EE /* DMSerifDisplay-Italic.ttf in Resources */,
 				64AE68FB2FB6C76D004058EE /* DMSerifDisplay-OFL.txt in Resources */,

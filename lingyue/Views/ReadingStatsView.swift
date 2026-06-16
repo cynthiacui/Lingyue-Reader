@@ -3,79 +3,71 @@ import UIKit
 
 // MARK: - Editorial type system
 //
-// Mirrors the HTML mockup's `font-family: 'DM Serif Display', 'Noto Serif SC',
-// serif` cascade. CSS picks DM Serif Display per-glyph for Latin/digits and
-// falls through to Noto Serif SC for CJK; SwiftUI's `Font.custom(...)` doesn't
-// fall back per-glyph on its own, so we build a UIFontDescriptor with an
-// explicit `.cascadeList` that does the same thing — DM Serif Display draws
-// "47", "32", "38", Roman numerals; Source Han Serif SC (思源宋体 = Noto Serif
-// SC, already bundled for the reader) draws the Chinese glyphs in the same
-// line. The result is one cohesive serif line where the didone Western digits
-// pair with the matching CJK stroke axis the HTML mock has.
+// Two upright serif voices, both already bundled for the reader, replace the previous
+// DM-Serif-cascade + faux-italic system:
+//   • 思源宋体 (Source Han Serif SC) via `literarySerif` — the display voice for every
+//     focal numeral + Chinese-unit pair.
+//   • LXGW 文楷 (GB Lite) via `literaryKai` — the hand-set "editor's note" voice for
+//     commentary lines.
+// See the `Font` extension below for why the old cascade (silent SF-digit fallback) and
+// the synthesized 宋体 italic (Chinese has no true italic) both had to go.
 
 private enum LiteraryWeight {
     case light, regular, bold
 }
 
-private enum LiteraryFont {
-    static func uiFont(latin: String, fallback: String, size: CGFloat, bold: Bool) -> UIFont {
-        let primary = UIFontDescriptor(fontAttributes: [.name: latin])
-        let secondary = UIFontDescriptor(fontAttributes: [.name: fallback])
-        var descriptor = primary.addingAttributes([
-            UIFontDescriptor.AttributeName.cascadeList: [secondary]
-        ])
-        if bold, let bolded = descriptor.withSymbolicTraits([.traitBold]) {
-            descriptor = bolded
-        }
-        return UIFont(descriptor: descriptor, size: size)
-    }
-}
-
 extension Font {
-    /// Literary serif cascade — DM Serif Display (Latin / digits) backed by
-    /// Source Han Serif SC (CJK). Drop-in for any focal numeral + Chinese-unit
-    /// pair on the Stats tab (hero figure, period figure, stat columns, Roman
-    /// numerals, section ordinals, book titles). The weight switch keeps the
-    /// API surface identical for callers; .bold relies on SwiftUI's synthesized
-    /// bold since neither bundled face ships heavier variants.
+    /// Editorial display serif — 思源宋体 (Source Han Serif SC, already bundled for the
+    /// reader). Drives every focal numeral + Chinese-unit pair on the Stats tab (hero
+    /// figure, period figure, stat columns, section ordinals, book titles). Digits and
+    /// Latin come from Source Han Serif's own glyphs, so a number and its CJK unit share
+    /// one stroke axis instead of clashing.
+    ///
+    /// The earlier version cascaded DM Serif Display (a Didone) over the CJK face for
+    /// Latin/digits, but DM Serif isn't registered in the shipping Info-AppStore.plist —
+    /// so digits silently fell back to the system font, pairing SF numerals with a 宋体
+    /// unit. Dropping the cascade fixes that and removes the high-contrast clash. `.bold`
+    /// relies on SwiftUI's synthesized weight since the bundled face ships one master.
     fileprivate static func literarySerif(size: CGFloat, weight: LiteraryWeight = .regular) -> Font {
-        Font(LiteraryFont.uiFont(
-            latin: "DMSerifDisplay-Regular",
-            fallback: "SourceHanSerifSC-Regular",
-            size: size,
-            bold: weight == .bold
-        ))
+        literaryFont(["SourceHanSerifSC-Regular"], size: size, bold: weight == .bold)
     }
 
-    /// Italic literary serif — DM Serif Display Italic for Latin/digits with
-    /// the same Source Han Serif SC fallback. SwiftUI's `.italic()` synthesizes
-    /// a slant on the fallback for any CJK glyphs in the run, matching the
-    /// HTML's `font-style: italic` on Noto Serif SC commentary lines.
-    fileprivate static func literarySerifItalic(size: CGFloat) -> Font {
-        Font(LiteraryFont.uiFont(
-            latin: "DMSerifDisplay-Italic",
-            fallback: "SourceHanSerifSC-Regular",
-            size: size,
-            bold: false
-        )).italic()
+    /// Hand-set "editor's note" voice — LXGW 文楷 (bundled GB Lite), upright. Replaces the
+    /// old synthesized-italic 宋体 used for commentary: Chinese has no true italic, so the
+    /// mechanical slant read as broken. 文楷 is a humanist kai face that carries the
+    /// literary, hand-written tone upright. Falls back to 宋体 then a system serif if the
+    /// face is ever absent at runtime.
+    fileprivate static func literaryKai(size: CGFloat) -> Font {
+        literaryFont(["LXGWWenKaiGBLite-Regular", "SourceHanSerifSC-Regular"], size: size, bold: false)
+    }
+
+    /// Resolve the first registered face in `names`; fall back to a system serif if none
+    /// load so the page never renders blank.
+    private static func literaryFont(_ names: [String], size: CGFloat, bold: Bool) -> Font {
+        if let name = names.first(where: { UIFont(name: $0, size: size) != nil }) {
+            let base = Font.custom(name, size: size)
+            return bold ? base.weight(.bold) : base
+        }
+        return .system(size: size, weight: bold ? .bold : .regular, design: .serif)
     }
 }
 
-/// Renders `string` in the italic literary serif, except ASCII number tokens
-/// (e.g. "12", "1.2", "1,200") which fall back to the upright variant. Keeps
-/// the Chinese kicker copy stylistically italic while preventing the slanted
-/// DM Serif Display digits from sitting awkwardly inside a Songti line.
-fileprivate func literarySerifItalicText(_ string: String, size: CGFloat) -> Text {
-    let italic: Font = .literarySerifItalic(size: size)
-    let upright: Font = .literarySerif(size: size)
+/// Renders a figure string (e.g. "3分钟", "1小时20分", "2.1万") in 思源宋体 with the digit
+/// runs at `numSize` and the CJK unit characters at `unitSize`, so a number and its unit
+/// read as a single object — a big numeral with a small unit — instead of the old
+/// equal-size run that needed a literal space (and read as "三件 separate numbers").
+/// Digits take `color`; units take the softer `unitColor`.
+fileprivate func songtiFigureText(_ string: String, numSize: CGFloat, unitSize: CGFloat, color: Color, unitColor: Color) -> Text {
+    let numFont: Font = .literarySerif(size: numSize)
+    let unitFont: Font = .literarySerif(size: unitSize)
     let pattern = #"\d+(?:[.,]\d+)*"#
     guard let regex = try? NSRegularExpression(pattern: pattern) else {
-        return Text(verbatim: string).font(italic)
+        return Text(verbatim: string).font(numFont).foregroundColor(color)
     }
     let ns = string as NSString
     let matches = regex.matches(in: string, range: NSRange(location: 0, length: ns.length))
     guard !matches.isEmpty else {
-        return Text(verbatim: string).font(italic)
+        return Text(verbatim: string).font(unitFont).foregroundColor(unitColor)
     }
 
     var result = Text(verbatim: "")
@@ -83,15 +75,15 @@ fileprivate func literarySerifItalicText(_ string: String, size: CGFloat) -> Tex
     for match in matches {
         if match.range.location > cursor {
             let prefix = ns.substring(with: NSRange(location: cursor, length: match.range.location - cursor))
-            result = result + Text(verbatim: prefix).font(italic)
+            result = result + Text(verbatim: prefix).font(unitFont).foregroundColor(unitColor)
         }
         let digits = ns.substring(with: match.range)
-        result = result + Text(verbatim: digits).font(upright)
+        result = result + Text(verbatim: digits).font(numFont).foregroundColor(color)
         cursor = match.range.location + match.range.length
     }
     if cursor < ns.length {
         let tail = ns.substring(with: NSRange(location: cursor, length: ns.length - cursor))
-        result = result + Text(verbatim: tail).font(italic)
+        result = result + Text(verbatim: tail).font(unitFont).foregroundColor(unitColor)
     }
     return result
 }
@@ -662,6 +654,11 @@ struct ReadingStatsView: View {
         return calendar.dateInterval(of: .month, for: Date())?.start ?? Date()
     }()
     @AppStorage("stats.dailyGoalMinutes") private var dailyGoalMinutes: Int = 0
+    // Mirrors the reader's 简/繁 preference so book titles render in the user's chosen
+    // script. Stored titles can be in either script (a book imported from a traditional
+    // source keeps its 繁体 title on disk); every title display normalizes through
+    // `ChineseTextConverter.display`, so the leaderboard must too.
+    @AppStorage("reader.usesTraditionalChinese") private var usesTraditionalChinese = false
     @State private var dayTick: Date = Date()
     @Environment(\.scenePhase) private var scenePhase
 
@@ -786,16 +783,24 @@ struct ReadingStatsView: View {
                 // page); a single shared map cuts that down to one pass.
                 let buckets = bucketEventsByDay()
                 VStack(alignment: .leading, spacing: bodySpacing) {
-                    heroCard
-                    globalMetrics
-                    sectionHeader(num: "壹", title: "节奏", sub: "RHYTHM · NO.01")
+                    // Hero + global metrics share one elevated card. Earlier they sat
+                    // directly on the themed page with only a hairline, which on the
+                    // lighter washes (Sakura) let the warm text sink into the background;
+                    // the card's ivory surface restores contrast and frames the headline.
+                    VStack(alignment: .leading, spacing: 12) {
+                        heroCard
+                        globalMetrics
+                    }
+                    .padding(18)
+                    .statsCard(elevated: true)
+                    sectionHeader(num: "壹", title: "节奏")
                     rangePicker
                     periodSummary
-                    sectionHeader(num: "贰", title: "日历", sub: "CALENDAR · NO.02")
+                    sectionHeader(num: "贰", title: "日历")
                     streakCalendarCard(buckets: buckets)
-                    sectionHeader(num: "叁", title: "热力", sub: "HEATMAP · NO.03")
+                    sectionHeader(num: "叁", title: "热力")
                     heatmapCard(buckets: buckets)
-                    sectionHeader(num: "肆", title: "旅程", sub: "JOURNEY · NO.04")
+                    sectionHeader(num: "肆", title: "旅程")
                     topBooksCard
                 }
                 .padding(.horizontal, horizontalSizeClass == .compact ? 14 : 22)
@@ -844,26 +849,20 @@ struct ReadingStatsView: View {
     }
 
     /// Editorial section opener: a large serif Chinese ordinal (壹/贰/叁/肆) in the
-    /// theme's deep section accent, paired with a serif title and a tracked
-    /// monospaced/rounded sub-label. The hairline rule on the right gives each
-    /// section a "chapter break" silhouette, replacing the flat repeating 17pt
-    /// semibold headers the old design used (which had no inter-section emphasis).
+    /// theme's deep section accent, paired with a serif title and a hairline rule on
+    /// the right that gives each section a "chapter break" silhouette. The earlier
+    /// version trailed an all-caps Latin sub-label ("RHYTHM · NO.01"); it was dropped
+    /// as bilingual decoration — the ordinal alone carries the chapter mark.
     @ViewBuilder
-    private func sectionHeader(num: String, title: String, sub: String) -> some View {
+    private func sectionHeader(num: String, title: String) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 12) {
             Text(num)
                 .font(.literarySerif(size: 30))
                 .foregroundStyle(palette.sectionAccent)
                 .baselineOffset(-2)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.literarySerif(size: 18, weight: .bold))
-                    .foregroundStyle(palette.primaryText)
-                Text(sub)
-                    .font(.system(size: 9.5, weight: .semibold, design: .rounded))
-                    .tracking(1.6)
-                    .foregroundStyle(palette.secondaryText.opacity(0.75))
-            }
+            Text(title)
+                .font(.literarySerif(size: 18, weight: .bold))
+                .foregroundStyle(palette.primaryText)
             Spacer(minLength: 12)
             Rectangle()
                 .fill(palette.sectionAccent.opacity(0.42))
@@ -875,12 +874,11 @@ struct ReadingStatsView: View {
         .padding(.horizontal, 2)
     }
 
-    /// Variant A "editorial" hero: kicker → 60pt serif total figure → italic serif
-    /// commentary → 印章 streak seal + inline goal progress. Drops the rounded
-    /// system numerals + gradient card chrome the old hero used, in favor of one
-    /// monumental serif figure that anchors the page typographically (the old
-    /// 31pt rounded figure shared the same weight as section headers, so nothing
-    /// dominated). Card chrome is replaced by a hairline rule under the hero.
+    /// "Editorial" hero: kicker → monumental 思源宋体 total figure → 文楷 commentary →
+    /// 印章 streak seal + inline goal progress. One dominant serif figure anchors the
+    /// page typographically. The caller wraps this (plus `globalMetrics`) in an elevated
+    /// `statsCard` so the warm text keeps contrast against lighter theme washes; the
+    /// trailing hairline below divides the hero block from the metric strip inside it.
     private var heroCard: some View {
         let streak = libraryStore.readingStats.currentStreak(calendar: calendar)
         let minutes = max(Int(totalDuration / 60), 0)
@@ -893,38 +891,36 @@ struct ReadingStatsView: View {
         let goalReached = hasGoal && todayMinutes >= dailyGoalMinutes
 
         return VStack(alignment: .leading, spacing: 12) {
-            // Kicker row — small accent label + hairline rule, no big icon chip.
+            // Kicker row — a single small accent label. The earlier version trailed a
+            // hairline rule + all-caps "TOTAL TIME"; dropped as bilingual decoration.
             HStack(spacing: 8) {
                 Text("阅读投入")
                     .font(.system(size: 11, weight: .semibold, design: .rounded))
                     .tracking(1.8)
                     .foregroundStyle(palette.sectionAccent)
-                Rectangle()
-                    .fill(palette.sectionAccent.opacity(0.5))
-                    .frame(width: 18, height: 1)
-                Text("TOTAL TIME")
-                    .font(.system(size: 9.5, weight: .semibold, design: .rounded))
-                    .tracking(1.6)
-                    .foregroundStyle(palette.secondaryText.opacity(0.7))
                 Spacer()
             }
 
-            // The hero figure: a single serif glyph string. Set at 44pt rather
-            // than the old 60pt — that size combined with literal spaces in the
-            // duration string made the line read as four separate items instead
-            // of one focal duration. 44pt still gives the page an unambiguous
-            // headline since nothing else on the page approaches it.
-            Text(formatDuration(totalDuration))
-                .font(.literarySerif(size: 44, weight: .light))
-                .tracking(-0.4)
-                .foregroundStyle(palette.heroFigure)
-                .lineLimit(1)
-                .minimumScaleFactor(0.55)
-                .padding(.top, 2)
+            // The hero figure: 思源宋体, digits at 46pt with the CJK unit trailing at 20pt
+            // so "3分钟" reads as one focal duration — a big numeral with a small unit —
+            // rather than the old equal-size run that needed a literal space. Nothing else
+            // on the page approaches this size, so it's the unambiguous headline.
+            songtiFigureText(
+                formatDuration(totalDuration),
+                numSize: 46,
+                unitSize: 20,
+                color: palette.heroFigure,
+                unitColor: palette.secondaryText
+            )
+            .tracking(-0.4)
+            .lineLimit(1)
+            .minimumScaleFactor(0.55)
+            .padding(.top, 2)
 
-            // Kaiti SC sub-line — Chinese cursive script reads as a hand-set
-            // editor's note rather than UI copy. `fixedSize` lets it wrap.
-            literarySerifItalicText(heroSubtitle(minutes: minutes, streak: streak), size: 13)
+            // 文楷 sub-line — a humanist kai face reads as a hand-set editor's note
+            // rather than UI copy. `fixedSize` lets it wrap.
+            Text(heroSubtitle(minutes: minutes, streak: streak))
+                .font(.literaryKai(size: 13))
                 .foregroundStyle(palette.secondaryText)
                 .fixedSize(horizontal: false, vertical: true)
 
@@ -1011,15 +1007,13 @@ struct ReadingStatsView: View {
             }
             .padding(.top, 4)
 
-            // Bottom hairline rule — separates the hero block from the global
-            // metric strip without the heavy card border the old design used.
+            // In-card hairline separating the hero block from the global metric
+            // strip below — same divider pattern the period card uses internally.
             Rectangle()
                 .fill(palette.divider.opacity(0.85))
                 .frame(height: 0.6)
                 .padding(.top, 6)
         }
-        .padding(.horizontal, 2)
-        .padding(.top, 2)
     }
 
     @ViewBuilder
@@ -1065,7 +1059,6 @@ struct ReadingStatsView: View {
                 unit: "页"
             )
         }
-        .padding(.horizontal, 2)
     }
 
     private var rangePicker: some View {
@@ -1104,21 +1097,32 @@ struct ReadingStatsView: View {
                     .font(.system(size: 11, weight: .bold))
                     .foregroundStyle(palette.sectionAccent)
                 Text(selectedRange.reportTitle)
-                    .font(.literarySerifItalic(size: 13))
+                    .font(.literaryKai(size: 13))
                     .foregroundStyle(palette.secondaryText)
                 Spacer()
             }
 
-            // Songti period figure — the focal point. Falls back to "暂无" so the
-            // 40pt slot stays at consistent height across day/month/year states.
-            Text(hasPeriodData ? formatDuration(duration) : "暂无")
-                .font(.literarySerif(size: 40, weight: .light))
-                .foregroundStyle(hasPeriodData ? palette.heroFigure : palette.secondaryText.opacity(0.6))
+            // Songti period figure — the focal point, sized clearly below the hero (34pt
+            // vs 46pt) so the page keeps one headline. Digits big, CJK unit small via the
+            // shared splitter; "暂无" holds the slot height across day/month/year states.
+            if hasPeriodData {
+                songtiFigureText(
+                    formatDuration(duration),
+                    numSize: 34,
+                    unitSize: 16,
+                    color: palette.heroFigure,
+                    unitColor: palette.secondaryText
+                )
                 .lineLimit(1)
                 .minimumScaleFactor(0.55)
+            } else {
+                Text("暂无")
+                    .font(.literarySerif(size: 28))
+                    .foregroundStyle(palette.secondaryText.opacity(0.6))
+            }
 
             Text(hasPeriodData ? rangeCommentary(for: selectedRange) : emptyPeriodHint(for: selectedRange))
-                .font(.literarySerifItalic(size: 12.5))
+                .font(.literaryKai(size: 12.5))
                 .foregroundStyle(palette.secondaryText)
                 .lineLimit(2)
                 .fixedSize(horizontal: false, vertical: true)
@@ -1269,9 +1273,10 @@ struct ReadingStatsView: View {
         let weekdayLabels = ["一", "二", "三", "四", "五", "六", "日"]
 
         return VStack(alignment: .leading, spacing: 12) {
-            // sectionHeader above provides the title; the card opens with an
-            // italic serif kicker line describing the time window.
-            literarySerifItalicText("记录近 12 周阅读状态", size: 12)
+            // sectionHeader above provides the title; the card opens with a 文楷
+            // kicker line describing the time window.
+            Text("记录近 12 周阅读状态")
+                .font(.literaryKai(size: 12))
                 .foregroundStyle(palette.secondaryText)
                 .lineLimit(1)
                 .minimumScaleFactor(0.75)
@@ -1381,20 +1386,24 @@ struct ReadingStatsView: View {
         .animation(.easeInOut(duration: 0.18), value: selectedHeatmapDay)
     }
 
-    /// Variant A leaderboard: ranks rendered as large serif Roman numerals
-    /// (I/II/III/IV/V) in the section accent (deep theme color) — replacing the
-    /// circle-chip "1/2/3" the old version used, which competed with the book
-    /// covers visually. Titles upgrade to serif, the rank-1 numeral gets the
-    /// stronger section accent to mark it as the chapter lead.
+    /// Leaderboard: books for the selected range ranked by reading time, shown as large
+    /// serif Arabic numerals (rank 1 in the section accent as the chapter lead). The card
+    /// shows the top 3; 显示更多 pushes a full ranked page so a large library never
+    /// stretches the stats page. Titles render in the user's 简/繁 preference.
     private var topBooksCard: some View {
         let interval = selectedTopBooksRange.interval(containing: Date(), calendar: calendar)
         let events = libraryStore.readingStats.events.filter { interval.contains($0.timestamp) }
         let books = topBooks(from: events)
-        let romanRanks = ["I", "II", "III", "IV", "V"]
+        let rows = topBookRows(books)
+        let cap = 3
+        let visible = Array(rows.prefix(cap))
+        // Header summary for the detail page: total reading time + book/page totals.
+        let detailHero = formatDuration(books.reduce(0) { $0 + $1.durationSeconds })
+        let detailSummary = "共 \(books.count) 本 · \(formatCount(books.reduce(0) { $0 + $1.pageTurns })) 页"
 
         return VStack(alignment: .leading, spacing: 14) {
             Text("按时长排序的阅读时光")
-                .font(.literarySerifItalic(size: 12))
+                .font(.literaryKai(size: 12))
                 .foregroundStyle(palette.secondaryText)
 
             StatsSegmentedControl(
@@ -1403,56 +1412,69 @@ struct ReadingStatsView: View {
                 title: \.title
             )
 
-            if books.isEmpty {
+            if rows.isEmpty {
                 Text("\(selectedTopBooksRange.title)还没有可统计的阅读记录。")
-                    .font(.literarySerifItalic(size: 13))
+                    .font(.literaryKai(size: 13))
                     .foregroundStyle(palette.secondaryText)
                     .padding(.vertical, 6)
             } else {
                 VStack(spacing: 0) {
-                    ForEach(Array(books.prefix(5).enumerated()), id: \.element.id) { index, item in
-                        let isLead = index == 0
-                        let rankColor: Color = isLead ? palette.sectionAccent : palette.secondaryText.opacity(0.55)
-                        HStack(alignment: .center, spacing: 14) {
-                            Text(romanRanks[index])
-                                .font(.literarySerif(size: 30))
-                                .foregroundStyle(rankColor)
-                                .frame(width: 34, alignment: .leading)
-
-                            if let book = booksByID[item.id] {
-                                StatsBookCover(book: book, width: 38, height: 54)
-                            }
-                            VStack(alignment: .leading, spacing: 4) {
-                                HStack(spacing: 6) {
-                                    Text(item.title)
-                                        .font(.literarySerif(size: 15, weight: .bold))
-                                        .foregroundStyle(palette.primaryText)
-                                        .lineLimit(1)
-                                    if booksByID[item.id]?.isDeleted == true {
-                                        RemovedFromLibraryBadge()
-                                    }
-                                }
-                                Text("\(formatDuration(item.durationSeconds)) · \(formatCount(item.pageTurns)) 页 · \(formatCharacterCount(item.characterCount))")
-                                    .font(.system(size: 11.5, weight: .medium))
-                                    .foregroundStyle(palette.secondaryText)
-                                    .lineLimit(1)
-                                    .minimumScaleFactor(0.85)
-                            }
-                            Spacer()
-                        }
-                        .padding(.vertical, 8)
-
-                        if index < min(books.count, 5) - 1 {
+                    ForEach(Array(visible.enumerated()), id: \.element.id) { index, row in
+                        TopBookRow(row: row)
+                        if index < visible.count - 1 {
                             Rectangle()
                                 .fill(palette.divider.opacity(0.7))
                                 .frame(height: 0.5)
                         }
                     }
                 }
+
+                // Beyond the top `cap`, push a dedicated page instead of expanding inline —
+                // a large library would otherwise stretch the stats page arbitrarily long.
+                if rows.count > cap {
+                    NavigationLink {
+                        TopBooksDetailView(rows: rows, rangeTitle: selectedTopBooksRange.title, heroFigure: detailHero, summary: detailSummary)
+                            // Re-inject the palette: it's set inside ReadingStatsView's body,
+                            // below the NavigationStack this push lands in, so the destination
+                            // wouldn't otherwise inherit it.
+                            .environment(\.statsPalette, palette)
+                    } label: {
+                        HStack(spacing: 5) {
+                            Text("显示更多（共 \(rows.count) 本）")
+                                .font(.system(size: 12.5, weight: .semibold))
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 10, weight: .bold))
+                        }
+                        .foregroundStyle(palette.sectionAccent)
+                        .frame(maxWidth: .infinity)
+                        .padding(.top, 6)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
             }
         }
         .padding(18)
         .statsLowerCard()
+    }
+
+    /// Builds display rows (rank, 简/繁-normalized title, formatted metric line, cover,
+    /// and duration-relative progress) once so the top-3 card and the full detail page
+    /// render from identical data.
+    private func topBookRows(_ books: [BookReadingAggregate]) -> [TopBookDisplayRow] {
+        let maxDuration = max(books.map(\.durationSeconds).max() ?? 0, 1)
+        return books.enumerated().map { index, item in
+            let book = booksByID[item.id]
+            return TopBookDisplayRow(
+                id: item.id,
+                rank: index + 1,
+                title: ChineseTextConverter.display(item.title, usesTraditionalChinese: usesTraditionalChinese),
+                detail: "\(formatDuration(item.durationSeconds)) · \(formatCount(item.pageTurns)) 页 · \(formatCharacterCount(item.characterCount))",
+                book: book,
+                isDeleted: book?.isDeleted == true,
+                progress: min(max(item.durationSeconds / maxDuration, 0), 1)
+            )
+        }
     }
 
     private func heroSubtitle(minutes: Int, streak: Int) -> String {
@@ -1655,7 +1677,9 @@ struct ReadingStatsView: View {
 
     private func formatDuration(_ seconds: TimeInterval) -> String {
         let minutes = max(Int(seconds / 60), 0)
-        if minutes < 60 { return "\(minutes) 分钟" }
+        // Compact CJK typography throughout: no space between digits and units, so the
+        // serif figure splitter renders one cohesive "Ndigit + small-unit" object.
+        if minutes < 60 { return "\(minutes)分钟" }
         let days = minutes / (24 * 60)
         let hours = (minutes % (24 * 60)) / 60
         let remainder = minutes % 60
@@ -1667,10 +1691,6 @@ struct ReadingStatsView: View {
             return parts.joined()
         }
 
-        // Compact CJK typography: no space between digits and units.
-        // The hero figure renders at a smaller size now (44pt vs the
-        // previous 60pt) — wide spacing on top of that read as 三件 separate
-        // numbers rather than one duration.
         return remainder == 0 ? "\(hours)小时" : "\(hours)小时\(remainder)分"
     }
 
@@ -2286,6 +2306,139 @@ private struct CalendarFigure: View {
     }
 }
 
+/// A pre-rendered leaderboard row: rank + 简/繁-normalized title + formatted metric line
+/// + optional cover. Built once in `ReadingStatsView` so the top-3 card and the full
+/// detail page draw from identical data without duplicating the formatters.
+private struct TopBookDisplayRow: Identifiable {
+    let id: UUID
+    let rank: Int
+    let title: String
+    let detail: String
+    let book: ReadingStatsBook?
+    let isDeleted: Bool
+    /// Reading time relative to the longest book in the set (0…1) — drives the optional
+    /// leaderboard bar on the detail page.
+    let progress: Double
+}
+
+/// One leaderboard row — large serif rank numeral, cover, title, metric line. Shared by
+/// the top-3 stats card and the 显示更多 detail page so they stay visually identical. The
+/// detail page opts into a thin duration-relative bar via `showBar`.
+private struct TopBookRow: View {
+    @Environment(\.statsPalette) private var palette
+    let row: TopBookDisplayRow
+    var showBar: Bool = false
+
+    var body: some View {
+        let rankColor: Color = row.rank == 1 ? palette.sectionAccent : palette.secondaryText.opacity(0.55)
+        HStack(alignment: .center, spacing: 14) {
+            Text("\(row.rank)")
+                .font(.literarySerif(size: showBar ? 30 : 28))
+                .foregroundStyle(rankColor)
+                .lineLimit(1)
+                .minimumScaleFactor(0.6)
+                .frame(width: showBar ? 40 : 36, alignment: .leading)
+
+            if let book = row.book {
+                StatsBookCover(book: book, width: showBar ? 42 : 38, height: showBar ? 60 : 54)
+            }
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    Text(row.title)
+                        .font(.literarySerif(size: 15, weight: .bold))
+                        .foregroundStyle(palette.primaryText)
+                        .lineLimit(1)
+                    if row.isDeleted {
+                        RemovedFromLibraryBadge()
+                    }
+                }
+                Text(row.detail)
+                    .font(.system(size: 11.5, weight: .medium))
+                    .foregroundStyle(palette.secondaryText)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
+
+                if showBar {
+                    // Width ∝ this book's reading time vs the period's longest read — turns
+                    // the ranked list into a quick visual comparison.
+                    GeometryReader { proxy in
+                        ZStack(alignment: .leading) {
+                            Capsule().fill(palette.readingTime.opacity(0.14))
+                            Capsule()
+                                .fill(palette.readingTime.opacity(0.85))
+                                .frame(width: max(4, proxy.size.width * row.progress))
+                        }
+                    }
+                    .frame(height: 4)
+                    .padding(.top, 2)
+                }
+            }
+            Spacer()
+        }
+        .padding(.vertical, showBar ? 11 : 8)
+    }
+}
+
+/// Full ranked book list pushed by 显示更多, so a large library never stretches the stats
+/// page itself. Opens with an editorial header (range kicker → total-time figure → 文楷
+/// summary) mirroring the main hero, then the ranked rows with relative-time bars. The
+/// stats palette is passed in explicitly because it's provided inside `ReadingStatsView`'s
+/// body, below the NavigationStack this push lands in.
+private struct TopBooksDetailView: View {
+    @Environment(\.statsPalette) private var palette
+    @Environment(\.appTheme) private var theme
+    let rows: [TopBookDisplayRow]
+    let rangeTitle: String
+    let heroFigure: String
+    let summary: String
+
+    var body: some View {
+        ZStack {
+            ThemeBackgroundView()
+            StatsBackgroundDim(palette: palette, isDark: theme.preferredColorScheme == .dark)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    VStack(alignment: .leading, spacing: 7) {
+                        Text("\(rangeTitle) · 阅读旅程")
+                            .font(.system(size: 11, weight: .semibold, design: .rounded))
+                            .tracking(1.8)
+                            .foregroundStyle(palette.sectionAccent)
+                        songtiFigureText(heroFigure, numSize: 40, unitSize: 17, color: palette.heroFigure, unitColor: palette.secondaryText)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.55)
+                        Text(summary)
+                            .font(.literaryKai(size: 13))
+                            .foregroundStyle(palette.secondaryText)
+                    }
+
+                    Rectangle()
+                        .fill(palette.divider.opacity(0.85))
+                        .frame(height: 0.6)
+
+                    VStack(spacing: 0) {
+                        ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
+                            TopBookRow(row: row, showBar: true)
+                            if index < rows.count - 1 {
+                                Rectangle()
+                                    .fill(palette.divider.opacity(0.7))
+                                    .frame(height: 0.5)
+                            }
+                        }
+                    }
+                }
+                .padding(20)
+                .statsCard(elevated: true)
+                .padding(.horizontal, 14)
+                .padding(.top, 12)
+                .padding(.bottom, 28)
+            }
+        }
+        .navigationTitle("旅程")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
 private struct StatsBookCover: View {
     let book: ReadingStatsBook
     let width: CGFloat
@@ -2349,41 +2502,31 @@ private struct StatsBookCover: View {
 /// chosen line is stable within a day / month / year and drifts naturally across periods.
 private enum StatsCommentary {
     static let daily: [String] = [
-        "阅读步调稳定，在文字里从容沉浸。",
-        "专注阅读的时刻，都在悄悄沉淀自我。",
-        "保持舒适节奏，享受属于自己的阅读时光。",
-        "今日阅读状态在线，稳步积累，自在随心。",
-        "沉浸文字之中，收获片刻安静与充实。",
-        "阅读节奏松弛有度，享受沉浸式阅读体验。",
-        "阅读节奏在线，沉浸式体验拉满。",
-        "今日阅读状态稳定，专注感拉满。",
-        "高效完成阅读输入，氛围感十足。",
-        "把碎片时间，变成专属阅读时刻。",
-        "阅读效率稳定，精神补给到位。",
-        "今日阅读打卡成功，状态持续在线。",
-        "沉浸感刚刚好，阅读体验很舒服。",
-        "稳步阅读，给自己充好精神电量。"
+        "今天也翻开了书，挺好。",
+        "读了一会儿，安静的一会儿。",
+        "字句慢慢走过，一天就踏实了些。",
+        "今日已读，给自己留了点时间。",
+        "几页也是进度，明天接着来。",
+        "和书相处的片刻，刚刚好。",
+        "读得不多不少，节奏在自己手里。",
+        "翻过几页，心也跟着静下来。"
     ]
 
     static let monthly: [String] = [
-        "持续保持阅读节奏，在积累中收获充实。",
-        "一月的点滴坚持，汇聚成独有的阅读印记。",
-        "稳步深耕阅读，让文字陪伴日常点滴。",
-        "本月阅读节奏稳定，长期积累看得见。",
-        "坚持阅读一整月，氛围感持续在线。",
-        "本月阅读习惯养成，状态保持得很好。",
-        "日复一日的阅读，悄悄拉开差距。",
-        "月度阅读续航稳定，收获满满。"
+        "这个月断断续续地读着，也读了不少。",
+        "一月里几页几页地翻，攒成了厚度。",
+        "本月与书相伴，日子有了着落。",
+        "读读停停，一个月也就过去了。",
+        "这个月的阅读，像细水，慢慢流。",
+        "不急不缓地读，这个月没落下。"
     ]
 
     static let yearly: [String] = [
-        "长久的阅读坚持，沉淀出独属于你的精神世界。",
-        "以书为伴，以读为常，时光自有答案。",
-        "经年累月的阅读，终将成为内在的底气。",
-        "一整年的阅读沉淀，气质自然流露。",
-        "长期阅读坚持，内在储备持续升级。",
-        "用一整年的阅读，完成自我充电。",
-        "阅读这件事，你坚持得很有质感。",
-        "常年保持阅读，本身就是一种实力。"
+        "一年读下来，书架替你记着。",
+        "经年累月地读，慢慢成了习惯。",
+        "这一年，和不少书打过照面。",
+        "读过的页数堆起来，是一年的厚度。",
+        "一年的阅读，安安静静地沉淀着。",
+        "把一年的零碎时光交给书，不亏。"
     ]
 }

@@ -17,6 +17,11 @@ enum ReaderFontFamily: String, CaseIterable, Identifiable {
     /// the safety net if the OTF is somehow absent at runtime.
     case songtiSerif = "songti"
 
+    /// 文楷 — bundled LXGW WenKai GB Lite. A humanist kai (楷) face: warmer and more
+    /// hand-written than Songti. The GB Lite subset covers everyday simplified Chinese;
+    /// any rarer glyph falls back per-character to the system font, so no tofu.
+    case wenkai
+
     /// MiSans — bundled Xiaomi MiSans Regular. Falls back to PingFang via the system
     /// font path when the TTF is missing.
     case misans
@@ -33,6 +38,7 @@ enum ReaderFontFamily: String, CaseIterable, Identifiable {
         switch self {
         case .system:       return "苹方"
         case .songtiSerif:  return "思源宋体"
+        case .wenkai:       return "文楷"
         case .misans:       return "MiSans"
         case .yuanti:       return "圆体"
         }
@@ -51,6 +57,8 @@ enum ReaderFontFamily: String, CaseIterable, Identifiable {
                 "STSongti-SC-Regular",
                 "HiraMinProN-W3"
             ]
+        case .wenkai:
+            return ["LXGWWenKaiGBLite-Regular", "STKaiti", "Kaiti SC"]
         case .misans:
             return ["MiSans-Regular", "MiSans-Normal"]
         case .yuanti:

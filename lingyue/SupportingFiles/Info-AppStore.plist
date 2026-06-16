@@ -65,6 +65,7 @@
 	<array>
 		<string>SourceHanSerifSC-Regular.otf</string>
 		<string>MiSans-Regular.ttf</string>
+		<string>LXGWWenKaiGBLite-Regular.ttf</string>
 	</array>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
