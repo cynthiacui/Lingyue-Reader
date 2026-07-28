@@ -957,6 +957,11 @@ private struct ImportFromURLView: View {
 /// need manual build-phase surgery; co-locating it keeps the add reliable.
 struct SourceGuideView: View {
     @Environment(\.appTheme) private var theme
+    @EnvironmentObject private var importCoordinator: SourceImportCoordinator
+
+    private static let sharedSourceURL = URL(
+        string: "https://cynthiacui.github.io/Lingyue-Reader/lingyue-sources.json"
+    )!
 
     var body: some View {
         ZStack {
@@ -1010,6 +1015,8 @@ struct SourceGuideView: View {
     private var importCard: some View {
         section("导入现成的书源 JSON") {
             paragraph("如果别人已经给了你一份打包好的书源配置文件（JSON 格式），用下面任意一种方式导入即可。")
+            sharedSourceRow
+            Divider()
             subheading("从 JSON 文件导入")
             step("1", "把 .json 文件存到 iPhone 的「文件」App。")
             step("2", "进入「书源」页，点「＋」→「从 JSON 文件导入」，选中该文件。")
@@ -1020,6 +1027,40 @@ struct SourceGuideView: View {
             step("3", "灵阅会下载该配置，并同样弹出「新增 / 覆盖 / 未变更」确认。")
             note("也可以用 lingyue://import?url=<网址> 深链一键唤起导入。请确认你有权访问该网址的内容。")
         }
+    }
+
+    private var sharedSourceRow: some View {
+        Button {
+            Task {
+                await importCoordinator.stage(
+                    remoteURL: Self.sharedSourceURL,
+                    navigateAfterImport: true
+                )
+            }
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "square.and.arrow.down")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(theme.accent)
+                    .frame(width: 30, height: 30)
+                    .background(theme.accent.opacity(0.12))
+                    .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+
+                Text("导入作者分享的书源")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(theme.primaryText)
+
+                Spacer(minLength: 8)
+
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(theme.secondaryText)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(importCoordinator.isFetching)
+        .accessibilityHint("下载书源并显示导入确认")
     }
 
     private var shareCard: some View {
@@ -1110,4 +1151,3 @@ struct SourceGuideView: View {
         .padding(.top, 2)
     }
 }
-

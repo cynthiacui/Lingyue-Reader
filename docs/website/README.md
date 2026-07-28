@@ -8,6 +8,7 @@ Static landing + legal pages for the App Store Connect URL fields. Deployed to G
 - `privacy.html` — privacy policy (Privacy Policy URL target)
 - `complaint.html` — 投诉与版权 (DMCA-style takedown)
 - `disclaimer.html` — 免责声明 (limitation of liability)
+- `lingyue-sources.json` — source bundle used by the in-app guide's one-tap import
 - `screenshots/` — three iPhone captures used in the index hero
 
 ## Live URLs
@@ -16,6 +17,7 @@ Static landing + legal pages for the App Store Connect URL fields. Deployed to G
 - https://cynthiacui.github.io/Lingyue-Reader/privacy.html
 - https://cynthiacui.github.io/Lingyue-Reader/complaint.html
 - https://cynthiacui.github.io/Lingyue-Reader/disclaimer.html
+- https://cynthiacui.github.io/Lingyue-Reader/lingyue-sources.json
 
 ## Updating the live site
 
@@ -28,6 +30,7 @@ cd /Users/xuanrrr/Documents/Lingyue
 git worktree add ../lingyue-gh-pages gh-pages
 cd ../lingyue-gh-pages
 cp ../Lingyue/docs/website/*.html .
+cp ../Lingyue/docs/website/lingyue-sources.json .
 cp -r ../Lingyue/docs/website/screenshots .
 git add -A && git commit -m "Update site" && git push origin gh-pages
 cd ../Lingyue
