@@ -65,6 +65,10 @@ struct PageCurlPager: UIViewControllerRepresentable {
         // page keeps the same identity even though its index shifted, so we must not
         // re-animate it. This replaces the old `previousIndex != currentIndex` guard.
         if desiredID == shownID {
+            // A target deferred during an earlier transition is obsolete once the
+            // binding again agrees with the displayed page. Leaving it queued can
+            // make a later, unrelated swipe snap back to this old destination.
+            context.coordinator.pendingIdentity = nil
             // A cross-chapter re-base can change the shown page's NEIGHBORS while the page
             // itself stays put — e.g. chapter N's trailing bookend "N+1-0" becomes chapter
             // N+1's body page 0, which now HAS a next page where before it had none.
@@ -256,14 +260,13 @@ struct PageCurlPager: UIViewControllerRepresentable {
                         livePvc.setViewControllers([target], direction: direction, animated: false, completion: nil)
                     }
                 }
+                let pending = self.pendingIdentity
+                self.pendingIdentity = nil
                 guard !self.isDismantled,
                       let pvc = pvc,
-                      let pending = self.pendingIdentity,
-                      pending != self.shownIdentity else {
-                    self.pendingIdentity = nil
-                    return
-                }
-                self.pendingIdentity = nil
+                      let pending,
+                      pending != self.shownIdentity,
+                      self.identity(at: self.parent.currentIndex) == pending else { return }
                 ReaderDiagnostics.shared.log(.info, "pager apply pending", context: [
                     "toID": pending,
                     "shownID": self.shownIdentity
@@ -306,12 +309,18 @@ struct PageCurlPager: UIViewControllerRepresentable {
         @discardableResult
         func refreshCachedRenders() -> Bool {
             let validIDs = Set(parent.slotIdentities)
-            for key in hosts.keys where !validIDs.contains(key) {
+            // Snapshot keys before deletion. Mutating a Dictionary while iterating its
+            // live Keys view can trap or skip entries during re-pagination.
+            let staleKeys = hosts.keys.filter {
+                $0 != shownIdentity && !validIDs.contains($0)
+            }
+            for key in staleKeys {
                 hosts.removeValue(forKey: key)
             }
             let slotsChanged = lastSeenSlotIdentities != parent.slotIdentities
             if slotsChanged {
-                for key in hosts.keys where key != shownIdentity {
+                let evictedKeys = hosts.keys.filter { $0 != shownIdentity }
+                for key in evictedKeys {
                     hosts.removeValue(forKey: key)
                 }
                 lastSeenSlotIdentities = parent.slotIdentities
@@ -370,15 +379,17 @@ struct PageCurlPager: UIViewControllerRepresentable {
                 // Defer one runloop tick — calling setViewControllers synchronously inside
                 // UIKit's didFinishAnimating(completed=false) leaves the displayed VC
                 // unchanged even with animated:false, so the next page renders blank.
-                if !isDismantled, let pending = pendingIdentity, pending != shownIdentity {
-                    pendingIdentity = nil
+                let pending = pendingIdentity
+                pendingIdentity = nil
+                if !isDismantled, let pending, pending != shownIdentity {
                     ReaderDiagnostics.shared.log(.info, "pager apply pending (post-gesture)", context: [
                         "toID": pending,
                         "shownID": shownIdentity
                     ])
                     DispatchQueue.main.async { [weak self, weak pvc] in
                         guard let self = self, !self.isDismantled, let pvc = pvc,
-                              self.shownIdentity != pending else { return }
+                              self.shownIdentity != pending,
+                              self.identity(at: self.parent.currentIndex) == pending else { return }
                         self.requestTransition(to: pending, animated: false, in: pvc)
                     }
                 }
@@ -401,8 +412,11 @@ struct PageCurlPager: UIViewControllerRepresentable {
             // already settled for the body case.
             parent.onCommit(landedID)
             // Apply any pending programmatic target stashed during the transition.
-            if let pending = pendingIdentity, pending != shownIdentity {
-                pendingIdentity = nil
+            let pending = pendingIdentity
+            pendingIdentity = nil
+            if let pending,
+               pending != shownIdentity,
+               identity(at: parent.currentIndex) == pending {
                 ReaderDiagnostics.shared.log(.info, "pager apply pending (post-gesture)", context: [
                     "toID": pending,
                     "shownID": shownIdentity
