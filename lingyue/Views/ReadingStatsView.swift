@@ -643,6 +643,7 @@ private struct StatsLowerCardModifier: ViewModifier {
 
 struct ReadingStatsView: View {
     @EnvironmentObject private var libraryStore: LibraryStore
+    @EnvironmentObject private var tabSelection: TabSelectionStore
     @Environment(\.appTheme) private var theme
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var selectedRange: StatsRange = .day
@@ -668,17 +669,10 @@ struct ReadingStatsView: View {
         return calendar
     }()
 
-    private var columns: [GridItem] {
-        [
-            GridItem(.flexible(), spacing: 10),
-            GridItem(.flexible(), spacing: 10)
-        ]
-    }
-
-    private var mergedBooks: [ReadingStatsBook] {
+    private func makeOverview() -> StatsOverview {
         var books = libraryStore.readingStats.books
-        let knownIDs = Set(books.map(\.id))
-        for novel in libraryStore.allNovels where !knownIDs.contains(novel.id) {
+        var knownIDs = Set(books.map(\.id))
+        for novel in libraryStore.allNovels where knownIDs.insert(novel.id).inserted {
             let now = novel.lastOpenedAt ?? Date()
             books.append(
                 ReadingStatsBook(
@@ -698,63 +692,81 @@ struct ReadingStatsView: View {
                 )
             )
         }
-        return books
+        let ledgerBooks = libraryStore.readingStats.books
+        return StatsOverview(
+            booksByID: Dictionary(uniqueKeysWithValues: books.map { ($0.id, $0) }),
+            totalDuration: ledgerBooks.reduce(0) { $0 + $1.totalDurationSeconds },
+            totalPages: ledgerBooks.reduce(0) { $0 + $1.pageTurns },
+            totalCharacters: ledgerBooks.reduce(0) { $0 + $1.characterCount },
+            readBookCount: books.lazy.filter { $0.pageTurns > 0 }.count,
+            finishedBookCount: books.lazy.filter { $0.currentProgress >= 0.999 }.count
+        )
     }
 
-    private var booksByID: [UUID: ReadingStatsBook] {
-        Dictionary(uniqueKeysWithValues: mergedBooks.map { ($0.id, $0) })
-    }
+    private func makeRenderData() -> StatsRenderData {
+        let overview = makeOverview()
+        let now = Date()
+        let periodInterval = selectedRange.interval(containing: now, calendar: calendar)
+        let topBooksInterval = selectedTopBooksRange.interval(containing: now, calendar: calendar)
+        var buckets: [Date: DailyEventTotals] = [:]
+        var periodTotals = PeriodEventTotals()
+        var topBookTotals: [UUID: BookReadingAggregate] = [:]
 
-    private var totalDuration: TimeInterval {
-        libraryStore.readingStats.totalDurationSeconds
-    }
+        for event in libraryStore.readingStats.events {
+            let day = calendar.startOfDay(for: event.timestamp)
+            var daily = buckets[day] ?? DailyEventTotals()
+            daily.durationSeconds += event.durationSeconds
+            daily.pageTurns += event.pageTurns
+            daily.characterCount += event.characterCount
+            buckets[day] = daily
 
-    private var totalPages: Int {
-        libraryStore.readingStats.totalPageTurns
-    }
+            if periodInterval.contains(event.timestamp) {
+                periodTotals.durationSeconds += event.durationSeconds
+                periodTotals.pageTurns += event.pageTurns
+                periodTotals.characterCount += event.characterCount
+            }
 
-    private var totalCharacters: Int {
-        libraryStore.readingStats.totalCharacterCount
-    }
+            if topBooksInterval.contains(event.timestamp) {
+                let current = topBookTotals[event.bookID]
+                topBookTotals[event.bookID] = BookReadingAggregate(
+                    id: event.bookID,
+                    title: overview.booksByID[event.bookID]?.title ?? event.bookTitle,
+                    durationSeconds: (current?.durationSeconds ?? 0) + event.durationSeconds,
+                    pageTurns: (current?.pageTurns ?? 0) + event.pageTurns,
+                    characterCount: (current?.characterCount ?? 0) + event.characterCount
+                )
+            }
+        }
 
-    private var readBookCount: Int {
-        mergedBooks.filter { $0.pageTurns > 0 }.count
-    }
-
-    private var finishedBookCount: Int {
-        mergedBooks.filter { $0.currentProgress >= 0.999 }.count
-    }
-
-    private var periodEvents: [ReadingStatsEvent] {
-        let interval = selectedRange.interval(containing: Date(), calendar: calendar)
-        return libraryStore.readingStats.events.filter { interval.contains($0.timestamp) }
-    }
-
-    private var hasAnyReadingData: Bool {
-        !libraryStore.readingStats.events.isEmpty
+        let topBooks = topBookTotals.values.sorted {
+            if $0.durationSeconds != $1.durationSeconds {
+                return $0.durationSeconds > $1.durationSeconds
+            }
+            return $0.pageTurns > $1.pageTurns
+        }
+        return StatsRenderData(
+            overview: overview,
+            buckets: buckets,
+            periodTotals: periodTotals,
+            topBooks: topBooks
+        )
     }
 
     private var currentMonthStart: Date {
         calendar.dateInterval(of: .month, for: Date())?.start ?? calendar.startOfDay(for: Date())
     }
 
-    private var availableCalendarMonths: [Date] {
-        // Earlier this property scanned every reading event with `.min()` on
-        // every Stats body render to figure out the earliest month worth
-        // showing. With long-time users having thousands of events that scan
-        // was on the hot path of every tab switch. Default to a fixed 24-month
-        // window back from today; if the user has navigated to an even earlier
-        // month, extend just enough to include it. The chevrons handle going
-        // further back when needed.
-        let defaultStart = calendar.date(byAdding: .month, value: -23, to: currentMonthStart) ?? currentMonthStart
-        let earliest = min(defaultStart, displayedCalendarMonth)
+    private var visibleCalendarMonths: [Date] {
+        let selected = calendar.dateInterval(of: .month, for: displayedCalendarMonth)?.start
+            ?? displayedCalendarMonth
         var months: [Date] = []
-        var cursor = earliest
-        while cursor <= currentMonthStart {
-            months.append(cursor)
-            guard let next = calendar.date(byAdding: .month, value: 1, to: cursor) else { break }
-            cursor = next
-            if months.count > 600 { break }
+        if let previous = calendar.date(byAdding: .month, value: -1, to: selected) {
+            months.append(previous)
+        }
+        months.append(selected)
+        if let next = calendar.date(byAdding: .month, value: 1, to: selected),
+           next <= currentMonthStart {
+            months.append(next)
         }
         return months
     }
@@ -771,37 +783,46 @@ struct ReadingStatsView: View {
         isDarkStats ? .dark(for: theme) : .light(for: theme)
     }
 
+    @ViewBuilder
     var body: some View {
-        ZStack {
+        if tabSelection.selectedTab == .stats {
+            activeStatsBody
+        } else {
+            Color.clear
+        }
+    }
+
+    private var activeStatsBody: some View {
+        let data = makeRenderData()
+
+        return ZStack {
             ThemeBackgroundView()
             StatsBackgroundDim(palette: palette, isDark: isDarkStats)
 
             ScrollView {
-                // Compute the day-buckets once per body render and share with
-                // every card that needs them. Each Stats render used to do
-                // multiple full-events scans (calendar + heatmap + each month
-                // page); a single shared map cuts that down to one pass.
-                let buckets = bucketEventsByDay()
-                VStack(alignment: .leading, spacing: bodySpacing) {
+                LazyVStack(alignment: .leading, spacing: bodySpacing) {
                     // Hero + global metrics share one elevated card. Earlier they sat
                     // directly on the themed page with only a hairline, which on the
                     // lighter washes (Sakura) let the warm text sink into the background;
                     // the card's ivory surface restores contrast and frames the headline.
                     VStack(alignment: .leading, spacing: 12) {
-                        heroCard
-                        globalMetrics
+                        heroCard(overview: data.overview, buckets: data.buckets)
+                        globalMetrics(overview: data.overview)
                     }
                     .padding(18)
                     .statsCard(elevated: true)
                     sectionHeader(num: "壹", title: "节奏")
                     rangePicker
-                    periodSummary
+                    periodSummary(totals: data.periodTotals)
                     sectionHeader(num: "贰", title: "日历")
-                    streakCalendarCard(buckets: buckets)
+                    streakCalendarCard(buckets: data.buckets)
                     sectionHeader(num: "叁", title: "热力")
-                    heatmapCard(buckets: buckets)
+                    heatmapCard(buckets: data.buckets)
                     sectionHeader(num: "肆", title: "旅程")
-                    topBooksCard
+                    topBooksCard(
+                        books: data.topBooks,
+                        booksByID: data.overview.booksByID
+                    )
                 }
                 .padding(.horizontal, horizontalSizeClass == .compact ? 14 : 22)
                 .padding(.top, 10)
@@ -879,12 +900,14 @@ struct ReadingStatsView: View {
     /// page typographically. The caller wraps this (plus `globalMetrics`) in an elevated
     /// `statsCard` so the warm text keeps contrast against lighter theme washes; the
     /// trailing hairline below divides the hero block from the metric strip inside it.
-    private var heroCard: some View {
-        let streak = libraryStore.readingStats.currentStreak(calendar: calendar)
-        let minutes = max(Int(totalDuration / 60), 0)
-        let todaySeconds = libraryStore.readingStats.events
-            .filter { calendar.isDateInToday($0.timestamp) }
-            .reduce(0) { $0 + $1.durationSeconds }
+    private func heroCard(
+        overview: StatsOverview,
+        buckets: [Date: DailyEventTotals]
+    ) -> some View {
+        let streak = currentStreak(in: buckets)
+        let minutes = max(Int(overview.totalDuration / 60), 0)
+        let today = calendar.startOfDay(for: Date())
+        let todaySeconds = buckets[today]?.durationSeconds ?? 0
         let todayMinutes = max(Int(todaySeconds / 60), 0)
         let hasGoal = dailyGoalMinutes > 0
         let dailyProgress = hasGoal ? min(Double(todayMinutes) / Double(dailyGoalMinutes), 1) : 0
@@ -906,7 +929,7 @@ struct ReadingStatsView: View {
             // rather than the old equal-size run that needed a literal space. Nothing else
             // on the page approaches this size, so it's the unambiguous headline.
             songtiFigureText(
-                formatDuration(totalDuration),
+                formatDuration(overview.totalDuration),
                 numSize: 46,
                 unitSize: 20,
                 color: palette.heroFigure,
@@ -919,7 +942,11 @@ struct ReadingStatsView: View {
 
             // 文楷 sub-line — a humanist kai face reads as a hand-set editor's note
             // rather than UI copy. `fixedSize` lets it wrap.
-            Text(heroSubtitle(minutes: minutes, streak: streak))
+            Text(heroSubtitle(
+                minutes: minutes,
+                streak: streak,
+                totalCharacters: overview.totalCharacters
+            ))
                 .font(.literaryKai(size: 13))
                 .foregroundStyle(palette.secondaryText)
                 .fixedSize(horizontal: false, vertical: true)
@@ -1042,11 +1069,11 @@ struct ReadingStatsView: View {
     /// between them. The old version was a chunky 3-column card that competed
     /// visually with the hero; 总时长 moved into the hero figure, leaving these
     /// two complementary totals that frame the journey at the top of the page.
-    private var globalMetrics: some View {
+    private func globalMetrics(overview: StatsOverview) -> some View {
         HStack(alignment: .top, spacing: 14) {
             EditorialFigure(
                 kicker: "读过 · 读完",
-                value: "\(readBookCount) / \(finishedBookCount)",
+                value: "\(overview.readBookCount) / \(overview.finishedBookCount)",
                 unit: "本"
             )
             Rectangle()
@@ -1055,7 +1082,7 @@ struct ReadingStatsView: View {
                 .padding(.top, 12)
             EditorialFigure(
                 kicker: "翻页数",
-                value: formatCount(totalPages),
+                value: formatCount(overview.totalPages),
                 unit: "页"
             )
         }
@@ -1076,18 +1103,10 @@ struct ReadingStatsView: View {
     /// 翻页). The 17pt header + chunky duration tag the old card used made
     /// every range card read identically — the serif figure here gives each
     /// 日/月/年 view a real editorial focal point.
-    private var periodSummary: some View {
-        // Earlier this card read `periodEvents` three times in a row, each
-        // recomputing the full-events filter. Single-pass tally instead.
-        let interval = selectedRange.interval(containing: Date(), calendar: calendar)
-        var duration: TimeInterval = 0
-        var pages = 0
-        var characters = 0
-        for event in libraryStore.readingStats.events where interval.contains(event.timestamp) {
-            duration += event.durationSeconds
-            pages += event.pageTurns
-            characters += event.characterCount
-        }
+    private func periodSummary(totals: PeriodEventTotals) -> some View {
+        let duration = totals.durationSeconds
+        let pages = totals.pageTurns
+        let characters = totals.characterCount
         let speed: Double = duration >= 60 ? Double(pages) / (duration / 60) : 0
         let hasPeriodData = duration > 0 || pages > 0 || characters > 0
 
@@ -1171,14 +1190,14 @@ struct ReadingStatsView: View {
     private func streakCalendarCard(buckets: [Date: DailyEventTotals]) -> some View {
         let monthStart = calendar.dateInterval(of: .month, for: displayedCalendarMonth)?.start ?? displayedCalendarMonth
         let summaries = monthlySummaries(containing: monthStart, buckets: buckets)
-        let streak = libraryStore.readingStats.currentStreak(calendar: calendar)
-        let longestStreak = longestStreak()
+        let streak = currentStreak(in: buckets)
+        let longestStreak = longestStreak(in: buckets)
         let activeDays = summaries.filter { summary in
             calendar.isDate(summary.day, equalTo: monthStart, toGranularity: .month) && summary.durationSeconds > 0
         }.count
         let canMoveForwardMonth = (calendar.date(byAdding: .month, value: 1, to: monthStart) ?? monthStart) <= currentMonthStart
         let canMoveForwardYear = (calendar.date(byAdding: .year, value: 1, to: monthStart) ?? monthStart) <= currentMonthStart
-        let months = availableCalendarMonths
+        let months = visibleCalendarMonths
         let isCurrentMonth = calendar.isDate(monthStart, equalTo: currentMonthStart, toGranularity: .month)
         let activeDaysLabel = isCurrentMonth ? "本月阅读" : "\(calendar.component(.month, from: monthStart))月阅读"
         let weekRows = weeksInMonth(containing: monthStart)
@@ -1281,7 +1300,7 @@ struct ReadingStatsView: View {
                 .lineLimit(1)
                 .minimumScaleFactor(0.75)
 
-            if hasAnyReadingData {
+            if !buckets.isEmpty {
                 HStack(alignment: .top, spacing: 6) {
                     VStack(spacing: 4) {
                         ForEach(weekdayLabels, id: \.self) { label in
@@ -1390,11 +1409,11 @@ struct ReadingStatsView: View {
     /// serif Arabic numerals (rank 1 in the section accent as the chapter lead). The card
     /// shows the top 3; 显示更多 pushes a full ranked page so a large library never
     /// stretches the stats page. Titles render in the user's 简/繁 preference.
-    private var topBooksCard: some View {
-        let interval = selectedTopBooksRange.interval(containing: Date(), calendar: calendar)
-        let events = libraryStore.readingStats.events.filter { interval.contains($0.timestamp) }
-        let books = topBooks(from: events)
-        let rows = topBookRows(books)
+    private func topBooksCard(
+        books: [BookReadingAggregate],
+        booksByID: [UUID: ReadingStatsBook]
+    ) -> some View {
+        let rows = topBookRows(books, booksByID: booksByID)
         let cap = 3
         let visible = Array(rows.prefix(cap))
         // Header summary for the detail page: total reading time + book/page totals.
@@ -1461,7 +1480,10 @@ struct ReadingStatsView: View {
     /// Builds display rows (rank, 简/繁-normalized title, formatted metric line, cover,
     /// and duration-relative progress) once so the top-3 card and the full detail page
     /// render from identical data.
-    private func topBookRows(_ books: [BookReadingAggregate]) -> [TopBookDisplayRow] {
+    private func topBookRows(
+        _ books: [BookReadingAggregate],
+        booksByID: [UUID: ReadingStatsBook]
+    ) -> [TopBookDisplayRow] {
         let maxDuration = max(books.map(\.durationSeconds).max() ?? 0, 1)
         return books.enumerated().map { index, item in
             let book = booksByID[item.id]
@@ -1477,7 +1499,7 @@ struct ReadingStatsView: View {
         }
     }
 
-    private func heroSubtitle(minutes: Int, streak: Int) -> String {
+    private func heroSubtitle(minutes: Int, streak: Int, totalCharacters: Int) -> String {
         if minutes == 0 {
             return "翻开下一页后，这里会开始记录你的阅读节奏。"
         }
@@ -1533,24 +1555,6 @@ struct ReadingStatsView: View {
         return max(1, Int(ceil(Double(daysToMonthEnd) / 7.0)))
     }
 
-    /// One-pass O(n) bucketing of all reading events by their startOfDay. Callers
-    /// (heatmap / daily / monthly summaries) used to each filter the full event
-    /// array per grid cell — 84 cells × thousands of events compounded to hundreds
-    /// of thousands of comparisons per render and was the dominant cause of Stats
-    /// tab lag on real devices. With this map, each cell lookup is O(1).
-    private func bucketEventsByDay() -> [Date: DailyEventTotals] {
-        var buckets: [Date: DailyEventTotals] = [:]
-        for event in libraryStore.readingStats.events {
-            let day = calendar.startOfDay(for: event.timestamp)
-            var entry = buckets[day] ?? DailyEventTotals()
-            entry.durationSeconds += event.durationSeconds
-            entry.pageTurns += event.pageTurns
-            entry.characterCount += event.characterCount
-            buckets[day] = entry
-        }
-        return buckets
-    }
-
     private func summary(for day: Date, in buckets: [Date: DailyEventTotals]) -> DailyReadingSummary {
         let entry = buckets[day] ?? DailyEventTotals()
         return DailyReadingSummary(
@@ -1560,10 +1564,6 @@ struct ReadingStatsView: View {
             characterCount: entry.characterCount,
             topBookID: nil
         )
-    }
-
-    private func weeklyHeatmapSummaries() -> [DailyReadingSummary] {
-        weeklyHeatmapSummaries(buckets: bucketEventsByDay())
     }
 
     private func weeklyHeatmapSummaries(buckets: [Date: DailyEventTotals]) -> [DailyReadingSummary] {
@@ -1581,23 +1581,8 @@ struct ReadingStatsView: View {
         return summaries
     }
 
-    private func dailySummaries(days count: Int) -> [DailyReadingSummary] {
-        let today = calendar.startOfDay(for: Date())
-        let buckets = bucketEventsByDay()
-        return (0..<count).reversed().map { offset in
-            let day = calendar.date(byAdding: .day, value: -offset, to: today) ?? today
-            return summary(for: day, in: buckets)
-        }
-    }
-
-    private func monthlySummaries(containing date: Date) -> [DailyReadingSummary] {
-        monthlySummaries(containing: date, buckets: bucketEventsByDay())
-    }
-
     /// Variant that accepts a pre-computed day-bucket map so callers iterating
-    /// over many months (the calendar TabView renders up to 24 pages at a time)
-    /// don't redo the full-events scan per month — that was the dominant cause
-    /// of laggy month swiping in Stats.
+    /// over the rolling calendar pages don't redo the full-events scan per month.
     private func monthlySummaries(containing date: Date, buckets: [Date: DailyEventTotals]) -> [DailyReadingSummary] {
         let monthStart = calendar.dateInterval(of: .month, for: date)?.start ?? date
         let gridStart = calendar.dateInterval(of: .weekOfYear, for: monthStart)?.start ?? monthStart
@@ -1611,32 +1596,26 @@ struct ReadingStatsView: View {
         }
     }
 
-    private func topBookID(in events: [ReadingStatsEvent]) -> UUID? {
-        topBooks(from: events).first?.id
-    }
-
-    private func topBooks(from events: [ReadingStatsEvent]) -> [BookReadingAggregate] {
-        let grouped = Dictionary(grouping: events, by: \.bookID)
-        return grouped.compactMap { bookID, events in
-            let title = booksByID[bookID]?.title ?? events.last?.bookTitle ?? "未知书籍"
-            return BookReadingAggregate(
-                id: bookID,
-                title: title,
-                durationSeconds: events.reduce(0) { $0 + $1.durationSeconds },
-                pageTurns: events.reduce(0) { $0 + $1.pageTurns },
-                characterCount: events.reduce(0) { $0 + $1.characterCount }
-            )
-        }
-        .sorted {
-            if $0.durationSeconds != $1.durationSeconds {
-                return $0.durationSeconds > $1.durationSeconds
+    private func currentStreak(in buckets: [Date: DailyEventTotals]) -> Int {
+        let today = calendar.startOfDay(for: Date())
+        var streak = 0
+        var cursor = today
+        var safety = 0
+        while safety < 366 {
+            if (buckets[cursor]?.durationSeconds ?? 0) > 0 {
+                streak += 1
+            } else if !calendar.isDate(cursor, inSameDayAs: today) {
+                break
             }
-            return $0.pageTurns > $1.pageTurns
+            guard let previous = calendar.date(byAdding: .day, value: -1, to: cursor) else { break }
+            cursor = previous
+            safety += 1
         }
+        return streak
     }
 
-    private func longestStreak() -> Int {
-        let activeDays = Set(libraryStore.readingStats.events.map { calendar.startOfDay(for: $0.timestamp) })
+    private func longestStreak(in buckets: [Date: DailyEventTotals]) -> Int {
+        let activeDays = Array(buckets.keys)
         guard !activeDays.isEmpty else { return 0 }
         let sorted = activeDays.sorted()
         var longest = 1
@@ -1653,13 +1632,6 @@ struct ReadingStatsView: View {
             }
         }
         return longest
-    }
-
-    /// Quantizes a duration into one of the palette's 5 fixed heat levels so the
-    /// heatmap reads as discrete intensity steps (matching the legend swatches) rather
-    /// than a continuous gradient where adjacent cells look almost identical.
-    private func heatColor(_ duration: TimeInterval, maxDuration: TimeInterval) -> Color {
-        palette.heatLevels[heatLevel(duration, maxDuration: maxDuration)]
     }
 
     private func heatLevel(_ duration: TimeInterval, maxDuration: TimeInterval) -> Int {
@@ -1842,12 +1814,39 @@ private struct DailyEventTotals {
     var characterCount: Int = 0
 }
 
+/// Values shared by the hero, global metrics, and leaderboard during one render.
+/// Building this once avoids repeatedly merging the library and reconstructing
+/// the same UUID lookup for every leaderboard row.
+private struct StatsOverview {
+    let booksByID: [UUID: ReadingStatsBook]
+    let totalDuration: TimeInterval
+    let totalPages: Int
+    let totalCharacters: Int
+    let readBookCount: Int
+    let finishedBookCount: Int
+}
+
 private struct BookReadingAggregate: Identifiable {
     let id: UUID
     let title: String
     let durationSeconds: TimeInterval
     let pageTurns: Int
     let characterCount: Int
+}
+
+private struct PeriodEventTotals {
+    var durationSeconds: TimeInterval = 0
+    var pageTurns: Int = 0
+    var characterCount: Int = 0
+}
+
+/// Everything derived from the event ledger for one Stats render. Keeping it in a
+/// single snapshot avoids repeating an O(n) event scan for each section.
+private struct StatsRenderData {
+    let overview: StatsOverview
+    let buckets: [Date: DailyEventTotals]
+    let periodTotals: PeriodEventTotals
+    let topBooks: [BookReadingAggregate]
 }
 
 private struct StatMetric: Identifiable {
