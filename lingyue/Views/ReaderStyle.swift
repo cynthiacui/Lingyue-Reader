@@ -118,6 +118,134 @@ enum PageTransitionStyle: String, CaseIterable, Identifiable {
     }
 }
 
+/// One source of truth for the reader and 我 → 阅读偏好 controls. Both surfaces
+/// intentionally use the same typography and dimensions even though their colors
+/// and containers differ.
+enum ReaderPreferenceControlMetrics {
+    static let rowSpacing: CGFloat = 6
+    static let iconSize: CGFloat = 14
+    static let labelSize: CGFloat = 15
+    static let menuLabelWidth: CGFloat = 36
+    static let swatchSize: CGFloat = 28
+    static let swatchIconSize: CGFloat = 11
+}
+
+struct ReaderPreferenceSliderRow: View {
+    let title: String
+    let systemImage: String
+    @Binding var value: Double
+    let range: ClosedRange<Double>
+    let step: Double
+    let foregroundColor: Color
+    let valueColor: Color
+    let tintColor: Color
+    let format: (Double) -> String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: ReaderPreferenceControlMetrics.rowSpacing) {
+            HStack(spacing: 8) {
+                Image(systemName: systemImage)
+                    .font(.system(
+                        size: ReaderPreferenceControlMetrics.iconSize,
+                        weight: .semibold
+                    ))
+                    .foregroundStyle(foregroundColor)
+
+                Text(title)
+                    .font(.system(
+                        size: ReaderPreferenceControlMetrics.labelSize,
+                        weight: .medium
+                    ))
+                    .foregroundStyle(foregroundColor)
+
+                Spacer(minLength: 0)
+
+                Text(format(value))
+                    .font(.system(
+                        size: ReaderPreferenceControlMetrics.labelSize,
+                        weight: .semibold
+                    ).monospacedDigit())
+                    .foregroundStyle(valueColor)
+            }
+
+            Slider(value: $value, in: range, step: step)
+                .tint(tintColor)
+        }
+    }
+}
+
+struct ReaderPreferenceMenuRow<SelectionValue: Hashable, Options: View>: View {
+    let title: String
+    @Binding var selection: SelectionValue
+    let foregroundColor: Color
+    let tintColor: Color
+    @ViewBuilder let options: () -> Options
+
+    init(
+        title: String,
+        selection: Binding<SelectionValue>,
+        foregroundColor: Color,
+        tintColor: Color,
+        @ViewBuilder options: @escaping () -> Options
+    ) {
+        self.title = title
+        self._selection = selection
+        self.foregroundColor = foregroundColor
+        self.tintColor = tintColor
+        self.options = options
+    }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Text(title)
+                .font(.system(
+                    size: ReaderPreferenceControlMetrics.labelSize,
+                    weight: .medium
+                ))
+                .foregroundStyle(foregroundColor)
+                .frame(
+                    width: ReaderPreferenceControlMetrics.menuLabelWidth,
+                    alignment: .leading
+                )
+
+            Spacer(minLength: 0)
+
+            Picker(title, selection: $selection) {
+                options()
+            }
+            .pickerStyle(.menu)
+            .labelsHidden()
+            .tint(tintColor)
+        }
+    }
+}
+
+/// Shared attributed-text construction for settings preview, pagination measurement,
+/// and the visible reader page. Keeping paragraph style and font resolution here
+/// prevents nominally identical settings from producing different line geometry.
+enum ReaderTextLayout {
+    static func attributes(
+        fontSize: CGFloat,
+        lineSpacing: CGFloat,
+        paragraphSpacing: CGFloat,
+        fontFamily: ReaderFontFamily,
+        color: UIColor
+    ) -> [NSAttributedString.Key: Any] {
+        let paragraphStyle = NSMutableParagraphStyle()
+        paragraphStyle.alignment = .justified
+        paragraphStyle.baseWritingDirection = .leftToRight
+        paragraphStyle.lineSpacing = lineSpacing
+        paragraphStyle.paragraphSpacing = fontSize * paragraphSpacing
+        paragraphStyle.lineBreakMode = .byWordWrapping
+
+        return [
+            .font: fontFamily.uiFont(size: fontSize),
+            .foregroundColor: color,
+            .paragraphStyle: paragraphStyle
+        ]
+    }
+}
+
 extension Color {
     static let readerBackground = Color(red: 0.9333, green: 0.9804, blue: 0.9333)
     static let readerSurface = Color(red: 0.984, green: 0.973, blue: 0.949)
@@ -264,77 +392,6 @@ struct BookCover: View {
 
     private func displayed(_ text: String) -> String {
         ChineseTextConverter.display(text, usesTraditionalChinese: usesTraditionalChinese)
-    }
-}
-
-/// Compact `[ − ] value [ ＋ ]` stepper used in Settings and the reader preferences popup.
-/// Tap targets are fixed-width cells with hairline dividers so taps near the value text
-/// don't accidentally change it.
-struct CompactStepper: View {
-    @Binding var value: Double
-    let range: ClosedRange<Double>
-    let step: Double
-    let format: (Double) -> String
-    var background: Color = Color(.tertiarySystemFill)
-    var foreground: Color? = nil
-    var dividerColor: Color? = nil
-
-    @Environment(\.appTheme) private var theme
-
-    var body: some View {
-        let resolvedForeground = foreground ?? theme.primaryText
-        let resolvedDivider = dividerColor ?? theme.secondaryText.opacity(0.25)
-
-        let canDecrement = value > range.lowerBound
-        let canIncrement = value < range.upperBound
-
-        HStack(spacing: 0) {
-            Button {
-                guard canDecrement else { return }
-                value = max(range.lowerBound, value - step)
-            } label: {
-                Image(systemName: "minus")
-                    .font(.system(size: 13, weight: .bold))
-                    .frame(width: 44, height: 32)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .disabled(!canDecrement)
-            .opacity(canDecrement ? 1 : 0.35)
-
-            Rectangle()
-                .fill(resolvedDivider)
-                .frame(width: 1, height: 18)
-
-            Text(format(value))
-                .font(.system(size: 14, weight: .semibold).monospacedDigit())
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
-                .padding(.horizontal, 6)
-                .frame(minWidth: 52, minHeight: 32)
-
-            Rectangle()
-                .fill(resolvedDivider)
-                .frame(width: 1, height: 18)
-
-            Button {
-                guard canIncrement else { return }
-                value = min(range.upperBound, value + step)
-            } label: {
-                Image(systemName: "plus")
-                    .font(.system(size: 13, weight: .bold))
-                    .frame(width: 44, height: 32)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .disabled(!canIncrement)
-            .opacity(canIncrement ? 1 : 0.35)
-        }
-        .foregroundStyle(resolvedForeground)
-        .background(
-            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .fill(background)
-        )
     }
 }
 

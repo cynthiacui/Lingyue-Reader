@@ -1283,6 +1283,7 @@ struct ReaderView: View {
                                 .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
+                        .accessibilityLabel("阅读偏好")
 
                         Button {
                             withAnimation(ModalStyle.presentationAnimation) {
@@ -1543,30 +1544,39 @@ struct ReaderView: View {
                         .padding(.bottom, -6)
                         .accessibilityHidden(true)
 
-                    preferenceSliderRow(
+                    ReaderPreferenceSliderRow(
                         title: "字号",
                         systemImage: "textformat.size",
                         value: $fontSize,
                         range: 12...35,
                         step: 1,
+                        foregroundColor: pageForeground,
+                        valueColor: pageForeground,
+                        tintColor: pageForeground.opacity(0.85),
                         format: { "\(Int($0))" }
                     )
 
-                    preferenceSliderRow(
+                    ReaderPreferenceSliderRow(
                         title: "行距",
                         systemImage: "line.3.horizontal",
                         value: $lineSpacing,
                         range: 0...24,
                         step: 1,
+                        foregroundColor: pageForeground,
+                        valueColor: pageForeground,
+                        tintColor: pageForeground.opacity(0.85),
                         format: { "\(Int($0))" }
                     )
 
-                    preferenceSliderRow(
+                    ReaderPreferenceSliderRow(
                         title: "段距",
                         systemImage: "text.alignleft",
                         value: $paragraphSpacingMultiplier,
                         range: 0...1.5,
                         step: 0.1,
+                        foregroundColor: pageForeground,
+                        valueColor: pageForeground,
+                        tintColor: pageForeground.opacity(0.85),
                         format: { String(format: "%.1f", $0) }
                     )
 
@@ -1595,12 +1605,15 @@ struct ReaderView: View {
                     }
 
                     if autoScroll {
-                        preferenceSliderRow(
+                        ReaderPreferenceSliderRow(
                             title: "停留",
                             systemImage: "timer",
                             value: $autoScrollSeconds,
                             range: 2...30,
                             step: 1,
+                            foregroundColor: pageForeground,
+                            valueColor: pageForeground,
+                            tintColor: pageForeground.opacity(0.85),
                             format: { "\(Int($0))秒" }
                         )
                     }
@@ -1688,12 +1701,15 @@ struct ReaderView: View {
                         .padding(.bottom, -6)
                         .accessibilityHidden(true)
 
-                    preferenceSliderRow(
+                    ReaderPreferenceSliderRow(
                         title: "亮度",
                         systemImage: "sun.max",
                         value: brightnessBinding,
                         range: 0...1,
                         step: 0.01,
+                        foregroundColor: pageForeground,
+                        valueColor: pageForeground,
+                        tintColor: pageForeground.opacity(0.85),
                         format: { "\(Int(($0 * 100).rounded()))%" }
                     )
                 }
@@ -1750,81 +1766,46 @@ struct ReaderView: View {
         }
     }
 
-    private func preferenceSliderRow(
-        title: String,
-        systemImage: String,
-        value: Binding<Double>,
-        range: ClosedRange<Double>,
-        step: Double,
-        format: @escaping (Double) -> String
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
-                Image(systemName: systemImage)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(pageForeground)
-                Text(title)
-                    .font(.system(size: 15, weight: .medium))
-                    .foregroundStyle(pageForeground)
-                Spacer(minLength: 0)
-                Text(format(value.wrappedValue))
-                    .font(.system(size: 15, weight: .semibold).monospacedDigit())
-                    .foregroundStyle(pageForeground)
-            }
-
-            Slider(value: value, in: range, step: step)
-                .tint(pageForeground.opacity(0.85))
-        }
-    }
-
     private var preferenceFontRow: some View {
-        HStack(spacing: 12) {
-            Text("字体")
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(secondaryForeground)
-                .frame(width: 36, alignment: .leading)
-
-            Spacer(minLength: 0)
-
-            Picker("字体", selection: fontFamilyBinding) {
-                ForEach(ReaderFontFamily.allCases) { family in
-                    Text(family.displayName)
-                        .font(family.swiftUIFont(size: 16))
-                        .tag(family.rawValue)
-                }
+        ReaderPreferenceMenuRow(
+            title: "字体",
+            selection: fontFamilyBinding,
+            foregroundColor: secondaryForeground,
+            tintColor: pageForeground
+        ) {
+            ForEach(ReaderFontFamily.allCases) { family in
+                Text(family.displayName)
+                    .font(family.swiftUIFont(size: 16))
+                    .tag(family.rawValue)
             }
-            .pickerStyle(.menu)
-            .labelsHidden()
-            .tint(pageForeground)
         }
     }
 
     private var preferencePageTransitionRow: some View {
-        HStack(spacing: 12) {
-            Text("翻页")
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(secondaryForeground)
-                .frame(width: 36, alignment: .leading)
-
-            Spacer(minLength: 0)
-
-            Picker("翻页", selection: pageTransitionBinding) {
-                ForEach(PageTransitionStyle.allCases) { style in
-                    Text(style.displayName).tag(style.rawValue)
-                }
+        ReaderPreferenceMenuRow(
+            title: "翻页",
+            selection: pageTransitionBinding,
+            foregroundColor: secondaryForeground,
+            tintColor: pageForeground
+        ) {
+            ForEach(PageTransitionStyle.allCases) { style in
+                Text(style.displayName).tag(style.rawValue)
             }
-            .pickerStyle(.menu)
-            .labelsHidden()
-            .tint(pageForeground)
         }
     }
 
     private var preferenceThemeRow: some View {
         HStack(spacing: 12) {
             Text("背景")
-                .font(.system(size: 13, weight: .medium))
+                .font(.system(
+                    size: ReaderPreferenceControlMetrics.labelSize,
+                    weight: .medium
+                ))
                 .foregroundStyle(secondaryForeground)
-                .frame(width: 36, alignment: .leading)
+                .frame(
+                    width: ReaderPreferenceControlMetrics.menuLabelWidth,
+                    alignment: .leading
+                )
 
             HStack(spacing: 10) {
                 ForEach(ReadingTheme.allCases) { theme in
@@ -1835,7 +1816,10 @@ struct ReaderView: View {
                     } label: {
                         Circle()
                             .fill(theme.pageBackground)
-                            .frame(width: 28, height: 28)
+                            .frame(
+                                width: ReaderPreferenceControlMetrics.swatchSize,
+                                height: ReaderPreferenceControlMetrics.swatchSize
+                            )
                             .overlay(
                                 Circle()
                                     .strokeBorder(
@@ -1846,11 +1830,17 @@ struct ReaderView: View {
                             .overlay(alignment: .center) {
                                 if isAutoManaged {
                                     Image(systemName: "circle.lefthalf.filled")
-                                        .font(.system(size: 11, weight: .bold))
+                                        .font(.system(
+                                            size: ReaderPreferenceControlMetrics.swatchIconSize,
+                                            weight: .bold
+                                        ))
                                         .foregroundStyle(theme.pageForeground)
                                 } else if isSelected {
                                     Image(systemName: "checkmark")
-                                        .font(.system(size: 11, weight: .bold))
+                                        .font(.system(
+                                            size: ReaderPreferenceControlMetrics.swatchIconSize,
+                                            weight: .bold
+                                        ))
                                         .foregroundStyle(theme.pageForeground)
                                 }
                             }
@@ -1870,9 +1860,15 @@ struct ReaderView: View {
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: systemImage)
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.system(
+                        size: ReaderPreferenceControlMetrics.iconSize,
+                        weight: .semibold
+                    ))
                 Text(label)
-                    .font(.system(size: 13, weight: .medium))
+                    .font(.system(
+                        size: ReaderPreferenceControlMetrics.labelSize,
+                        weight: .medium
+                    ))
             }
             .frame(maxWidth: .infinity, minHeight: 36)
             .foregroundStyle(isOn.wrappedValue ? Color.white : pageForeground)
@@ -3055,21 +3051,13 @@ struct ReaderView: View {
         paragraphSpacing: CGFloat,
         fontFamily: ReaderFontFamily
     ) -> [NSAttributedString.Key: Any] {
-        let paragraphStyle = NSMutableParagraphStyle()
-        paragraphStyle.alignment = .justified
-        paragraphStyle.baseWritingDirection = .leftToRight
-        paragraphStyle.lineSpacing = lineSpacing
-        // Multiplier is taken against font size (≈ line height) so paragraph gaps stay
-        // visually consistent across font sizes and don't collapse to zero when the user
-        // dials lineSpacing down to 0.
-        paragraphStyle.paragraphSpacing = fontSize * paragraphSpacing
-        paragraphStyle.lineBreakMode = .byWordWrapping
-
-        return [
-            .font: fontFamily.uiFont(size: fontSize),
-            .foregroundColor: UIColor.label,
-            .paragraphStyle: paragraphStyle
-        ]
+        ReaderTextLayout.attributes(
+            fontSize: fontSize,
+            lineSpacing: lineSpacing,
+            paragraphSpacing: paragraphSpacing,
+            fontFamily: fontFamily,
+            color: .label
+        )
     }
 
     private func displayed(_ text: String) -> String {
@@ -3147,20 +3135,15 @@ private struct JustifiedReaderText: UIViewRepresentable {
     func updateUIView(_ textView: ReaderTextView, context: Context) {
         context.coordinator.onLookup = onLookup
 
-        let paragraphStyle = NSMutableParagraphStyle()
-        paragraphStyle.alignment = .justified
-        paragraphStyle.baseWritingDirection = .leftToRight
-        paragraphStyle.lineSpacing = lineSpacing
-        paragraphStyle.paragraphSpacing = fontSize * paragraphSpacing
-        paragraphStyle.lineBreakMode = .byWordWrapping
-
         textView.attributedText = NSAttributedString(
             string: text,
-            attributes: [
-                .font: fontFamily.uiFont(size: fontSize),
-                .foregroundColor: color,
-                .paragraphStyle: paragraphStyle
-            ]
+            attributes: ReaderTextLayout.attributes(
+                fontSize: fontSize,
+                lineSpacing: lineSpacing,
+                paragraphSpacing: paragraphSpacing,
+                fontFamily: fontFamily,
+                color: color
+            )
         )
         textView.updateContainerSize()
     }

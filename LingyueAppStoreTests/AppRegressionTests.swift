@@ -149,6 +149,29 @@ final class ReaderPageTurnIntegrationTests: XCTestCase {
     }
 }
 
+final class ReaderTypographyTests: XCTestCase {
+    func testSharedTextLayoutPreservesReaderTypographyValues() throws {
+        let attributes = ReaderTextLayout.attributes(
+            fontSize: 22,
+            lineSpacing: 7,
+            paragraphSpacing: 0.5,
+            fontFamily: .system,
+            color: .label
+        )
+
+        let font = try XCTUnwrap(attributes[.font] as? UIFont)
+        let paragraphStyle = try XCTUnwrap(
+            attributes[.paragraphStyle] as? NSParagraphStyle
+        )
+
+        XCTAssertEqual(font.pointSize, 22, accuracy: 0.001)
+        XCTAssertEqual(paragraphStyle.lineSpacing, 7, accuracy: 0.001)
+        XCTAssertEqual(paragraphStyle.paragraphSpacing, 11, accuracy: 0.001)
+        XCTAssertEqual(paragraphStyle.alignment, .justified)
+        XCTAssertEqual(paragraphStyle.lineBreakMode, .byWordWrapping)
+    }
+}
+
 @MainActor
 final class LibraryLifecycleIntegrationTests: XCTestCase {
     func testBackupRestoreRehydratesLibraryStatsAndCover() async throws {

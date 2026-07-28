@@ -291,11 +291,9 @@ struct ReadingPreferencesView: View {
         ChineseTextConverter.display(previewBaseText, usesTraditionalChinese: usesTraditionalChinese)
     }
 
-    private var previewParagraphs: [String] {
+    private var compactedPreviewText: String {
         displayedPreviewText
             .replacingOccurrences(of: #"\n\s*\n+"#, with: "\n", options: .regularExpression)
-            .split(separator: "\n", omittingEmptySubsequences: true)
-            .map(String.init)
     }
 
     private var selectedFontFamily: ReaderFontFamily {
@@ -372,18 +370,15 @@ struct ReadingPreferencesView: View {
     /// while reading.
     private var previewRow: some View {
         VStack(alignment: .leading, spacing: 12) {
-            VStack(alignment: .leading, spacing: fontSize * paragraphSpacingMultiplier) {
-                ForEach(Array(previewParagraphs.enumerated()), id: \.offset) { _, paragraph in
-                    SettingsPreviewParagraph(
-                        text: paragraph,
-                        fontSize: fontSize,
-                        lineSpacing: lineSpacing,
-                        fontFamily: selectedFontFamily,
-                        color: UIColor(selectedTheme.pageForeground)
-                    )
-                    .frame(maxWidth: .infinity, alignment: .topLeading)
-                }
-            }
+            SettingsReaderPreviewText(
+                text: compactedPreviewText,
+                fontSize: fontSize,
+                lineSpacing: lineSpacing,
+                paragraphSpacing: paragraphSpacingMultiplier,
+                fontFamily: selectedFontFamily,
+                color: UIColor(selectedTheme.pageForeground)
+            )
+            .frame(maxWidth: .infinity, alignment: .topLeading)
 
             Text("当前：\(selectedTheme.rawValue) · \(selectedFontFamily.displayName) · \(usesTraditionalChinese ? "繁体" : "简体") · 字号 \(Int(fontSize)) · 行距 \(Int(lineSpacing)) · 段距 \(String(format: "%.1f", paragraphSpacingMultiplier))")
                 .font(.caption.weight(.medium))
@@ -397,88 +392,82 @@ struct ReadingPreferencesView: View {
     }
 
     private var fontSizeRow: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Label("字号", systemImage: "textformat.size")
-                Spacer()
-                Text("\(Int(fontSize))")
-                    .foregroundStyle(theme.secondaryText)
-            }
-            .font(.headline)
-
-            Slider(value: $fontSize, in: 12...35, step: 1)
-                .tint(theme.accent)
-        }
+        ReaderPreferenceSliderRow(
+            title: "字号",
+            systemImage: "textformat.size",
+            value: $fontSize,
+            range: 12...35,
+            step: 1,
+            foregroundColor: theme.primaryText,
+            valueColor: theme.secondaryText,
+            tintColor: theme.accent,
+            format: { "\(Int($0))" }
+        )
     }
 
     private var lineSpacingRow: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Label("行距", systemImage: "text.line.first.and.arrowtriangle.forward")
-                Spacer()
-                Text("\(Int(lineSpacing))")
-                    .foregroundStyle(theme.secondaryText)
-            }
-            .font(.headline)
-
-            Slider(value: $lineSpacing, in: 0...24, step: 1)
-                .tint(theme.accent)
-        }
+        ReaderPreferenceSliderRow(
+            title: "行距",
+            systemImage: "line.3.horizontal",
+            value: $lineSpacing,
+            range: 0...24,
+            step: 1,
+            foregroundColor: theme.primaryText,
+            valueColor: theme.secondaryText,
+            tintColor: theme.accent,
+            format: { "\(Int($0))" }
+        )
     }
 
     private var paragraphSpacingRow: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Label("段距", systemImage: "text.alignleft")
-                Spacer()
-                Text(String(format: "%.1f", paragraphSpacingMultiplier))
-                    .foregroundStyle(theme.secondaryText)
-            }
-            .font(.headline)
-
-            Slider(value: $paragraphSpacingMultiplier, in: 0...1.5, step: 0.1)
-                .tint(theme.accent)
-        }
+        ReaderPreferenceSliderRow(
+            title: "段距",
+            systemImage: "text.alignleft",
+            value: $paragraphSpacingMultiplier,
+            range: 0...1.5,
+            step: 0.1,
+            foregroundColor: theme.primaryText,
+            valueColor: theme.secondaryText,
+            tintColor: theme.accent,
+            format: { String(format: "%.1f", $0) }
+        )
     }
 
     private var fontFamilyPickerRow: some View {
-        HStack {
-            Label("字体", systemImage: "character.book.closed.fill")
-                .font(.headline)
-            Spacer()
-            Picker("字体", selection: fontFamilyBinding) {
-                ForEach(ReaderFontFamily.allCases) { family in
-                    Text(family.displayName)
-                        .font(family.swiftUIFont(size: 16))
-                        .tag(family.rawValue)
-                }
+        ReaderPreferenceMenuRow(
+            title: "字体",
+            selection: fontFamilyBinding,
+            foregroundColor: theme.primaryText,
+            tintColor: theme.accent
+        ) {
+            ForEach(ReaderFontFamily.allCases) { family in
+                Text(family.displayName)
+                    .font(family.swiftUIFont(size: 16))
+                    .tag(family.rawValue)
             }
-            .pickerStyle(.menu)
-            .labelsHidden()
-            .tint(theme.accent)
         }
     }
 
     private var pageTransitionPickerRow: some View {
-        HStack {
-            Label("翻页效果", systemImage: "book.pages")
-                .font(.headline)
-            Spacer()
-            Picker("翻页效果", selection: pageTransitionBinding) {
-                ForEach(PageTransitionStyle.allCases) { style in
-                    Text(style.displayName).tag(style.rawValue)
-                }
+        ReaderPreferenceMenuRow(
+            title: "翻页",
+            selection: pageTransitionBinding,
+            foregroundColor: theme.primaryText,
+            tintColor: theme.accent
+        ) {
+            ForEach(PageTransitionStyle.allCases) { style in
+                Text(style.displayName).tag(style.rawValue)
             }
-            .pickerStyle(.menu)
-            .labelsHidden()
-            .tint(theme.accent)
         }
     }
 
     private var twoColumnRow: some View {
         Toggle(isOn: $twoColumnLayout) {
             Label("横屏双栏", systemImage: "rectangle.split.2x1")
-                .font(.headline)
+                .font(.system(
+                    size: ReaderPreferenceControlMetrics.labelSize,
+                    weight: .medium
+                ))
         }
     }
 
@@ -494,7 +483,10 @@ struct ReadingPreferencesView: View {
                         VStack(spacing: 6) {
                             Circle()
                                 .fill(readingTheme.pageBackground)
-                                .frame(width: 34, height: 34)
+                                .frame(
+                                    width: ReaderPreferenceControlMetrics.swatchSize,
+                                    height: ReaderPreferenceControlMetrics.swatchSize
+                                )
                                 .overlay(
                                     Circle()
                                         .strokeBorder(
@@ -505,11 +497,17 @@ struct ReadingPreferencesView: View {
                                 .overlay(alignment: .center) {
                                     if isAutoManaged {
                                         Image(systemName: "circle.lefthalf.filled")
-                                            .font(.system(size: 13, weight: .bold))
+                                            .font(.system(
+                                                size: ReaderPreferenceControlMetrics.swatchIconSize,
+                                                weight: .bold
+                                            ))
                                             .foregroundStyle(readingTheme.pageForeground)
                                     } else if isSelected {
                                         Image(systemName: "checkmark")
-                                            .font(.system(size: 13, weight: .bold))
+                                            .font(.system(
+                                                size: ReaderPreferenceControlMetrics.swatchIconSize,
+                                                weight: .bold
+                                            ))
                                             .foregroundStyle(readingTheme.pageForeground)
                                     }
                                 }
@@ -538,7 +536,10 @@ struct ReadingPreferencesView: View {
                 }
             )) {
                 Label("跟随系统深色模式", systemImage: "circle.lefthalf.filled")
-                    .font(.subheadline)
+                    .font(.system(
+                        size: ReaderPreferenceControlMetrics.labelSize,
+                        weight: .medium
+                    ))
             }
             .padding(.top, 4)
 
@@ -554,29 +555,35 @@ struct ReadingPreferencesView: View {
     private var traditionalRow: some View {
         Toggle(isOn: $usesTraditionalChinese) {
             Label("繁体中文显示", systemImage: "character.book.closed")
-                .font(.headline)
+                .font(.system(
+                    size: ReaderPreferenceControlMetrics.labelSize,
+                    weight: .medium
+                ))
         }
     }
 
     private var autoScrollRow: some View {
         Toggle(isOn: $autoScroll) {
             Label("自动滚读", systemImage: "arrow.down.to.line.compact")
-                .font(.headline)
+                .font(.system(
+                    size: ReaderPreferenceControlMetrics.labelSize,
+                    weight: .medium
+                ))
         }
     }
 
     private var autoScrollSecondsRow: some View {
-        HStack {
-            Label("每页停留", systemImage: "timer")
-                .font(.headline)
-            Spacer()
-            CompactStepper(
-                value: $autoScrollSeconds,
-                range: 2...30,
-                step: 1,
-                format: { "\(Int($0))秒" }
-            )
-        }
+        ReaderPreferenceSliderRow(
+            title: "停留",
+            systemImage: "timer",
+            value: $autoScrollSeconds,
+            range: 2...30,
+            step: 1,
+            foregroundColor: theme.primaryText,
+            valueColor: theme.secondaryText,
+            tintColor: theme.accent,
+            format: { "\(Int($0))秒" }
+        )
     }
 }
 
@@ -949,17 +956,16 @@ struct AboutSettingsView: View {
     }
 }
 
-// MARK: - Preview paragraph
+// MARK: - Reader preview
 
-/// Renders a single preview paragraph through the same UITextView/NSAttributedString
-/// path the reader uses, so the Settings preview reflects the actual on-page font
-/// metrics. Earlier the preview used SwiftUI `Text` with `Font.custom/system`, which
-/// on real hardware rendered noticeably larger than the reader at the same nominal
-/// point size — a UIKit/SwiftUI text-rendering divergence, not Dynamic Type.
-private struct SettingsPreviewParagraph: UIViewRepresentable {
+/// Uses the same attributed-string builder and one-text-view layout as the visible
+/// reader page. Rendering each paragraph as a separate view made nominally identical
+/// paragraph spacing and line geometry diverge between the two surfaces.
+private struct SettingsReaderPreviewText: UIViewRepresentable {
     let text: String
     let fontSize: CGFloat
     let lineSpacing: CGFloat
+    let paragraphSpacing: CGFloat
     let fontFamily: ReaderFontFamily
     let color: UIColor
 
@@ -969,6 +975,8 @@ private struct SettingsPreviewParagraph: UIViewRepresentable {
         textView.isSelectable = false
         textView.isScrollEnabled = false
         textView.backgroundColor = .clear
+        textView.contentInset = .zero
+        textView.contentInsetAdjustmentBehavior = .never
         textView.textContainerInset = .zero
         textView.textContainer.lineFragmentPadding = 0
         textView.textContainer.maximumNumberOfLines = 0
@@ -996,16 +1004,13 @@ private struct SettingsPreviewParagraph: UIViewRepresentable {
     }
 
     private var attributes: [NSAttributedString.Key: Any] {
-        let paragraphStyle = NSMutableParagraphStyle()
-        paragraphStyle.alignment = .justified
-        paragraphStyle.baseWritingDirection = .leftToRight
-        paragraphStyle.lineSpacing = lineSpacing
-        paragraphStyle.lineBreakMode = .byWordWrapping
-        return [
-            .font: fontFamily.uiFont(size: fontSize),
-            .foregroundColor: color,
-            .paragraphStyle: paragraphStyle
-        ]
+        ReaderTextLayout.attributes(
+            fontSize: fontSize,
+            lineSpacing: lineSpacing,
+            paragraphSpacing: paragraphSpacing,
+            fontFamily: fontFamily,
+            color: color
+        )
     }
 }
 
