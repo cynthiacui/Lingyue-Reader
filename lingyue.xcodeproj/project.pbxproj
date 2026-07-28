@@ -64,7 +64,27 @@
 		64AE68FB2FB6C76D004058EE /* DMSerifDisplay-OFL.txt in Resources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000803 /* DMSerifDisplay-OFL.txt */; };
 		64AE68FC2FB6C76D004058EE /* LXGWWenKaiGBLite-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000804 /* LXGWWenKaiGBLite-Regular.ttf */; };
 		64AE68FD2FB6C76D004058EE /* BookCoverStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000039 /* BookCoverStore.swift */; };
+		A10000000000000000000041 /* AppRegressionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000031 /* AppRegressionTests.swift */; };
+		A10000000000000000000042 /* MeTabSmokeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000032 /* MeTabSmokeTests.swift */; };
+		A10000000000000000000043 /* LingyueCore in Frameworks */ = {isa = PBXBuildFile; productRef = A10000000000000000000081 /* LingyueCore */; };
 /* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		A10000000000000000000091 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 010000000000000000000402 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 64AE67F82FB6C76D004058EE;
+			remoteInfo = LingyueAppStore;
+		};
+		A10000000000000000000092 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 010000000000000000000402 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 64AE67F82FB6C76D004058EE;
+			remoteInfo = LingyueAppStore;
+		};
+/* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
 		010000000000000000000001 /* LingyueApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LingyueApp.swift; sourceTree = "<group>"; };
@@ -126,6 +146,10 @@
 		010000000000000000000804 /* LXGWWenKaiGBLite-Regular.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "LXGWWenKaiGBLite-Regular.ttf"; sourceTree = "<group>"; };
 		64AE682D2FB6C76D004058EE /* LingyueAppStore.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = LingyueAppStore.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		64AE682E2FB6C76D004058EE /* Info-AppStore.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "Info-AppStore.plist"; sourceTree = "<group>"; };
+		A10000000000000000000011 /* LingyueAppStoreTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = LingyueAppStoreTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		A10000000000000000000012 /* LingyueAppStoreUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = LingyueAppStoreUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		A10000000000000000000031 /* AppRegressionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppRegressionTests.swift; sourceTree = "<group>"; };
+		A10000000000000000000032 /* MeTabSmokeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeTabSmokeTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -137,6 +161,21 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		A10000000000000000000053 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A10000000000000000000043 /* LingyueCore in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A10000000000000000000054 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -144,6 +183,8 @@
 			isa = PBXGroup;
 			children = (
 				010000000000000000000302 /* lingyue */,
+				A10000000000000000000021 /* LingyueAppStoreTests */,
+				A10000000000000000000022 /* LingyueAppStoreUITests */,
 				010000000000000000000303 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -166,6 +207,8 @@
 			isa = PBXGroup;
 			children = (
 				64AE682D2FB6C76D004058EE /* LingyueAppStore.app */,
+				A10000000000000000000011 /* LingyueAppStoreTests.xctest */,
+				A10000000000000000000012 /* LingyueAppStoreUITests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -269,6 +312,22 @@
 			path = Settings;
 			sourceTree = "<group>";
 		};
+		A10000000000000000000021 /* LingyueAppStoreTests */ = {
+			isa = PBXGroup;
+			children = (
+				A10000000000000000000031 /* AppRegressionTests.swift */,
+			);
+			path = LingyueAppStoreTests;
+			sourceTree = "<group>";
+		};
+		A10000000000000000000022 /* LingyueAppStoreUITests */ = {
+			isa = PBXGroup;
+			children = (
+				A10000000000000000000032 /* MeTabSmokeTests.swift */,
+			);
+			path = LingyueAppStoreUITests;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -291,6 +350,47 @@
 			productName = lingyue;
 			productReference = 64AE682D2FB6C76D004058EE /* LingyueAppStore.app */;
 			productType = "com.apple.product-type.application";
+		};
+		A10000000000000000000001 /* LingyueAppStoreTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A10000000000000000000061 /* Build configuration list for PBXNativeTarget "LingyueAppStoreTests" */;
+			buildPhases = (
+				A10000000000000000000051 /* Sources */,
+				A10000000000000000000053 /* Frameworks */,
+				A10000000000000000000055 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				A100000000000000000000A1 /* PBXTargetDependency */,
+			);
+			name = LingyueAppStoreTests;
+			packageProductDependencies = (
+				A10000000000000000000081 /* LingyueCore */,
+			);
+			productName = LingyueAppStoreTests;
+			productReference = A10000000000000000000011 /* LingyueAppStoreTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		A10000000000000000000002 /* LingyueAppStoreUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A10000000000000000000062 /* Build configuration list for PBXNativeTarget "LingyueAppStoreUITests" */;
+			buildPhases = (
+				A10000000000000000000052 /* Sources */,
+				A10000000000000000000054 /* Frameworks */,
+				A10000000000000000000056 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				A100000000000000000000A2 /* PBXTargetDependency */,
+			);
+			name = LingyueAppStoreUITests;
+			packageProductDependencies = (
+			);
+			productName = LingyueAppStoreUITests;
+			productReference = A10000000000000000000012 /* LingyueAppStoreUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
 		};
 /* End PBXNativeTarget section */
 
@@ -320,6 +420,8 @@
 			projectRoot = "";
 			targets = (
 				64AE67F82FB6C76D004058EE /* LingyueAppStore */,
+				A10000000000000000000001 /* LingyueAppStoreTests */,
+				A10000000000000000000002 /* LingyueAppStoreUITests */,
 			);
 		};
 /* End PBXProject section */
@@ -337,6 +439,20 @@
 				64AE68FA2FB6C76D004058EE /* DMSerifDisplay-Italic.ttf in Resources */,
 				64AE68FB2FB6C76D004058EE /* DMSerifDisplay-OFL.txt in Resources */,
 				64AE68292FB6C76D004058EE /* PrivacyInfo.xcprivacy in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A10000000000000000000055 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A10000000000000000000056 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -398,7 +514,36 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		A10000000000000000000051 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A10000000000000000000041 /* AppRegressionTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A10000000000000000000052 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A10000000000000000000042 /* MeTabSmokeTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		A100000000000000000000A1 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 64AE67F82FB6C76D004058EE /* LingyueAppStore */;
+			targetProxy = A10000000000000000000091 /* PBXContainerItemProxy */;
+		};
+		A100000000000000000000A2 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 64AE67F82FB6C76D004058EE /* LingyueAppStore */;
+			targetProxy = A10000000000000000000092 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		010000000000000000000601 /* Debug */ = {
@@ -572,6 +717,72 @@
 			};
 			name = Release;
 		};
+		A10000000000000000000071 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = 749JX9NLVL;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.lingyue.reader.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/LingyueAppStore.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/LingyueAppStore";
+			};
+			name = Debug;
+		};
+		A10000000000000000000072 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = 749JX9NLVL;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.lingyue.reader.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/LingyueAppStore.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/LingyueAppStore";
+			};
+			name = Release;
+		};
+		A10000000000000000000073 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = 749JX9NLVL;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.lingyue.reader.uitests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = LingyueAppStore;
+			};
+			name = Debug;
+		};
+		A10000000000000000000074 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = 749JX9NLVL;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.lingyue.reader.uitests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = LingyueAppStore;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -593,6 +804,24 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
+		A10000000000000000000061 /* Build configuration list for PBXNativeTarget "LingyueAppStoreTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A10000000000000000000071 /* Debug */,
+				A10000000000000000000072 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A10000000000000000000062 /* Build configuration list for PBXNativeTarget "LingyueAppStoreUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A10000000000000000000073 /* Debug */,
+				A10000000000000000000074 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
@@ -604,6 +833,10 @@
 
 /* Begin XCSwiftPackageProductDependency section */
 		64AE67F92FB6C76D004058EE /* LingyueCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = LingyueCore;
+		};
+		A10000000000000000000081 /* LingyueCore */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = LingyueCore;
 		};

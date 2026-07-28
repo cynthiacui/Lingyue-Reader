@@ -1,0 +1,275 @@
+import UIKit
+import XCTest
+import LingyueCore
+@testable import LingyueAppStore
+
+final class ReadingStatsLedgerTests: XCTestCase {
+    func testCompactionPreservesTotalsAndBoundsDetailedEvents() {
+        let bookID = UUID()
+        let reference = Date(timeIntervalSince1970: 1_800_000_000)
+        let oldStart = reference.addingTimeInterval(-200 * 24 * 60 * 60)
+        let events = (0..<3_205).map { index in
+            ReadingStatsEvent(
+                id: UUID(),
+                bookID: bookID,
+                bookTitle: "测试书",
+                timestamp: oldStart.addingTimeInterval(TimeInterval(index)),
+                durationSeconds: 2,
+                pageTurns: 1,
+                characterCount: 300,
+                chapterTitle: "第一章",
+                progress: Double(index) / 3_205
+            )
+        }
+        var ledger = ReadingStatsLedger(events: events)
+
+        let totalsBefore = activityTotals(in: ledger)
+        ledger.compactHistory(reference: reference)
+        let totalsAfter = activityTotals(in: ledger)
+
+        XCTAssertEqual(totalsAfter.duration, totalsBefore.duration)
+        XCTAssertEqual(totalsAfter.pages, totalsBefore.pages)
+        XCTAssertEqual(totalsAfter.characters, totalsBefore.characters)
+        XCTAssertLessThanOrEqual(
+            ledger.events.count,
+            ReadingStatsLedger.maximumDetailedEventCount
+        )
+        XCTAssertFalse(ledger.dailySummaries.isEmpty)
+    }
+
+    func testLegacyLedgerWithoutDailySummariesStillDecodes() throws {
+        let ledger = ReadingStatsLedger(
+            events: [
+                ReadingStatsEvent(
+                    id: UUID(),
+                    bookID: UUID(),
+                    bookTitle: "旧备份",
+                    timestamp: Date(timeIntervalSince1970: 1_700_000_000),
+                    durationSeconds: 30,
+                    pageTurns: 1,
+                    characterCount: 500,
+                    chapterTitle: "第一章",
+                    progress: 0.1
+                )
+            ]
+        )
+        let encoded = try JSONEncoder().encode(ledger)
+        var object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+        )
+        object.removeValue(forKey: "dailySummaries")
+        let legacyData = try JSONSerialization.data(withJSONObject: object)
+
+        let decoded = try JSONDecoder().decode(ReadingStatsLedger.self, from: legacyData)
+
+        XCTAssertEqual(decoded.events, ledger.events)
+        XCTAssertTrue(decoded.dailySummaries.isEmpty)
+    }
+
+    func testDetailedEventCapHoldsEvenWhenEveryEventHasADifferentBook() {
+        let reference = Date(timeIntervalSince1970: 1_800_000_000)
+        let events = (0...ReadingStatsLedger.maximumDetailedEventCount).map { index in
+            ReadingStatsEvent(
+                id: UUID(),
+                bookID: UUID(),
+                bookTitle: "书 \(index)",
+                timestamp: reference.addingTimeInterval(TimeInterval(-index)),
+                durationSeconds: 1,
+                pageTurns: 1,
+                characterCount: 1,
+                chapterTitle: "第一章",
+                progress: 0.1
+            )
+        }
+        var ledger = ReadingStatsLedger(events: events)
+
+        ledger.compactHistory(reference: reference)
+
+        XCTAssertEqual(
+            ledger.events.count,
+            ReadingStatsLedger.maximumDetailedEventCount
+        )
+        XCTAssertEqual(ledger.dailySummaries.count, 1)
+    }
+
+    private func activityTotals(
+        in ledger: ReadingStatsLedger
+    ) -> (duration: TimeInterval, pages: Int, characters: Int) {
+        var duration: TimeInterval = 0
+        var pages = 0
+        var characters = 0
+        ledger.forEachActivity { _, _, _, eventDuration, eventPages, eventCharacters in
+            duration += eventDuration
+            pages += eventPages
+            characters += eventCharacters
+        }
+        return (duration, pages, characters)
+    }
+}
+
+final class ReaderPageTurnIntegrationTests: XCTestCase {
+    func testInteriorCurlBoundaryCallbackDoesNotSkipToNextChapter() {
+        let action = ReaderPageTurnResolver.boundaryAction(
+            direction: .forward,
+            startPageIndex: 2,
+            pageCount: 5,
+            currentChapterIndex: 0,
+            chapterCount: 2,
+            usesTwoColumns: false
+        )
+
+        XCTAssertEqual(action, .none)
+    }
+
+    func testBackwardCurlFromNewChapterReturnsToPreviousChapterLastPage() {
+        let action = ReaderPageTurnResolver.boundaryAction(
+            direction: .backward,
+            startPageIndex: 0,
+            pageCount: 5,
+            currentChapterIndex: 1,
+            chapterCount: 2,
+            usesTwoColumns: false
+        )
+
+        XCTAssertEqual(action, .chapter(index: 0, landOnLastPage: true))
+    }
+
+    func testSuppressedCurlCallbackCannotTurnChapterTwice() {
+        let action = ReaderPageTurnResolver.boundaryAction(
+            direction: .forward,
+            startPageIndex: 4,
+            pageCount: 5,
+            currentChapterIndex: 0,
+            chapterCount: 2,
+            usesTwoColumns: false,
+            suppressChapterTurn: true
+        )
+
+        XCTAssertEqual(action, .none)
+    }
+}
+
+@MainActor
+final class LibraryLifecycleIntegrationTests: XCTestCase {
+    func testBackupRestoreRehydratesLibraryStatsAndCover() async throws {
+        let directory = temporaryDirectory()
+        let store = LibraryStore(storageDirectory: directory)
+        let stack = makeSourceStack(in: directory)
+        let service = BackupService(libraryStore: store, stack: stack)
+        let novel = makeNovel()
+        let cover = try makeCoverData()
+        var ledger = ReadingStatsLedger()
+        ledger.rememberBook(novel, at: novel.lastOpenedAt ?? Date())
+        let archive = BackupArchive(
+            version: BackupArchive.currentVersion,
+            createdAt: Date(),
+            buildVariant: "appstore",
+            library: [LibraryCategory(name: "测试", novels: [novel])],
+            readingStats: ledger,
+            editableSources: [],
+            sourcePreferences: [],
+            sourceValidations: [],
+            bookCovers: [novel.id.uuidString: cover]
+        )
+
+        let encoded = try service.encodeArchive(archive)
+        let decoded = try service.decodeArchive(from: encoded)
+        try await service.restore(decoded)
+
+        XCTAssertEqual(store.allNovels, [novel])
+        XCTAssertEqual(store.readingStats.books.map(\.id), [novel.id])
+        let restoredCover = await BookCoverStore.shared.coverData(
+            for: novel.id,
+            remoteURLString: nil
+        )
+        XCTAssertEqual(restoredCover, cover)
+        await BookCoverStore.shared.removeCover(for: novel.id)
+    }
+
+    func testDeletingBookRemovesItsSavedCover() async throws {
+        let directory = temporaryDirectory()
+        let store = LibraryStore(storageDirectory: directory)
+        let novel = makeNovel()
+        let cover = try makeCoverData()
+        store.categories = [LibraryCategory(name: "测试", novels: [novel])]
+        await BookCoverStore.shared.restoreCovers(
+            [novel.id.uuidString: cover],
+            keeping: [novel.id]
+        )
+
+        store.deleteBook(novel)
+
+        let deadline = Date().addingTimeInterval(2)
+        var storedCover: Data?
+        repeat {
+            storedCover = await BookCoverStore.shared.coverData(
+                for: novel.id,
+                remoteURLString: nil
+            )
+            if storedCover == nil { break }
+            try await Task.sleep(for: .milliseconds(20))
+        } while Date() < deadline
+
+        XCTAssertTrue(store.allNovels.isEmpty)
+        XCTAssertNil(storedCover)
+    }
+
+    private func makeSourceStack(in directory: URL) -> SourceStack {
+        let loader = HTTPSourceLoader()
+        let editableStore = FileEditableSourceStore(
+            fileURL: directory.appendingPathComponent("sources.json")
+        )
+        let preferenceStore = FileSourcePreferenceStore(
+            fileURL: directory.appendingPathComponent("preferences.json")
+        )
+        let validationStore = FileSourceValidationStore(
+            fileURL: directory.appendingPathComponent("validations.json")
+        )
+        let registry = AppStoreSourceRegistry(
+            editableStore: editableStore,
+            loader: loader,
+            preferenceStore: preferenceStore
+        )
+        return SourceStack(
+            loader: loader,
+            editableStore: editableStore,
+            preferenceStore: preferenceStore,
+            validationStore: validationStore,
+            registry: registry,
+            pageDetector: PageDetector(registry: registry)
+        )
+    }
+
+    private func makeNovel() -> Novel {
+        Novel(
+            title: "回归测试",
+            author: "灵阅",
+            genre: "测试",
+            summary: "用于验证备份与清理。",
+            lastChapter: "第一章",
+            progress: 0.25,
+            readMinutes: 12,
+            lastOpenedAt: Date(timeIntervalSince1970: 1_750_000_000),
+            coverPalette: .teal,
+            isFeatured: false,
+            chapters: [
+                NovelChapter(title: "第一章", content: "测试正文")
+            ]
+        )
+    }
+
+    private func makeCoverData() throws -> Data {
+        let renderer = UIGraphicsImageRenderer(size: CGSize(width: 2, height: 2))
+        let image = renderer.image { context in
+            UIColor.systemTeal.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 2, height: 2))
+        }
+        return try XCTUnwrap(image.pngData())
+    }
+
+    private func temporaryDirectory() -> URL {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent("LingyueAppTests", isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    }
+}

@@ -712,28 +712,29 @@ struct ReadingStatsView: View {
         var periodTotals = PeriodEventTotals()
         var topBookTotals: [UUID: BookReadingAggregate] = [:]
 
-        for event in libraryStore.readingStats.events {
-            let day = calendar.startOfDay(for: event.timestamp)
+        libraryStore.readingStats.forEachActivity {
+            bookID, bookTitle, timestamp, durationSeconds, pageTurns, characterCount in
+            let day = calendar.startOfDay(for: timestamp)
             var daily = buckets[day] ?? DailyEventTotals()
-            daily.durationSeconds += event.durationSeconds
-            daily.pageTurns += event.pageTurns
-            daily.characterCount += event.characterCount
+            daily.durationSeconds += durationSeconds
+            daily.pageTurns += pageTurns
+            daily.characterCount += characterCount
             buckets[day] = daily
 
-            if periodInterval.contains(event.timestamp) {
-                periodTotals.durationSeconds += event.durationSeconds
-                periodTotals.pageTurns += event.pageTurns
-                periodTotals.characterCount += event.characterCount
+            if periodInterval.contains(timestamp) {
+                periodTotals.durationSeconds += durationSeconds
+                periodTotals.pageTurns += pageTurns
+                periodTotals.characterCount += characterCount
             }
 
-            if topBooksInterval.contains(event.timestamp) {
-                let current = topBookTotals[event.bookID]
-                topBookTotals[event.bookID] = BookReadingAggregate(
-                    id: event.bookID,
-                    title: overview.booksByID[event.bookID]?.title ?? event.bookTitle,
-                    durationSeconds: (current?.durationSeconds ?? 0) + event.durationSeconds,
-                    pageTurns: (current?.pageTurns ?? 0) + event.pageTurns,
-                    characterCount: (current?.characterCount ?? 0) + event.characterCount
+            if topBooksInterval.contains(timestamp) {
+                let current = topBookTotals[bookID]
+                topBookTotals[bookID] = BookReadingAggregate(
+                    id: bookID,
+                    title: overview.booksByID[bookID]?.title ?? bookTitle,
+                    durationSeconds: (current?.durationSeconds ?? 0) + durationSeconds,
+                    pageTurns: (current?.pageTurns ?? 0) + pageTurns,
+                    characterCount: (current?.characterCount ?? 0) + characterCount
                 )
             }
         }

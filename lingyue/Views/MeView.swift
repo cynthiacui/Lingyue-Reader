@@ -2,6 +2,8 @@ import SwiftUI
 
 struct MeView: View {
     @Environment(\.appTheme) private var theme
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @EnvironmentObject private var themeManager: AppThemeManager
     @EnvironmentObject private var libraryStore: LibraryStore
     @EnvironmentObject private var tabSelection: TabSelectionStore
@@ -28,11 +30,10 @@ struct MeView: View {
             ThemeBackgroundView()
 
             ScrollView {
-                VStack(spacing: 16) {
-                    heroBanner(metrics: metrics)
-                    quickAccessGroup
-                }
-                .padding(.horizontal, 16)
+                responsiveContent(metrics: metrics)
+                .frame(maxWidth: 1_080)
+                .frame(maxWidth: .infinity)
+                .padding(.horizontal, usesRegularLayout ? 24 : 16)
                 .padding(.top, 8)
                 .padding(.bottom, 24)
             }
@@ -45,6 +46,27 @@ struct MeView: View {
     }
 
     // MARK: - Sections
+
+    private var usesRegularLayout: Bool {
+        horizontalSizeClass == .regular && !dynamicTypeSize.isAccessibilitySize
+    }
+
+    @ViewBuilder
+    private func responsiveContent(metrics: HeroMetrics) -> some View {
+        if usesRegularLayout {
+            HStack(alignment: .top, spacing: 20) {
+                heroBanner(metrics: metrics)
+                    .frame(maxWidth: .infinity)
+                quickAccessGroup
+                    .frame(maxWidth: 440)
+            }
+        } else {
+            VStack(spacing: 16) {
+                heroBanner(metrics: metrics)
+                quickAccessGroup
+            }
+        }
+    }
 
     /// 我 hero — bookmark-shaped reading-identity card. The whole card is one
     /// `Button` that switches the bottom tab bar to 统计 (rather than pushing
@@ -170,13 +192,10 @@ struct MeView: View {
 
     private var heroMetrics: HeroMetrics {
         let stats = libraryStore.readingStats
-        let cutoff = Date().addingTimeInterval(-7 * 24 * 60 * 60)
-        var weeklySeconds: TimeInterval = 0
-        for event in stats.events {
-            if event.timestamp >= cutoff {
-                weeklySeconds += event.durationSeconds
-            }
-        }
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        let cutoff = calendar.date(byAdding: .day, value: -6, to: today) ?? today
+        let weeklySeconds = stats.totalDuration(since: cutoff)
 
         var mostRecent: Novel?
         var mostRecentAt: Date = .distantPast

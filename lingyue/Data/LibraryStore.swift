@@ -43,6 +43,18 @@ struct ReadingStatsEvent: Identifiable, Hashable, Codable, Sendable {
     let progress: Double
 }
 
+/// A compact, lossless roll-up of older page-turn events. Recent events keep their
+/// chapter/progress detail for browsing history; older activity only needs one record
+/// per book and calendar day for Stats charts, streaks, and totals.
+struct ReadingStatsDailySummary: Hashable, Codable, Sendable {
+    let day: Date
+    let bookID: UUID
+    var bookTitle: String
+    var durationSeconds: TimeInterval
+    var pageTurns: Int
+    var characterCount: Int
+}
+
 private struct ReadingStatsCursor: Hashable, Codable, Sendable {
     let bookID: UUID
     var lastObservedAt: Date
@@ -56,7 +68,48 @@ private struct ReadingStatsCursor: Hashable, Codable, Sendable {
 struct ReadingStatsLedger: Hashable, Codable, Sendable {
     var books: [ReadingStatsBook] = []
     var events: [ReadingStatsEvent] = []
+    var dailySummaries: [ReadingStatsDailySummary] = []
     fileprivate var cursors: [ReadingStatsCursor] = []
+
+    static let maximumDetailedEventCount = 3_000
+    static let detailedHistoryDays = 100
+
+    private enum CodingKeys: String, CodingKey {
+        case books
+        case events
+        case dailySummaries
+        case cursors
+    }
+
+    init(
+        books: [ReadingStatsBook] = [],
+        events: [ReadingStatsEvent] = [],
+        dailySummaries: [ReadingStatsDailySummary] = []
+    ) {
+        self.books = books
+        self.events = events
+        self.dailySummaries = dailySummaries
+        self.cursors = []
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        books = try container.decodeIfPresent([ReadingStatsBook].self, forKey: .books) ?? []
+        events = try container.decodeIfPresent([ReadingStatsEvent].self, forKey: .events) ?? []
+        dailySummaries = try container.decodeIfPresent(
+            [ReadingStatsDailySummary].self,
+            forKey: .dailySummaries
+        ) ?? []
+        cursors = try container.decodeIfPresent([ReadingStatsCursor].self, forKey: .cursors) ?? []
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(books, forKey: .books)
+        try container.encode(events, forKey: .events)
+        try container.encode(dailySummaries, forKey: .dailySummaries)
+        try container.encode(cursors, forKey: .cursors)
+    }
 
     var totalDurationSeconds: TimeInterval {
         books.reduce(0) { $0 + $1.totalDurationSeconds }
@@ -77,6 +130,10 @@ struct ReadingStatsLedger: Hashable, Codable, Sendable {
     func currentStreak(reference: Date = Date(), calendar: Calendar = .current) -> Int {
         let today = calendar.startOfDay(for: reference)
         var perDayDuration: [Date: TimeInterval] = [:]
+        for summary in dailySummaries {
+            let day = calendar.startOfDay(for: summary.day)
+            perDayDuration[day, default: 0] += summary.durationSeconds
+        }
         for event in events {
             let day = calendar.startOfDay(for: event.timestamp)
             perDayDuration[day, default: 0] += event.durationSeconds
@@ -96,6 +153,162 @@ struct ReadingStatsLedger: Hashable, Codable, Sendable {
             safety += 1
         }
         return streak
+    }
+
+    /// Iterates both compacted and detailed activity without allocating a merged array.
+    /// Daily summaries use their calendar-day start as the timestamp.
+    func forEachActivity(
+        _ body: (
+            _ bookID: UUID,
+            _ bookTitle: String,
+            _ timestamp: Date,
+            _ durationSeconds: TimeInterval,
+            _ pageTurns: Int,
+            _ characterCount: Int
+        ) -> Void
+    ) {
+        for summary in dailySummaries {
+            body(
+                summary.bookID,
+                summary.bookTitle,
+                summary.day,
+                summary.durationSeconds,
+                summary.pageTurns,
+                summary.characterCount
+            )
+        }
+        for event in events {
+            body(
+                event.bookID,
+                event.bookTitle,
+                event.timestamp,
+                event.durationSeconds,
+                event.pageTurns,
+                event.characterCount
+            )
+        }
+    }
+
+    func totalDuration(since cutoff: Date) -> TimeInterval {
+        var total: TimeInterval = 0
+        forEachActivity { _, _, timestamp, duration, _, _ in
+            if timestamp >= cutoff {
+                total += duration
+            }
+        }
+        return total
+    }
+
+    /// Keeps recent chapter-level history while bounding work on the Stats screen.
+    /// Events outside the history window, plus the oldest events over the hard cap,
+    /// are merged into stable per-book/per-day summaries.
+    mutating func compactHistory(
+        reference: Date = Date(),
+        calendar: Calendar = .current
+    ) {
+        guard !events.isEmpty else { return }
+
+        let today = calendar.startOfDay(for: reference)
+        let historyCutoff = calendar.date(
+            byAdding: .day,
+            value: -Self.detailedHistoryDays,
+            to: today
+        ) ?? today
+
+        var eventIDsToCompact = Set(
+            events.lazy
+                .filter { $0.timestamp < historyCutoff }
+                .map(\.id)
+        )
+
+        let recentEvents = events.filter { !eventIDsToCompact.contains($0.id) }
+        if recentEvents.count > Self.maximumDetailedEventCount {
+            var latestEventIDByBook: [UUID: UUID] = [:]
+            var latestTimestampByBook: [UUID: Date] = [:]
+            for event in recentEvents {
+                if event.timestamp >= (latestTimestampByBook[event.bookID] ?? .distantPast) {
+                    latestTimestampByBook[event.bookID] = event.timestamp
+                    latestEventIDByBook[event.bookID] = event.id
+                }
+            }
+
+            var numberToCompact = recentEvents.count - Self.maximumDetailedEventCount
+            for event in recentEvents.sorted(by: { $0.timestamp < $1.timestamp })
+            where numberToCompact > 0 {
+                guard latestEventIDByBook[event.bookID] != event.id else { continue }
+                eventIDsToCompact.insert(event.id)
+                numberToCompact -= 1
+            }
+
+            // A pathological import can create more than the cap's worth of books
+            // inside the detail window. In that case keeping one event per book
+            // would still leave the array unbounded, so roll up the oldest remaining
+            // entries after preserving as many latest-per-book events as possible.
+            if numberToCompact > 0 {
+                for event in recentEvents.sorted(by: { $0.timestamp < $1.timestamp })
+                where numberToCompact > 0 && !eventIDsToCompact.contains(event.id) {
+                    eventIDsToCompact.insert(event.id)
+                    numberToCompact -= 1
+                }
+            }
+        }
+
+        guard !eventIDsToCompact.isEmpty else { return }
+
+        struct SummaryKey: Hashable {
+            let day: Date
+            let bookID: UUID
+        }
+
+        var summaries: [SummaryKey: ReadingStatsDailySummary] = [:]
+        summaries.reserveCapacity(dailySummaries.count + eventIDsToCompact.count)
+        for summary in dailySummaries {
+            let day = calendar.startOfDay(for: summary.day)
+            let key = SummaryKey(day: day, bookID: summary.bookID)
+            if var existing = summaries[key] {
+                existing.bookTitle = summary.bookTitle
+                existing.durationSeconds += summary.durationSeconds
+                existing.pageTurns += summary.pageTurns
+                existing.characterCount += summary.characterCount
+                summaries[key] = existing
+            } else {
+                summaries[key] = ReadingStatsDailySummary(
+                    day: day,
+                    bookID: summary.bookID,
+                    bookTitle: summary.bookTitle,
+                    durationSeconds: summary.durationSeconds,
+                    pageTurns: summary.pageTurns,
+                    characterCount: summary.characterCount
+                )
+            }
+        }
+
+        for event in events where eventIDsToCompact.contains(event.id) {
+            let day = calendar.startOfDay(for: event.timestamp)
+            let key = SummaryKey(day: day, bookID: event.bookID)
+            if var existing = summaries[key] {
+                existing.bookTitle = event.bookTitle
+                existing.durationSeconds += event.durationSeconds
+                existing.pageTurns += event.pageTurns
+                existing.characterCount += event.characterCount
+                summaries[key] = existing
+            } else {
+                summaries[key] = ReadingStatsDailySummary(
+                    day: day,
+                    bookID: event.bookID,
+                    bookTitle: event.bookTitle,
+                    durationSeconds: event.durationSeconds,
+                    pageTurns: event.pageTurns,
+                    characterCount: event.characterCount
+                )
+            }
+        }
+
+        events.removeAll { eventIDsToCompact.contains($0.id) }
+        dailySummaries = summaries.values.sorted {
+            if $0.day != $1.day { return $0.day < $1.day }
+            return $0.bookID.uuidString < $1.bookID.uuidString
+        }
     }
 
     mutating func rememberBook(_ novel: Novel, at date: Date = Date(), deletedAt: Date? = nil) {
@@ -238,6 +451,9 @@ struct ReadingStatsLedger: Hashable, Codable, Sendable {
                 progress: clampedProgress
             )
         )
+        if events.count > Self.maximumDetailedEventCount {
+            compactHistory(reference: timestamp)
+        }
 
         if let bookIndex = books.firstIndex(where: { $0.id == novel.id }) {
             books[bookIndex].lastReadAt = max(books[bookIndex].lastReadAt, timestamp)
@@ -340,23 +556,40 @@ final class LibraryStore: ObservableObject {
     private var saveGeneration: UInt = 0
     private var statsSaveGeneration: UInt = 0
 
-    init() {
-        self.storageURL = LibraryStore.makeStorageURL()
-        self.statsStorageURL = LibraryStore.makeStatsStorageURL()
+    init(storageDirectory: URL? = nil) {
+        self.storageURL = LibraryStore.makeStorageURL(in: storageDirectory)
+        self.statsStorageURL = LibraryStore.makeStatsStorageURL(in: storageDirectory)
 
+#if DEBUG
+        let usesScreenshotFixture = CommandLine.arguments.contains("--screenshot-fixture")
+        self.categories = usesScreenshotFixture
+            ? LibraryStore.screenshotFixtureCategories()
+            : (LibraryStore.loadCategories(from: storageURL) ?? [])
+        var loadedStats = usesScreenshotFixture
+            ? ReadingStatsLedger()
+            : (LibraryStore.loadReadingStats(from: statsStorageURL) ?? ReadingStatsLedger())
+#else
         self.categories = LibraryStore.loadCategories(from: storageURL) ?? []
         var loadedStats = LibraryStore.loadReadingStats(from: statsStorageURL) ?? ReadingStatsLedger()
+#endif
+        let statsBeforeMigration = loadedStats
         // Older builds recorded "ghost" events whenever pagination or scene-phase changes
         // triggered a persist, even if the user never turned a page. Strip those legacy
         // events on load so the calendar/streak reflect actual reading rather than incidental
         // book-opens. Page-turn events have `pageTurns >= 1` by construction.
         loadedStats.events.removeAll { $0.pageTurns == 0 }
+        loadedStats.compactHistory()
         self.readingStats = loadedStats
         seedReadingStatsFromLibraryIfNeeded()
+        if loadedStats != statsBeforeMigration {
+            scheduleStatsSave()
+        }
 
-        let activeBookIDs = Set(categories.flatMap(\.novels).map(\.id))
-        Task {
-            await BookCoverStore.shared.removeOrphanedCovers(keeping: activeBookIDs)
+        if storageDirectory == nil {
+            let activeBookIDs = Set(categories.flatMap(\.novels).map(\.id))
+            Task {
+                await BookCoverStore.shared.removeOrphanedCovers(keeping: activeBookIDs)
+            }
         }
     }
 
@@ -382,7 +615,9 @@ final class LibraryStore: ObservableObject {
     /// the `didSet` save scheduler — the caller still calls `flush()`
     /// afterwards so the restore lands on disk before a quit.
     func replaceReadingStats(_ stats: ReadingStatsLedger) {
-        readingStats = stats
+        var compacted = stats
+        compacted.compactHistory()
+        readingStats = compacted
     }
 
     var allNovels: [Novel] {
@@ -815,21 +1050,53 @@ final class LibraryStore: ObservableObject {
         return try? JSONDecoder().decode(ReadingStatsLedger.self, from: data)
     }
 
-    private static func makeStorageURL() -> URL {
-        let baseURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-            ?? FileManager.default.temporaryDirectory
+    private static func makeStorageURL(in storageDirectory: URL?) -> URL {
+        let baseURL = storageDirectory ?? defaultStorageDirectory()
         return baseURL
-            .appendingPathComponent("lingyue", isDirectory: true)
             .appendingPathComponent("LibraryStore.json")
     }
 
-    private static func makeStatsStorageURL() -> URL {
-        let baseURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-            ?? FileManager.default.temporaryDirectory
+    private static func makeStatsStorageURL(in storageDirectory: URL?) -> URL {
+        let baseURL = storageDirectory ?? defaultStorageDirectory()
         return baseURL
-            .appendingPathComponent("lingyue", isDirectory: true)
             .appendingPathComponent("ReadingStatsStore.json")
     }
+
+    private static func defaultStorageDirectory() -> URL {
+        let baseURL = FileManager.default.urls(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask
+        ).first ?? FileManager.default.temporaryDirectory
+        return baseURL.appendingPathComponent("lingyue", isDirectory: true)
+    }
+
+#if DEBUG
+    private static func screenshotFixtureCategories() -> [LibraryCategory] {
+        let novel = Novel(
+            id: UUID(uuidString: "8F72F58F-3B6A-4E08-960D-70F92D6BB377")!,
+            title: "红楼梦",
+            author: "曹雪芹",
+            genre: "古典文学",
+            summary: "满纸荒唐言，一把辛酸泪。",
+            lastChapter: "第十五回",
+            progress: 0.11,
+            readMinutes: 0,
+            lastOpenedAt: Date(),
+            addedAt: Date(),
+            currentChapterIndex: 14,
+            currentChapterPageIndex: 2,
+            coverPalette: .rose,
+            isFeatured: false
+        )
+        return [
+            LibraryCategory(
+                id: UUID(uuidString: "57EE2FF6-8899-4680-A22A-D04B2BDC563F")!,
+                name: "古典文学",
+                novels: [novel]
+            )
+        ]
+    }
+#endif
 }
 
 private actor LibraryPersistenceWriter {

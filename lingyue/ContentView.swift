@@ -190,7 +190,15 @@ enum AppTab: Hashable {
 /// through every intermediate view. Injected as `@EnvironmentObject` at the root.
 @MainActor
 final class TabSelectionStore: ObservableObject {
-    @Published var selectedTab: AppTab = .library
+    @Published var selectedTab: AppTab
+
+    init() {
+#if DEBUG
+        selectedTab = CommandLine.arguments.contains("--screenshot-me") ? .settings : .library
+#else
+        selectedTab = .library
+#endif
+    }
 }
 
 #Preview {
