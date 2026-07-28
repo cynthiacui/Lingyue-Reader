@@ -2456,6 +2456,9 @@ private struct CategoryDetailView: View {
             updatedCategories[index].novels.removeAll { $0.id == novel.id }
         }
         categories = updatedCategories
+        Task {
+            await BookCoverStore.shared.removeCover(for: novel.id)
+        }
     }
 
     private func clearDownloadedData(for novel: Novel) {
@@ -2650,6 +2653,7 @@ private struct CategoryManagementView: View {
         Task {
             for novel in removedNovels {
                 await ChapterContentCache.shared.clearCache(for: novel)
+                await BookCoverStore.shared.removeCover(for: novel.id)
             }
         }
     }

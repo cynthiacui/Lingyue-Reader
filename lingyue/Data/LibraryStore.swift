@@ -351,6 +351,11 @@ final class LibraryStore: ObservableObject {
         loadedStats.events.removeAll { $0.pageTurns == 0 }
         self.readingStats = loadedStats
         seedReadingStatsFromLibraryIfNeeded()
+
+        let activeBookIDs = Set(categories.flatMap(\.novels).map(\.id))
+        Task {
+            await BookCoverStore.shared.removeOrphanedCovers(keeping: activeBookIDs)
+        }
     }
 
     func flush() async {
@@ -450,7 +455,11 @@ final class LibraryStore: ObservableObject {
 
     @discardableResult
     func addImportedNovel(_ novel: Novel, categoryName: String = LibraryStore.uncategorizedName) -> Bool {
-        removeExistingBook(sourceURLString: novel.sourceURLString, title: novel.title)
+        removeExistingBook(
+            sourceURLString: novel.sourceURLString,
+            title: novel.title,
+            replacementBookID: novel.id
+        )
 
         // Stamp `addedAt` (not `lastOpenedAt`) so the just-imported book
         // floats to the top of its category in the wallet stack — but
@@ -462,6 +471,12 @@ final class LibraryStore: ObservableObject {
 
         let targetIndex = ensureCategory(named: categoryName)
         categories[targetIndex].novels.insert(stamped, at: 0)
+        Task {
+            await BookCoverStore.shared.prefetchCover(
+                for: stamped.id,
+                remoteURLString: stamped.coverImageURLString
+            )
+        }
         return true
     }
 
@@ -503,6 +518,16 @@ final class LibraryStore: ObservableObject {
             updatedCategories[index].novels.removeAll { $0.id == novel.id }
         }
         categories = updatedCategories
+        Task {
+            await BookCoverStore.shared.removeCover(for: novel.id)
+        }
+    }
+
+    func reconcileStoredCovers() {
+        let activeBookIDs = Set(allNovels.map(\.id))
+        Task {
+            await BookCoverStore.shared.removeOrphanedCovers(keeping: activeBookIDs)
+        }
     }
 
     func updateReadingState(
@@ -664,7 +689,11 @@ final class LibraryStore: ObservableObject {
         return normalized(novel.title) == normalizedTitle
     }
 
-    private func removeExistingBook(sourceURLString: String?, title: String) {
+    private func removeExistingBook(
+        sourceURLString: String?,
+        title: String,
+        replacementBookID: UUID
+    ) {
         let normalizedTitle = normalized(title)
         for index in categories.indices {
             let removed = categories[index].novels.filter {
@@ -672,6 +701,11 @@ final class LibraryStore: ObservableObject {
             }
             for novel in removed {
                 readingStats.rememberBook(novel, deletedAt: Date())
+                if novel.id != replacementBookID {
+                    Task {
+                        await BookCoverStore.shared.removeCover(for: novel.id)
+                    }
+                }
             }
             categories[index].novels.removeAll {
                 matches($0, sourceURLString: sourceURLString, normalizedTitle: normalizedTitle)

@@ -23,9 +23,6 @@ struct MeView: View {
     }
 
     var body: some View {
-        // Compute once per render — the underlying events / books / novels arrays
-        // can each be in the thousands, and the hero card + metrics row used to
-        // re-scan them five separate times per body invocation.
         let metrics = heroMetrics
         return ZStack {
             ThemeBackgroundView()
@@ -33,7 +30,6 @@ struct MeView: View {
             ScrollView {
                 VStack(spacing: 16) {
                     heroBanner(metrics: metrics)
-                    metricsRow(metrics: metrics)
                     quickAccessGroup
                 }
                 .padding(.horizontal, 16)
@@ -73,14 +69,6 @@ struct MeView: View {
         // the selection haptic is what makes the jump feel intentional.
         .buttonStyle(ModalPressableButtonStyle())
         .sensoryFeedback(.selection, trigger: heroTapTrigger)
-    }
-
-    private func metricsRow(metrics: HeroMetrics) -> some View {
-        HStack(spacing: 10) {
-            MetricChip(value: "\(metrics.booksFinished)", label: "已读")
-            MetricChip(value: "\(metrics.booksInProgress)", label: "正在读")
-            MetricChip(value: metrics.totalCharactersLabel, label: "已读字数")
-        }
     }
 
     /// Four drill-in rows that replace the long inline sections this page used to
@@ -173,39 +161,20 @@ struct MeView: View {
 
     // MARK: - Hero data
 
-    /// All numbers shown on the hero card + metrics chips in one shot. Folded into
-    /// a single struct so body computes them in a single O(n) pass rather than
-    /// five separate full scans of the events / books / novels arrays (each of
-    /// which can be in the thousands for a long-time user). Recomputed only when
-    /// body re-invokes; SwiftUI's @Published change tracking gates that.
+    /// Values shown on the reading-journal card, computed together for one render.
     fileprivate struct HeroMetrics {
         let currentStreak: Int
         let weeklyMinutes: Int
         let mostRecentlyOpenedBook: Novel?
-        let booksFinished: Int
-        let booksInProgress: Int
-        let totalCharactersLabel: String
     }
 
     private var heroMetrics: HeroMetrics {
         let stats = libraryStore.readingStats
         let cutoff = Date().addingTimeInterval(-7 * 24 * 60 * 60)
         var weeklySeconds: TimeInterval = 0
-        var totalCharacters = 0
         for event in stats.events {
             if event.timestamp >= cutoff {
                 weeklySeconds += event.durationSeconds
-            }
-            totalCharacters += event.characterCount
-        }
-
-        var finished = 0
-        var inProgress = 0
-        for book in stats.books where !book.isDeleted {
-            if book.currentProgress >= 0.99 {
-                finished += 1
-            } else if book.currentProgress > 0 {
-                inProgress += 1
             }
         }
 
@@ -222,22 +191,8 @@ struct MeView: View {
         return HeroMetrics(
             currentStreak: stats.currentStreak(),
             weeklyMinutes: max(Int(weeklySeconds / 60), 0),
-            mostRecentlyOpenedBook: mostRecent,
-            booksFinished: finished,
-            booksInProgress: inProgress,
-            totalCharactersLabel: formatCharactersLabel(totalCharacters)
+            mostRecentlyOpenedBook: mostRecent
         )
-    }
-
-    private func formatCharactersLabel(_ total: Int) -> String {
-        if total < 10_000 { return "\(total)" }
-        if total < 100_000_000 {
-            let wan = Double(total) / 10_000
-            if wan < 10 { return String(format: "%.1f万", wan) }
-            return "\(Int(wan.rounded()))万"
-        }
-        let yi = Double(total) / 100_000_000
-        return String(format: "%.1f亿", yi)
     }
 
     @MainActor
@@ -1174,12 +1129,19 @@ private struct ReadingIdentityCard: View {
     }
 
     private func miniCover(for book: Novel) -> some View {
-        ZStack {
+        ZStack(alignment: .bottomLeading) {
             LinearGradient(
                 colors: [book.coverColor.opacity(0.96), book.coverColor.opacity(0.62)],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
             )
+            if let coverImageURLString = book.coverImageURLString,
+               URL(string: coverImageURLString) != nil {
+                StoredBookCoverImage(
+                    bookID: book.id,
+                    remoteURLString: coverImageURLString
+                )
+            }
             Text(displayed(book.title))
                 .font(.system(size: 8, weight: .semibold, design: .serif))
                 .foregroundStyle(.white)
@@ -1255,32 +1217,5 @@ private struct ReadingIdentityCard: View {
 
     private func displayed(_ text: String) -> String {
         ChineseTextConverter.display(text, usesTraditionalChinese: usesTraditionalChinese)
-    }
-}
-
-/// Three-up mini metric chip used in the row directly under the hero card.
-private struct MetricChip: View {
-    @Environment(\.appTheme) private var theme
-
-    let value: String
-    let label: String
-
-    var body: some View {
-        VStack(spacing: 2) {
-            Text(value)
-                .font(.system(size: 20, weight: .semibold, design: .serif))
-                .foregroundStyle(theme.primaryText)
-                .lineLimit(1)
-                .minimumScaleFactor(0.6)
-            Text(label)
-                .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(theme.secondaryText)
-                .tracking(0.5)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 12)
-        .background(theme.cardBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .shadow(color: theme.cardShadow, radius: 6, x: 0, y: 3)
     }
 }

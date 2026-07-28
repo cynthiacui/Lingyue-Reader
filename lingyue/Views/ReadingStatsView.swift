@@ -2465,21 +2465,17 @@ private struct StatsBookCover: View {
 
     @ViewBuilder
     private var coverBackground: some View {
-        if let coverImageURLString = book.coverImageURLString,
-           let url = URL(string: coverImageURLString) {
-            AsyncImage(url: url) { phase in
-                switch phase {
-                case .success(let image):
-                    image
-                        .resizable()
-                        .scaledToFill()
-                        .overlay(Color.black.opacity(0.24))
-                default:
-                    fallbackCover
-                }
-            }
-        } else {
+        ZStack {
             fallbackCover
+
+            if let coverImageURLString = book.coverImageURLString,
+               URL(string: coverImageURLString) != nil {
+                StoredBookCoverImage(
+                    bookID: book.id,
+                    remoteURLString: coverImageURLString,
+                    allowsRemoteFetch: !book.isDeleted
+                )
+            }
         }
     }
 

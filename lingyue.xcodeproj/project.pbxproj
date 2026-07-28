@@ -63,6 +63,7 @@
 		64AE68FA2FB6C76D004058EE /* DMSerifDisplay-Italic.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000802 /* DMSerifDisplay-Italic.ttf */; };
 		64AE68FB2FB6C76D004058EE /* DMSerifDisplay-OFL.txt in Resources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000803 /* DMSerifDisplay-OFL.txt */; };
 		64AE68FC2FB6C76D004058EE /* LXGWWenKaiGBLite-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000804 /* LXGWWenKaiGBLite-Regular.ttf */; };
+		64AE68FD2FB6C76D004058EE /* BookCoverStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000039 /* BookCoverStore.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -118,6 +119,7 @@
 		010000000000000000000036 /* DiscoveryRecentSearches.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiscoveryRecentSearches.swift; sourceTree = "<group>"; };
 		010000000000000000000037 /* DiscoveryInternalView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiscoveryInternalView.swift; sourceTree = "<group>"; };
 		010000000000000000000038 /* SourceImportService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SourceImportService.swift; sourceTree = "<group>"; };
+		010000000000000000000039 /* BookCoverStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookCoverStore.swift; sourceTree = "<group>"; };
 		010000000000000000000801 /* DMSerifDisplay-Regular.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "DMSerifDisplay-Regular.ttf"; sourceTree = "<group>"; };
 		010000000000000000000802 /* DMSerifDisplay-Italic.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "DMSerifDisplay-Italic.ttf"; sourceTree = "<group>"; };
 		010000000000000000000803 /* DMSerifDisplay-OFL.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "DMSerifDisplay-OFL.txt"; sourceTree = "<group>"; };
@@ -181,6 +183,7 @@
 			children = (
 				01000000000000000000000E /* LibraryStore.swift */,
 				01000000000000000000000F /* BookImportService.swift */,
+				010000000000000000000039 /* BookCoverStore.swift */,
 				010000000000000000000010 /* WebRenderingService.swift */,
 				010000000000000000000023 /* WebViewSourceLoader.swift */,
 				010000000000000000000024 /* CompositeSourceLoader.swift */,
@@ -363,6 +366,7 @@
 				64AE68082FB6C76D004058EE /* InAppBrowserView.swift in Sources */,
 				64AE68092FB6C76D004058EE /* LibraryStore.swift in Sources */,
 				64AE680A2FB6C76D004058EE /* BookImportService.swift in Sources */,
+				64AE68FD2FB6C76D004058EE /* BookCoverStore.swift in Sources */,
 				64AE680B2FB6C76D004058EE /* WebRenderingService.swift in Sources */,
 				64AE680C2FB6C76D004058EE /* WebViewSourceLoader.swift in Sources */,
 				64AE680D2FB6C76D004058EE /* CompositeSourceLoader.swift in Sources */,

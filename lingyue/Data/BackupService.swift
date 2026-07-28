@@ -109,6 +109,7 @@ struct BackupService {
         }
         libraryStore.categories = archive.library
         libraryStore.replaceReadingStats(archive.readingStats)
+        libraryStore.reconcileStoredCovers()
         await libraryStore.flush()
     }
 
