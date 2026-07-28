@@ -47,6 +47,8 @@ enum BookDownloadState: Equatable {
 
 @MainActor
 final class BookDownloadManager: ObservableObject {
+    static let shared = BookDownloadManager()
+
     /// Source of truth for download state. Keyed by `Novel.id`.
     @Published private(set) var states: [UUID: BookDownloadState] = [:]
 

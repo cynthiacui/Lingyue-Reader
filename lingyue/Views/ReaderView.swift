@@ -2,6 +2,7 @@ import SwiftUI
 import Foundation
 import UIKit
 import NaturalLanguage
+import LingyueCore
 
 /// One row of the Reader first-launch help popup. Icon + short title +
 /// one-line detail, mapped to a specific reader affordance so the icon
@@ -466,6 +467,7 @@ struct ReaderView: View {
                 // Keep their one/two-column step in sync during iPad split-view and
                 // Stage Manager resizes that do not change either size class.
                 lastContainerSize = newValue
+                windowInsets.refresh()
             }
             .onChange(of: verticalSizeClass) { _, _ in
                 // Defer to the next runloop tick so SwiftUI has finished propagating the new
@@ -790,40 +792,23 @@ struct ReaderView: View {
         guard abs(effective) >= threshold else { return }
 
         let overlayVisible = showControls || showChapterPicker || showPreferences || showBrightness
-        // While the current chapter is still using a one-page loading/re-pagination
-        // placeholder, that placeholder must not be treated as the real last page.
-        // Otherwise a left swipe can incorrectly advance to the next chapter before
-        // the current chapter's actual page count arrives.
-        guard allowsChapterTurn else {
-            if overlayVisible { hideControls() }
-            return
-        }
+        let direction: ReaderPageTurnDirection = effective < 0 ? .forward : .backward
+        let action = ReaderPageTurnResolver.boundaryAction(
+            direction: direction,
+            startPageIndex: startPageIndex,
+            pageCount: pageCount,
+            currentChapterIndex: currentChapterIndex,
+            chapterCount: baseChapters.count,
+            usesTwoColumns: useTwoColumn,
+            allowsChapterTurn: allowsChapterTurn,
+            suppressChapterTurn: direction == .forward ? suppressForward : suppressBackward
+        )
 
-        // In two-column mode the pager has spread-count items, not page-count items. A swipe
-        // at the last spread starts on a page that's >= 2 less than the total (or == pageCount-1
-        // when the chapter has an odd page count and the last spread's right column is blank).
-        let atFirstPage: Bool
-        let atLastPage: Bool
-        if useTwoColumn {
-            atFirstPage = startPageIndex < 2
-            let spreadCount = (pageCount + 1) / 2
-            let lastSpreadStart = max((spreadCount - 1) * 2, 0)
-            atLastPage = startPageIndex >= lastSpreadStart
-        } else {
-            atFirstPage = startPageIndex == 0
-            atLastPage = startPageIndex >= pageCount - 1
-        }
-
-        if effective < 0, atLastPage, !suppressForward, currentChapterIndex < baseChapters.count - 1 {
-            if overlayVisible { hideControls() }
-            goToChapter(currentChapterIndex + 1, pageIndex: 0)
-        } else if effective > 0, atFirstPage, !suppressBackward, currentChapterIndex > 0 {
-            if overlayVisible { hideControls() }
-            goToChapter(currentChapterIndex - 1, pageIndex: 0, landOnLastPage: true)
-        } else if overlayVisible {
-            // Within-chapter swipe: the pager already turned the page through the binding.
-            // We just dismiss the overlay so the bar gets out of the user's way.
+        if overlayVisible {
             hideControls()
+        }
+        if case let .chapter(index, landOnLastPage) = action {
+            goToChapter(index, pageIndex: 0, landOnLastPage: landOnLastPage)
         }
     }
 
@@ -2092,27 +2077,46 @@ struct ReaderView: View {
 
     private func goToPreviousPage(pages: [ReaderPageItem], allowsChapterTurn: Bool) {
         guard !showChapterPicker else { return }
-        let step = useTwoColumn ? 2 : 1
-        if currentChapterPageIndex >= step {
-            setChapterPageIndexAnimatingIfNeeded(currentChapterPageIndex - step)
-        } else if allowsChapterTurn, currentChapterIndex > 0 {
-            goToChapter(currentChapterIndex - 1, pageIndex: 0, landOnLastPage: true)
-        }
+        applyPageTurn(
+            ReaderPageTurnResolver.action(
+                direction: .backward,
+                currentPageIndex: currentChapterPageIndex,
+                pageCount: pages.count,
+                currentChapterIndex: currentChapterIndex,
+                chapterCount: baseChapters.count,
+                usesTwoColumns: useTwoColumn,
+                allowsChapterTurn: allowsChapterTurn
+            )
+        )
     }
 
     private func goToNextPage(pages: [ReaderPageItem], allowsChapterTurn: Bool) {
         guard !showChapterPicker else { return }
-        let step = useTwoColumn ? 2 : 1
-        // In two-column mode, the next spread starts at currentChapterPageIndex + 2. If only
-        // one page remains in the chapter (the right column of the last spread is blank),
-        // a step forward should still flip to the next chapter, not advance into a phantom page.
-        let lastNavigablePageIndex = useTwoColumn
-            ? max(((pages.count + 1) / 2 - 1) * 2, 0)
-            : pages.count - 1
-        if currentChapterPageIndex < lastNavigablePageIndex {
-            setChapterPageIndexAnimatingIfNeeded(min(currentChapterPageIndex + step, lastNavigablePageIndex))
-        } else if allowsChapterTurn, currentChapterIndex < baseChapters.count - 1 {
-            goToChapter(currentChapterIndex + 1, pageIndex: 0)
+        applyPageTurn(
+            ReaderPageTurnResolver.action(
+                direction: .forward,
+                currentPageIndex: currentChapterPageIndex,
+                pageCount: pages.count,
+                currentChapterIndex: currentChapterIndex,
+                chapterCount: baseChapters.count,
+                usesTwoColumns: useTwoColumn,
+                allowsChapterTurn: allowsChapterTurn
+            )
+        )
+    }
+
+    private func applyPageTurn(_ action: ReaderPageTurnAction) {
+        switch action {
+        case .none:
+            break
+        case .page(let pageIndex):
+            setChapterPageIndexAnimatingIfNeeded(pageIndex)
+        case .chapter(let chapterIndex, let landOnLastPage):
+            goToChapter(
+                chapterIndex,
+                pageIndex: 0,
+                landOnLastPage: landOnLastPage
+            )
         }
     }
 

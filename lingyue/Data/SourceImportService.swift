@@ -215,7 +215,7 @@ final class SourceVerificationService: ObservableObject {
         verifyingIDs.insert(rule.id)
         let task = Task { [weak self] in
             await self?.performVerification(rule: rule)
-            await self?.finish(ruleID: rule.id)
+            self?.finish(ruleID: rule.id)
         }
         tasks[rule.id] = task
     }
@@ -410,9 +410,9 @@ final class SourceImportCoordinator: ObservableObject {
     /// unbounded body into memory before the JSON decoder rejects it.
     private static let maxConfigBytes = 5_000_000
 
-    init(stack: SourceStack = .live, verifier: SourceVerificationService = .shared) {
+    init(stack: SourceStack = .live, verifier: SourceVerificationService? = nil) {
         self.stack = stack
-        self.verifier = verifier
+        self.verifier = verifier ?? .shared
     }
 
     private var service: SourceImportService {

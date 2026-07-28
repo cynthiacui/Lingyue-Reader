@@ -828,7 +828,7 @@ public enum SourceAnalyzer {
                 var hops = 0
                 var matched: Element? = nil
                 while let node = ancestor, hops <= 2 {
-                    let id = ((try? node.id()) ?? "").lowercased()
+                    let id = node.id().lowercased()
                     let cls = ((try? node.className()) ?? "").lowercased()
                     if resultTokens.contains(where: { id.contains($0) || cls.contains($0) }) {
                         matched = node
@@ -1219,7 +1219,8 @@ public enum SourceAnalyzer {
     /// Never tries to build a multi-level path — that's brittle and
     /// users hand-edit any wrong guess in 高级修复 anyway.
     private static func selectorPath(for element: Element) -> String? {
-        if let id = try? element.id(), !id.isEmpty {
+        let id = element.id()
+        if !id.isEmpty {
             return "#\(id)"
         }
         if let classNames = try? element.className(), !classNames.isEmpty {
@@ -1289,7 +1290,7 @@ public enum SourceAnalyzer {
             do { text = try el.text() } catch { continue }
             let len = text.count
             guard len >= 300 else { continue }
-            let id = ((try? el.id()) ?? "").lowercased()
+            let id = el.id().lowercased()
             let cls = ((try? el.className()) ?? "").lowercased()
             let preferred = knownContentTokens.contains { id.contains($0) || cls.contains($0) }
             winners.append(Candidate(element: el, textLength: len, isPreferredName: preferred))
@@ -1359,7 +1360,7 @@ public enum SourceAnalyzer {
     }
 
     private static func isAncestor(_ ancestor: Element, of descendant: Element) -> Bool {
-        guard let parents = try? descendant.parents() else { return false }
+        let parents = descendant.parents()
         for p in parents where p === ancestor { return true }
         return false
     }

@@ -2307,6 +2307,7 @@ private struct CategoryDetailView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.appTheme) private var theme
+    @EnvironmentObject private var libraryStore: LibraryStore
     @EnvironmentObject private var downloadManager: BookDownloadManager
     @State private var searchText = ""
     @State private var sortMode: CategorySortMode = .recent
@@ -2451,14 +2452,7 @@ private struct CategoryDetailView: View {
     }
 
     private func delete(_ novel: Novel) {
-        var updatedCategories = categories
-        for index in updatedCategories.indices {
-            updatedCategories[index].novels.removeAll { $0.id == novel.id }
-        }
-        categories = updatedCategories
-        Task {
-            await BookCoverStore.shared.removeCover(for: novel.id)
-        }
+        libraryStore.deleteBook(novel)
     }
 
     private func clearDownloadedData(for novel: Novel) {
@@ -2645,17 +2639,7 @@ private struct CategoryManagementView: View {
     }
 
     private func deleteCategory(_ category: LibraryCategory) {
-        let removedNovels = category.novels
-        libraryStore.categories.removeAll { $0.id == category.id }
-
-        // Books inside the deleted category are removed with it. Wipe their cached chapter
-        // content too — orphaned cache entries are wasted disk.
-        Task {
-            for novel in removedNovels {
-                await ChapterContentCache.shared.clearCache(for: novel)
-                await BookCoverStore.shared.removeCover(for: novel.id)
-            }
-        }
+        libraryStore.deleteCategory(id: category.id)
     }
 
     private func displayed(_ text: String) -> String {

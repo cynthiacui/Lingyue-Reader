@@ -337,6 +337,8 @@ final class LibraryStore: ObservableObject {
     private let statsStorageURL: URL
     private var pendingSave: Task<Void, Never>?
     private var pendingStatsSave: Task<Void, Never>?
+    private var saveGeneration: UInt = 0
+    private var statsSaveGeneration: UInt = 0
 
     init() {
         self.storageURL = LibraryStore.makeStorageURL()
@@ -359,6 +361,8 @@ final class LibraryStore: ObservableObject {
     }
 
     func flush() async {
+        saveGeneration &+= 1
+        statsSaveGeneration &+= 1
         pendingSave?.cancel()
         pendingSave = nil
         pendingStatsSave?.cancel()
@@ -518,9 +522,18 @@ final class LibraryStore: ObservableObject {
             updatedCategories[index].novels.removeAll { $0.id == novel.id }
         }
         categories = updatedCategories
-        Task {
-            await BookCoverStore.shared.removeCover(for: novel.id)
+        removeStoredAssets(for: [novel])
+    }
+
+    func deleteCategory(id: UUID) {
+        guard let category = categories.first(where: { $0.id == id }) else { return }
+        let removedNovels = category.novels
+        let deletedAt = Date()
+        for novel in removedNovels {
+            readingStats.rememberBook(novel, deletedAt: deletedAt)
         }
+        categories.removeAll { $0.id == id }
+        removeStoredAssets(for: removedNovels)
     }
 
     func reconcileStoredCovers() {
@@ -543,37 +556,41 @@ final class LibraryStore: ObservableObject {
         let clampedProgress = min(max(progress, 0), 1)
         let trimmedChapterTitle = chapterTitle.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        for categoryIndex in categories.indices {
-            guard let novelIndex = categories[categoryIndex].novels.firstIndex(where: { $0.id == novelID }) else {
-                continue
-            }
-
-            let existingNovel = categories[categoryIndex].novels[novelIndex]
-            let pageCharacters = pageTextCharacterCount ?? 0
-            readingStats.recordReading(
-                novel: existingNovel,
-                timestamp: openedAt,
-                chapterTitle: trimmedChapterTitle,
-                progress: clampedProgress,
-                chapterIndex: chapterIndex,
-                chapterPageIndex: chapterPageIndex,
-                chapterSourceURLString: chapterSourceURLString,
-                pageTextCharacterCount: pageCharacters
-            )
-
-            if !trimmedChapterTitle.isEmpty {
-                categories[categoryIndex].novels[novelIndex].lastChapter = trimmedChapterTitle
-            }
-            categories[categoryIndex].novels[novelIndex].progress = clampedProgress
-            categories[categoryIndex].novels[novelIndex].currentChapterIndex = chapterIndex
-            categories[categoryIndex].novels[novelIndex].currentChapterPageIndex = chapterPageIndex
-            categories[categoryIndex].novels[novelIndex].currentChapterSourceURLString = chapterSourceURLString
-            categories[categoryIndex].novels[novelIndex].lastOpenedAt = openedAt
-            categories[categoryIndex].novels[novelIndex].readMinutes = max(
-                categories[categoryIndex].novels[novelIndex].readMinutes,
-                Int((readingStats.books.first { $0.id == novelID }?.totalDurationSeconds ?? 0) / 60)
-            )
+        guard let categoryIndex = categories.firstIndex(where: {
+            $0.novels.contains { $0.id == novelID }
+        }),
+        let novelIndex = categories[categoryIndex].novels.firstIndex(where: { $0.id == novelID }) else {
+            return
         }
+
+        let existingNovel = categories[categoryIndex].novels[novelIndex]
+        readingStats.recordReading(
+            novel: existingNovel,
+            timestamp: openedAt,
+            chapterTitle: trimmedChapterTitle,
+            progress: clampedProgress,
+            chapterIndex: chapterIndex,
+            chapterPageIndex: chapterPageIndex,
+            chapterSourceURLString: chapterSourceURLString,
+            pageTextCharacterCount: pageTextCharacterCount ?? 0
+        )
+
+        var updatedCategories = categories
+        var updatedNovel = existingNovel
+        if !trimmedChapterTitle.isEmpty {
+            updatedNovel.lastChapter = trimmedChapterTitle
+        }
+        updatedNovel.progress = clampedProgress
+        updatedNovel.currentChapterIndex = chapterIndex
+        updatedNovel.currentChapterPageIndex = chapterPageIndex
+        updatedNovel.currentChapterSourceURLString = chapterSourceURLString
+        updatedNovel.lastOpenedAt = openedAt
+        updatedNovel.readMinutes = max(
+            updatedNovel.readMinutes,
+            Int((readingStats.books.first { $0.id == novelID }?.totalDurationSeconds ?? 0) / 60)
+        )
+        updatedCategories[categoryIndex].novels[novelIndex] = updatedNovel
+        categories = updatedCategories
     }
 
     func startReadingSession(
@@ -586,27 +603,32 @@ final class LibraryStore: ObservableObject {
     ) {
         let clampedProgress = min(max(progress, 0), 1)
 
-        for categoryIndex in categories.indices {
-            guard let novelIndex = categories[categoryIndex].novels.firstIndex(where: { $0.id == novelID }) else {
-                continue
-            }
-
-            let existingNovel = categories[categoryIndex].novels[novelIndex]
-            readingStats.startReadingSession(
-                novel: existingNovel,
-                timestamp: openedAt,
-                progress: clampedProgress,
-                chapterIndex: chapterIndex,
-                chapterPageIndex: chapterPageIndex,
-                chapterSourceURLString: chapterSourceURLString
-            )
-
-            categories[categoryIndex].novels[novelIndex].lastOpenedAt = openedAt
-            categories[categoryIndex].novels[novelIndex].progress = clampedProgress
-            categories[categoryIndex].novels[novelIndex].currentChapterIndex = chapterIndex
-            categories[categoryIndex].novels[novelIndex].currentChapterPageIndex = chapterPageIndex
-            categories[categoryIndex].novels[novelIndex].currentChapterSourceURLString = chapterSourceURLString
+        guard let categoryIndex = categories.firstIndex(where: {
+            $0.novels.contains { $0.id == novelID }
+        }),
+        let novelIndex = categories[categoryIndex].novels.firstIndex(where: { $0.id == novelID }) else {
+            return
         }
+
+        let existingNovel = categories[categoryIndex].novels[novelIndex]
+        readingStats.startReadingSession(
+            novel: existingNovel,
+            timestamp: openedAt,
+            progress: clampedProgress,
+            chapterIndex: chapterIndex,
+            chapterPageIndex: chapterPageIndex,
+            chapterSourceURLString: chapterSourceURLString
+        )
+
+        var updatedCategories = categories
+        var updatedNovel = existingNovel
+        updatedNovel.lastOpenedAt = openedAt
+        updatedNovel.progress = clampedProgress
+        updatedNovel.currentChapterIndex = chapterIndex
+        updatedNovel.currentChapterPageIndex = chapterPageIndex
+        updatedNovel.currentChapterSourceURLString = chapterSourceURLString
+        updatedCategories[categoryIndex].novels[novelIndex] = updatedNovel
+        categories = updatedCategories
     }
 
     private func ensureCategory(named name: String) -> Int {
@@ -695,20 +717,31 @@ final class LibraryStore: ObservableObject {
         replacementBookID: UUID
     ) {
         let normalizedTitle = normalized(title)
+        var removedNovels: [Novel] = []
         for index in categories.indices {
             let removed = categories[index].novels.filter {
                 matches($0, sourceURLString: sourceURLString, normalizedTitle: normalizedTitle)
             }
             for novel in removed {
                 readingStats.rememberBook(novel, deletedAt: Date())
-                if novel.id != replacementBookID {
-                    Task {
-                        await BookCoverStore.shared.removeCover(for: novel.id)
-                    }
-                }
+                if novel.id != replacementBookID { removedNovels.append(novel) }
             }
             categories[index].novels.removeAll {
                 matches($0, sourceURLString: sourceURLString, normalizedTitle: normalizedTitle)
+            }
+        }
+        removeStoredAssets(for: removedNovels)
+    }
+
+    private func removeStoredAssets(for novels: [Novel]) {
+        guard !novels.isEmpty else { return }
+        for novel in novels {
+            BookDownloadManager.shared.clearState(for: novel)
+        }
+        Task {
+            for novel in novels {
+                await ChapterContentCache.shared.clearCache(for: novel)
+                await BookCoverStore.shared.removeCover(for: novel.id)
             }
         }
     }
@@ -722,69 +755,63 @@ final class LibraryStore: ObservableObject {
 
     private func scheduleSave() {
         pendingSave?.cancel()
-        let snapshot = categories
-        let url = storageURL
+        saveGeneration &+= 1
+        let generation = saveGeneration
         pendingSave = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(800))
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, let self else { return }
+            let snapshot = self.categories
+            let url = self.storageURL
             await Self.persist(snapshot, to: url)
-            self?.pendingSave = nil
+            if self.saveGeneration == generation {
+                self.pendingSave = nil
+            }
         }
     }
 
     private func scheduleStatsSave() {
         pendingStatsSave?.cancel()
-        let snapshot = readingStats
-        let url = statsStorageURL
+        statsSaveGeneration &+= 1
+        let generation = statsSaveGeneration
         pendingStatsSave = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(800))
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, let self else { return }
+            let snapshot = self.readingStats
+            let url = self.statsStorageURL
             await Self.persistReadingStats(snapshot, to: url)
-            self?.pendingStatsSave = nil
+            if self.statsSaveGeneration == generation {
+                self.pendingStatsSave = nil
+            }
         }
     }
 
     private static func persist(_ categories: [LibraryCategory], to url: URL) async {
-        await Task.detached(priority: .utility) {
-            do {
-                try FileManager.default.createDirectory(
-                    at: url.deletingLastPathComponent(),
-                    withIntermediateDirectories: true
-                )
-                let data = try JSONEncoder().encode(categories)
-                try data.write(to: url, options: [.atomic])
-            } catch {
+        do {
+            try await LibraryPersistenceWriter.shared.persist(categories, to: url)
+        } catch {
 #if DEBUG
-                debugLog("[LibraryStore] save failed: \(error.localizedDescription)")
+            debugLog("[LibraryStore] save failed: \(error.localizedDescription)")
 #endif
-            }
-        }.value
+        }
     }
 
     private static func persistReadingStats(_ stats: ReadingStatsLedger, to url: URL) async {
-        await Task.detached(priority: .utility) {
-            do {
-                try FileManager.default.createDirectory(
-                    at: url.deletingLastPathComponent(),
-                    withIntermediateDirectories: true
-                )
-                let data = try JSONEncoder().encode(stats)
-                try data.write(to: url, options: [.atomic])
-            } catch {
+        do {
+            try await LibraryPersistenceWriter.shared.persist(stats, to: url)
+        } catch {
 #if DEBUG
-                debugLog("[LibraryStore] stats save failed: \(error.localizedDescription)")
+            debugLog("[LibraryStore] stats save failed: \(error.localizedDescription)")
 #endif
-            }
-        }.value
+        }
     }
 
     private static func loadCategories(from storageURL: URL) -> [LibraryCategory]? {
-        guard let data = try? Data(contentsOf: storageURL) else { return nil }
+        guard let data = try? Data(contentsOf: storageURL, options: [.mappedIfSafe]) else { return nil }
         return try? JSONDecoder().decode([LibraryCategory].self, from: data)
     }
 
     private static func loadReadingStats(from storageURL: URL) -> ReadingStatsLedger? {
-        guard let data = try? Data(contentsOf: storageURL) else { return nil }
+        guard let data = try? Data(contentsOf: storageURL, options: [.mappedIfSafe]) else { return nil }
         return try? JSONDecoder().decode(ReadingStatsLedger.self, from: data)
     }
 
@@ -802,5 +829,18 @@ final class LibraryStore: ObservableObject {
         return baseURL
             .appendingPathComponent("lingyue", isDirectory: true)
             .appendingPathComponent("ReadingStatsStore.json")
+    }
+}
+
+private actor LibraryPersistenceWriter {
+    static let shared = LibraryPersistenceWriter()
+
+    func persist<Value: Encodable & Sendable>(_ value: Value, to url: URL) throws {
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        let data = try JSONEncoder().encode(value)
+        try data.write(to: url, options: [.atomic])
     }
 }

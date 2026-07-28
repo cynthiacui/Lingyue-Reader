@@ -400,8 +400,8 @@ final class SystemAppearance: ObservableObject {
 /// corner. Reading directly from the window bypasses the SwiftUI consumption and adapts
 /// to every iPhone/iPad model automatically (notch, island, regular bezel, all the same).
 ///
-/// Updates on scene-activation, orientation, and frame-change notifications so the values
-/// stay correct across portrait/landscape flips and Stage Manager / Split View resizes.
+/// Updates on scene activation, orientation, and key-window changes. ReaderView also
+/// refreshes it from GeometryReader size changes for Stage Manager / Split View resizes.
 @MainActor
 final class WindowSafeAreaInsets: ObservableObject {
     @Published private(set) var insets: UIEdgeInsets
@@ -415,10 +415,7 @@ final class WindowSafeAreaInsets: ObservableObject {
             UIApplication.willEnterForegroundNotification,
             UIScene.didActivateNotification,
             UIDevice.orientationDidChangeNotification,
-            UIWindow.didBecomeKeyNotification,
-            // Catches Stage Manager / Split View resizes on iPad and the post-rotation
-            // settling pass that lands the trailing/leading inset on its final value.
-            UIApplication.didChangeStatusBarOrientationNotification
+            UIWindow.didBecomeKeyNotification
         ]
         for name in names {
             let obs = NotificationCenter.default.addObserver(

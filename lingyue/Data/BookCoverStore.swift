@@ -86,6 +86,38 @@ actor BookCoverStore {
         }
     }
 
+    func exportedCovers(for bookIDs: Set<UUID>) -> [String: Data] {
+        var covers: [String: Data] = [:]
+        covers.reserveCapacity(bookIDs.count)
+
+        for bookID in bookIDs {
+            if let data = memory[bookID] ?? readFromDisk(bookID: bookID) {
+                covers[bookID.uuidString] = data
+            }
+        }
+        return covers
+    }
+
+    func restoreCovers(_ covers: [String: Data], keeping activeBookIDs: Set<UUID>) {
+        for bookID in Set(generations.keys).union(inFlight.keys) {
+            generations[bookID, default: 0] &+= 1
+            inFlight[bookID]?.cancel()
+        }
+        inFlight.removeAll()
+        memory.removeAll()
+        try? FileManager.default.removeItem(at: directory)
+
+        for (key, data) in covers {
+            guard let bookID = UUID(uuidString: key),
+                  activeBookIDs.contains(bookID),
+                  Self.isValidImageData(data) else {
+                continue
+            }
+            memory[bookID] = data
+            writeToDisk(data, bookID: bookID)
+        }
+    }
+
     private func readFromDisk(bookID: UUID) -> Data? {
         let url = fileURL(for: bookID)
         guard let data = try? Data(contentsOf: url),

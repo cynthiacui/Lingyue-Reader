@@ -3,7 +3,7 @@ import SwiftUI
 struct ContentView: View {
     @StateObject private var libraryStore = LibraryStore()
     @StateObject private var themeManager = AppThemeManager()
-    @StateObject private var downloadManager = BookDownloadManager()
+    @StateObject private var downloadManager = BookDownloadManager.shared
     @StateObject private var overlayManager = OverlayManager()
     @StateObject private var tabSelection = TabSelectionStore()
     // Root-owned so `lingyue://import?url=…` deep links resolve regardless

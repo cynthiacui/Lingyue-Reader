@@ -3,8 +3,8 @@ import LingyueCore
 
 /// Phase 5.3 — `.lingyue-backup` envelope. A single Codable JSON file
 /// covering everything the user would lose on reinstall: library +
-/// reading-stats ledger + editable rules + per-rule preferences +
-/// per-rule validation history.
+/// locally stored covers + reading-stats ledger + editable rules +
+/// per-rule preferences + per-rule validation history.
 ///
 /// Versioned at the envelope level. `currentVersion` bumps any time a
 /// member type's schema changes in a way that can't be decoded by an
@@ -26,6 +26,7 @@ struct BackupArchive: Codable {
     var editableSources: [SourceRule]
     var sourcePreferences: [SourcePreference]
     var sourceValidations: [SourceValidation]
+    var bookCovers: [String: Data]?
 
     static let currentVersion = 1
 }
@@ -44,7 +45,7 @@ enum BackupError: LocalizedError {
     }
 }
 
-/// Bundles the four stores + library into a single export/import unit.
+/// Bundles the stores, library, and local covers into a single export/import unit.
 /// Lives on the main actor because `LibraryStore` is main-actor isolated
 /// and the published `categories` / `readingStats` setters must be
 /// touched from the main thread. The actor-typed store calls (editable /
@@ -55,11 +56,13 @@ struct BackupService {
     let libraryStore: LibraryStore
     let stack: SourceStack
 
-    /// Snapshot all four stores into an archive ready to encode.
+    /// Snapshot every backed-up surface into an archive ready to encode.
     func makeArchive() async throws -> BackupArchive {
         let editable = try await stack.editableStore.loadEditableSources()
         let prefs = try await stack.preferenceStore.loadAll()
         let validations = try await stack.validationStore.loadAll()
+        let bookIDs = Set(libraryStore.allNovels.map(\.id))
+        let bookCovers = await BookCoverStore.shared.exportedCovers(for: bookIDs)
         return BackupArchive(
             version: BackupArchive.currentVersion,
             createdAt: Date(),
@@ -68,7 +71,8 @@ struct BackupService {
             readingStats: libraryStore.readingStats,
             editableSources: editable,
             sourcePreferences: Array(prefs.values),
-            sourceValidations: Array(validations.values)
+            sourceValidations: Array(validations.values),
+            bookCovers: bookCovers
         )
     }
 
@@ -109,7 +113,11 @@ struct BackupService {
         }
         libraryStore.categories = archive.library
         libraryStore.replaceReadingStats(archive.readingStats)
-        libraryStore.reconcileStoredCovers()
+        let activeBookIDs = Set(archive.library.flatMap(\.novels).map(\.id))
+        await BookCoverStore.shared.restoreCovers(
+            archive.bookCovers ?? [:],
+            keeping: activeBookIDs
+        )
         await libraryStore.flush()
     }
 
