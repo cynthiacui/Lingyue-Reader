@@ -1,4 +1,5 @@
 import UIKit
+import SwiftUI
 import XCTest
 import LingyueCore
 @testable import LingyueAppStore
@@ -169,6 +170,99 @@ final class ReaderTypographyTests: XCTestCase {
         XCTAssertEqual(paragraphStyle.paragraphSpacing, 11, accuracy: 0.001)
         XCTAssertEqual(paragraphStyle.alignment, .justified)
         XCTAssertEqual(paragraphStyle.lineBreakMode, .byWordWrapping)
+    }
+}
+
+@MainActor
+final class PageCurlPagerCacheTests: XCTestCase {
+    func testPageIndexUpdateDoesNotRebuildCachedPageRoots() {
+        let recorder = PagerRenderRecorder()
+        let slots = ["0-0-layout", "0-1-layout"]
+        let coordinator = PageCurlPager.Coordinator(
+            makePager(slots: slots, currentIndex: 0, recorder: recorder)
+        )
+
+        XCTAssertNotNil(coordinator.host(for: slots[0]))
+        XCTAssertNotNil(coordinator.host(for: slots[1]))
+        XCTAssertEqual(recorder.identities, slots)
+
+        coordinator.parent = makePager(slots: slots, currentIndex: 1, recorder: recorder)
+
+        XCTAssertFalse(coordinator.refreshCachedRenders())
+        XCTAssertEqual(
+            recorder.identities,
+            slots,
+            "Changing only the selected page must not replace cached SwiftUI roots"
+        )
+
+        let revisedSlots = [slots[0], "0-1-repaginated"]
+        coordinator.parent = makePager(
+            slots: revisedSlots,
+            currentIndex: 1,
+            recorder: recorder
+        )
+
+        XCTAssertTrue(coordinator.refreshCachedRenders())
+        XCTAssertNotNil(coordinator.host(for: revisedSlots[1]))
+        XCTAssertEqual(recorder.identities.last, revisedSlots[1])
+    }
+
+    func testSlotRefreshKeepsGestureTargetIdentifiableUntilLanding() throws {
+        let recorder = PagerRenderRecorder()
+        let slots = ["0-0-layout", "0-1-layout"]
+        let coordinator = PageCurlPager.Coordinator(
+            makePager(slots: slots, currentIndex: 0, recorder: recorder)
+        )
+        let pager = UIPageViewController(
+            transitionStyle: .scroll,
+            navigationOrientation: .horizontal
+        )
+        let first = try XCTUnwrap(coordinator.host(for: slots[0]))
+        let target = try XCTUnwrap(coordinator.host(for: slots[1]))
+        pager.setViewControllers([first], direction: .forward, animated: false)
+
+        coordinator.pageViewController(pager, willTransitionTo: [target])
+        coordinator.parent = makePager(
+            slots: [slots[0], "0-2-new-neighbor"],
+            currentIndex: 0,
+            recorder: recorder
+        )
+        XCTAssertTrue(coordinator.refreshCachedRenders())
+
+        pager.setViewControllers([target], direction: .forward, animated: false)
+        coordinator.pageViewController(
+            pager,
+            didFinishAnimating: true,
+            previousViewControllers: [first],
+            transitionCompleted: true
+        )
+
+        XCTAssertEqual(coordinator.shownIdentity, slots[1])
+        XCTAssertNil(coordinator.gestureTargetIdentity)
+    }
+
+    private func makePager(
+        slots: [String],
+        currentIndex: Int,
+        recorder: PagerRenderRecorder
+    ) -> PageCurlPager {
+        PageCurlPager(
+            transitionStyle: .scroll,
+            slotIdentities: slots,
+            currentIndex: .constant(currentIndex),
+            backgroundColor: .white,
+            renderPage: recorder.render(identity:)
+        )
+    }
+}
+
+@MainActor
+private final class PagerRenderRecorder {
+    private(set) var identities: [String] = []
+
+    func render(identity: String) -> AnyView {
+        identities.append(identity)
+        return AnyView(Color.white)
     }
 }
 

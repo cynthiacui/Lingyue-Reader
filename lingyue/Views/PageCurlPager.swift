@@ -133,6 +133,11 @@ struct PageCurlPager: UIViewControllerRepresentable {
         // applying and bail otherwise.
         var pendingIdentity: String?
         var animationStartedAt: Date?
+        // UIKit can keep a neighbor controller alive while SwiftUI updates the slot
+        // window (for example when prefetch adds a chapter bookend mid-drag). Keep
+        // that identity in the cache until the gesture resolves so delegate callbacks
+        // can still map the landed controller back to its page.
+        var gestureTargetIdentity: String?
         // Hosts cached by stable identity so the live page survives a slot re-base.
         private var hosts: [String: UIHostingController<AnyView>] = [:]
         // Snapshot of the slot identities at the last refresh so we can detect
@@ -295,38 +300,42 @@ struct PageCurlPager: UIViewControllerRepresentable {
             return host(for: nextID)
         }
 
-        /// Push fresh root views into existing cached hosts so font / theme changes
-        /// take effect without rebuilding the whole pager. When the slot array changes
-        /// (in-chapter re-pagination, or a cross-chapter re-base), drop every cached
-        /// host EXCEPT the currently shown identity — refreshing `rootView` on a cached
-        /// UIHostingController queues a SwiftUI render but doesn't guarantee the new tree
-        /// is laid out before UIPageViewController shows the host on the next swipe; the
-        /// host can flash blank until navigated-away-and-back. Building fresh hosts on
-        /// demand sidesteps that race. Never evicting `shownIdentity` is load-bearing for
-        /// the seamless cross-chapter re-base.
+        /// Reconcile the host cache with the current slot window. Slot identities include
+        /// the complete render revision (content, typography, geometry, and theme), so an
+        /// unchanged identity means its existing root view is already correct.
+        ///
+        /// Do not assign `host.rootView` during ordinary SwiftUI updates. A completed
+        /// gesture writes the new page index back to ReaderView, which immediately calls
+        /// this method; replacing the newly-landed host's root at that moment queues an
+        /// asynchronous SwiftUI render and can leave UIPageViewController displaying a
+        /// blank frame. Changed render inputs arrive as new identities and therefore get
+        /// fresh, fully-built hosts on demand.
         /// Returns whether the slot array changed since the last refresh (caller uses this to
         /// know it must refresh UIPageViewController's cached neighbours after a re-base).
         @discardableResult
         func refreshCachedRenders() -> Bool {
             let validIDs = Set(parent.slotIdentities)
+            var protectedIDs: Set<String> = shownIdentity.isEmpty ? [] : [shownIdentity]
+            if let gestureTargetIdentity, !gestureTargetIdentity.isEmpty {
+                protectedIDs.insert(gestureTargetIdentity)
+            }
             // Snapshot keys before deletion. Mutating a Dictionary while iterating its
             // live Keys view can trap or skip entries during re-pagination.
             let staleKeys = hosts.keys.filter {
-                $0 != shownIdentity && !validIDs.contains($0)
+                !protectedIDs.contains($0) && !validIDs.contains($0)
             }
             for key in staleKeys {
                 hosts.removeValue(forKey: key)
             }
             let slotsChanged = lastSeenSlotIdentities != parent.slotIdentities
             if slotsChanged {
-                let evictedKeys = hosts.keys.filter { $0 != shownIdentity }
+                let evictedKeys = hosts.keys.filter { !protectedIDs.contains($0) }
                 for key in evictedKeys {
                     hosts.removeValue(forKey: key)
                 }
                 lastSeenSlotIdentities = parent.slotIdentities
             }
-            for (identity, host) in hosts {
-                host.rootView = parent.renderPage(identity)
+            for host in hosts.values {
                 host.view.backgroundColor = parent.backgroundColor
             }
             return slotsChanged
@@ -343,6 +352,7 @@ struct PageCurlPager: UIViewControllerRepresentable {
                                 willTransitionTo pendingViewControllers: [UIViewController]) {
             gestureInFlight = true
             let toID = pendingViewControllers.first.flatMap { identity(of: $0) }
+            gestureTargetIdentity = toID
             ReaderDiagnostics.shared.log(.pageTurnStart, "gesture begin", context: [
                 "shownID": shownIdentity,
                 "toID": toID ?? "?"
@@ -360,6 +370,7 @@ struct PageCurlPager: UIViewControllerRepresentable {
             // completion closure handle `isAnimating`.
             let wasGesture = gestureInFlight
             gestureInFlight = false
+            defer { gestureTargetIdentity = nil }
             // Drop writes after dismantle: the representable was torn down by an .id
             // rebuild (rotation, or — on the legacy path — a chapter swap) while a swipe
             // animation was still in flight. Without this guard, the old coordinator's

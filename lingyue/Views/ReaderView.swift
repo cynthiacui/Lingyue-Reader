@@ -972,7 +972,12 @@ struct ReaderView: View {
             textSize: textSize
         )
         guard let cached = paginationCache[signature], !cached.isEmpty else { return nil }
-        return pageItems(from: cached, chapterIndex: index, chapterTitle: displayed(chapter.title))
+        return pageItems(
+            from: cached,
+            chapterIndex: index,
+            chapterTitle: displayed(chapter.title),
+            paginationSignature: signature
+        )
     }
 
     /// A cached page count is authoritative only after the chapter content has
@@ -1014,6 +1019,24 @@ struct ReaderView: View {
         var bodyCount = 0
         let boundaryPages = pages
         let allowsBoundaryChapterTurn = allowsChapterTurn
+        // Page hosts are immutable once handed to UIPageViewController. Encode every
+        // render input that is not already part of ReaderPageItem's pagination/content
+        // signature into the slot identity so a real visual change creates a fresh host,
+        // while a plain page-index update reuses the fully-rendered one.
+        let renderContextIdentity = [
+            currentTheme.rawValue,
+            "\(Int(textSize.width.rounded()))x\(Int(textSize.height.rounded()))",
+            "\(Int(safeAreaInsets.top.rounded()))",
+            "\(Int(safeAreaInsets.bottom.rounded()))",
+            "\(Int(safeAreaInsets.leading.rounded()))",
+            "\(Int(safeAreaInsets.trailing.rounded()))",
+            "\(Int(horizontalMargin.rounded()))",
+            usingTwoColumn ? "2" : "1",
+            dynamicTypeSize.isAccessibilitySize ? "accessibility" : "standard"
+        ].joined(separator: "|")
+        let slotIdentity: (ReaderPageItem) -> String = { page in
+            "\(page.id)|\(renderContextIdentity)"
+        }
 
         if continuous {
             // Body, tap handling, and boundary detection share one page array so no
@@ -1025,33 +1048,38 @@ struct ReaderView: View {
                currentChapterIndex > 0,
                let prevPages = cachedPageItems(forChapterIndex: currentChapterIndex - 1, textSize: textSize),
                let prevLast = prevPages.last {
-                slotIdentities.append(prevLast.id)
-                itemsByID[prevLast.id] = prevLast
+                let identity = slotIdentity(prevLast)
+                slotIdentities.append(identity)
+                itemsByID[identity] = prevLast
                 leadingBookendCount = 1
             }
             for page in body {
-                slotIdentities.append(page.id)
-                itemsByID[page.id] = page
+                let identity = slotIdentity(page)
+                slotIdentities.append(identity)
+                itemsByID[identity] = page
             }
             if allowsBoundaryChapterTurn,
                currentChapterIndex < baseChapters.count - 1,
                let nextPages = cachedPageItems(forChapterIndex: currentChapterIndex + 1, textSize: textSize),
                let nextFirst = nextPages.first {
-                slotIdentities.append(nextFirst.id)
-                itemsByID[nextFirst.id] = nextFirst
+                let identity = slotIdentity(nextFirst)
+                slotIdentities.append(identity)
+                itemsByID[identity] = nextFirst
                 hasTrailingBookend = true
             }
         } else if usingTwoColumn {
             for leftIdx in stride(from: 0, to: max(pages.count, 1), by: 2) {
                 guard let leftPage = pages.indices.contains(leftIdx) ? pages[leftIdx] : pages.last else { continue }
                 let rightPage = pages.indices.contains(leftIdx + 1) ? pages[leftIdx + 1] : nil
-                slotIdentities.append(leftPage.id)
-                spreadsByID[leftPage.id] = (leftPage, rightPage)
+                let identity = "\(slotIdentity(leftPage))|right:\(rightPage.map(slotIdentity) ?? "-")"
+                slotIdentities.append(identity)
+                spreadsByID[identity] = (leftPage, rightPage)
             }
         } else {
             for page in pages {
-                slotIdentities.append(page.id)
-                itemsByID[page.id] = page
+                let identity = slotIdentity(page)
+                slotIdentities.append(identity)
+                itemsByID[identity] = page
             }
         }
 
@@ -1910,12 +1938,25 @@ struct ReaderView: View {
         let rawChapter = baseChapters.indices.contains(chapterIndex) ? baseChapters[chapterIndex] : nil
         let chapter = rawChapter.map { loadedChapterOverrides[chapterCacheKey($0)] ?? $0 }
         let title = displayed(chapter?.title ?? activeNovel.title)
+        let content = displayed(readerContent(for: chapter, chapterIndex: chapterIndex))
+        let renderSignature = [
+            "placeholder",
+            "\(chapterIndex)",
+            "\(title.hashValue)",
+            "\(content.hashValue)",
+            "\(fontSize)",
+            "\(lineSpacing)",
+            "\(paragraphSpacingMultiplier)",
+            fontFamilyRaw,
+            "\(usesTraditionalChinese)"
+        ].joined(separator: "|")
         return ReaderPageItem(
             chapterIndex: max(0, chapterIndex),
             pageIndex: 0,
             chapterPageCount: 1,
             chapterTitle: title,
-            content: displayed(readerContent(for: chapter, chapterIndex: chapterIndex))
+            content: content,
+            renderSignature: renderSignature
         )
     }
 
@@ -2008,7 +2049,8 @@ struct ReaderView: View {
         let items = pageItems(
             from: pageContents,
             chapterIndex: currentChapterIndex,
-            chapterTitle: chapterTitle
+            chapterTitle: chapterTitle,
+            paginationSignature: signature
         )
         applyVisiblePages(items, signature: signature)
         ReaderDiagnostics.shared.snapshot(diagnosticsSnapshot)
@@ -2439,7 +2481,12 @@ struct ReaderView: View {
                 "pages": String(cached.count),
                 "sig": signature
             ])
-            let items = pageItems(from: cached, chapterIndex: chapterIndex, chapterTitle: chapterTitle)
+            let items = pageItems(
+                from: cached,
+                chapterIndex: chapterIndex,
+                chapterTitle: chapterTitle,
+                paginationSignature: signature
+            )
             applyVisiblePages(items, signature: signature)
             ReaderDiagnostics.shared.snapshot(diagnosticsSnapshot)
             return
@@ -2495,19 +2542,35 @@ struct ReaderView: View {
             "sig": signature
         ])
 
-        let items = pageItems(from: pageContents, chapterIndex: chapterIndex, chapterTitle: chapterTitle)
+        let items = pageItems(
+            from: pageContents,
+            chapterIndex: chapterIndex,
+            chapterTitle: chapterTitle,
+            paginationSignature: signature
+        )
         applyVisiblePages(items, signature: signature)
         ReaderDiagnostics.shared.snapshot(diagnosticsSnapshot)
     }
 
-    private func pageItems(from contents: [String], chapterIndex: Int, chapterTitle: String) -> [ReaderPageItem] {
+    private func pageItems(
+        from contents: [String],
+        chapterIndex: Int,
+        chapterTitle: String,
+        paginationSignature: String
+    ) -> [ReaderPageItem] {
         contents.enumerated().map { pageIndex, pageContent in
             ReaderPageItem(
                 chapterIndex: chapterIndex,
                 pageIndex: pageIndex,
                 chapterPageCount: contents.count,
                 chapterTitle: chapterTitle,
-                content: pageContent
+                content: pageContent,
+                renderSignature: [
+                    paginationSignature,
+                    "\(chapterTitle.hashValue)",
+                    "\(pageContent.hashValue)",
+                    "\(contents.count)"
+                ].joined(separator: "|")
             )
         }
     }
@@ -3077,9 +3140,13 @@ private struct ReaderPageItem: Identifiable {
     let chapterPageCount: Int
     let chapterTitle: String
     let content: String
+    /// Changes whenever the page's text or pagination inputs change. UIKit pager hosts
+    /// are immutable for a given identity, preventing an index-only state update from
+    /// replacing a visible UIHostingController root during a swipe completion.
+    let renderSignature: String
 
     var id: String {
-        "\(chapterIndex)-\(pageIndex)"
+        "\(chapterIndex)-\(pageIndex)-\(renderSignature.hashValue)"
     }
 }
 
