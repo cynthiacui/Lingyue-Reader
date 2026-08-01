@@ -22,6 +22,94 @@ private let readerHelpItems: [ReaderHelpItem] = [
     ReaderHelpItem(icon: "arrow.left.arrow.right", title: "切换书源", detail: "同一本书在不同源之间一键切换")
 ]
 
+/// Decides whether the pages currently on screen are authoritative enough to use
+/// their first/last-page boundaries for chapter navigation. A pagination-cache hit
+/// is the fastest path, but an already-rendered page array with the current signature
+/// is equally authoritative and must remain navigable if background prefetch evicts
+/// its duplicate cache entry.
+enum ReaderPageAvailability {
+    static func allowsForwardChapterTurn(
+        hasCachedPages: Bool,
+        visiblePageCount: Int,
+        visibleChapterIndex: Int?,
+        currentChapterIndex: Int,
+        visiblePageSignature: String?,
+        currentPageSignature: String,
+        chapterIsReady: Bool
+    ) -> Bool {
+        guard chapterIsReady else { return false }
+        if hasCachedPages { return true }
+        return visiblePageCount > 0
+            && visibleChapterIndex == currentChapterIndex
+            && visiblePageSignature == currentPageSignature
+    }
+
+    /// Page zero is always the leading boundary, even while a newly selected chapter
+    /// is still loading or re-paginating. Only forward navigation needs authoritative
+    /// pagination to prove that the displayed page is the chapter's real last page.
+    static func allowsBoundaryChapterTurn(
+        direction: ReaderPageTurnDirection,
+        allowsForwardChapterTurn: Bool
+    ) -> Bool {
+        switch direction {
+        case .backward:
+            return true
+        case .forward:
+            return allowsForwardChapterTurn
+        }
+    }
+}
+
+/// Small, age-ordered pagination cache. Dictionary iteration order is deliberately
+/// unspecified, so using `keys.first` for eviction can repeatedly discard a chapter
+/// that is still being read while retaining much older entries. Keeping an explicit
+/// order makes eviction stable across a long reading session and lets callers pin the
+/// visible chapter while prefetch adds surrounding chapters.
+struct ReaderPaginationCache {
+    private let capacity: Int
+    private var pagesBySignature: [String: [String]] = [:]
+    private var insertionOrder: [String] = []
+
+    init(capacity: Int) {
+        self.capacity = max(capacity, 1)
+    }
+
+    subscript(signature: String) -> [String]? {
+        pagesBySignature[signature]
+    }
+
+    var count: Int { pagesBySignature.count }
+
+    mutating func insert(
+        _ pages: [String],
+        for signature: String,
+        protecting protectedSignatures: Set<String> = []
+    ) {
+        pagesBySignature[signature] = pages
+        insertionOrder.removeAll { $0 == signature }
+        insertionOrder.append(signature)
+
+        let protected = protectedSignatures.union([signature])
+        while pagesBySignature.count > capacity {
+            guard let staleIndex = insertionOrder.firstIndex(where: {
+                pagesBySignature[$0] != nil && !protected.contains($0)
+            }) else {
+                // This can only occur when the caller protects more entries than the
+                // configured capacity. Retaining those entries is safer than evicting
+                // a live page and the excess resolves on a later unprotected insertion.
+                break
+            }
+            let staleSignature = insertionOrder.remove(at: staleIndex)
+            pagesBySignature[staleSignature] = nil
+        }
+    }
+
+    mutating func removeAll() {
+        pagesBySignature.removeAll()
+        insertionOrder.removeAll()
+    }
+}
+
 struct ReaderView: View {
     let novel: Novel
 
@@ -88,7 +176,7 @@ struct ReaderView: View {
     /// Cache of paginated page contents keyed by paginationSignature. Lets revisits to a
     /// chapter (and visits to chapters pre-paginated by the prefetch loop) skip the async
     /// pagination step entirely so the reader doesn't flash a placeholder.
-    @State private var paginationCache: [String: [String]] = [:]
+    @State private var paginationCache = ReaderPaginationCache(capacity: 24)
     @State private var lastKnownTextSize: CGSize = .zero
     /// Most recent container size observed by the body. Used by `useTwoColumn` and by tap-zone /
     /// auto-scroll code that runs outside a render pass and otherwise has no access to the
@@ -135,8 +223,6 @@ struct ReaderView: View {
     /// started the swipe at a chapter boundary. By `.onEnded` time UIPageViewController may
     /// have already committed an in-chapter turn and mutated `currentChapterPageIndex`.
     @State private var boundarySwipeStartPageIndex: Int?
-    private let paginationCacheCapacity = 24
-
     init(novel: Novel) {
         self.novel = novel
         // Seed stabilized insets from the active key window *before* the first body
@@ -295,12 +381,19 @@ struct ReaderView: View {
                 trailing: windowInsets.insets.right
             )
             let textSize = readerTextSize(containerSize: proxy.size, safeAreaInsets: stableInsets)
+            let pageSignature = paginationSignature(textSize: textSize)
             let cachedPages = cachedPageItems(forChapterIndex: currentChapterIndex, textSize: textSize)
             let pages = cachedPages ?? activeVisiblePages()
-            let allowsChapterTurn = cachedPages != nil
-                && chapterIsReadyForPageNavigation(at: currentChapterIndex)
+            let allowsForwardChapterTurn = ReaderPageAvailability.allowsForwardChapterTurn(
+                hasCachedPages: cachedPages != nil,
+                visiblePageCount: visiblePages.count,
+                visibleChapterIndex: visiblePages.first?.chapterIndex,
+                currentChapterIndex: currentChapterIndex,
+                visiblePageSignature: visiblePageSignature,
+                currentPageSignature: pageSignature,
+                chapterIsReady: chapterIsReadyForPageNavigation(at: currentChapterIndex)
+            )
             let currentPage = currentPage(in: pages)
-            let pageSignature = paginationSignature(textSize: textSize)
 
             ZStack {
                 pageBackground.ignoresSafeArea()
@@ -317,7 +410,7 @@ struct ReaderView: View {
                         textSize: textSize,
                         safeAreaInsets: stableInsets,
                         containerSize: proxy.size,
-                        allowsChapterTurn: allowsChapterTurn
+                        allowsForwardChapterTurn: allowsForwardChapterTurn
                     )
                 case .slide:
                     slidePageContent(
@@ -325,7 +418,7 @@ struct ReaderView: View {
                         textSize: textSize,
                         safeAreaInsets: stableInsets,
                         containerSize: proxy.size,
-                        allowsChapterTurn: allowsChapterTurn
+                        allowsForwardChapterTurn: allowsForwardChapterTurn
                     )
                 case .pageCurl:
                     pageCurlPageContent(
@@ -333,7 +426,7 @@ struct ReaderView: View {
                         textSize: textSize,
                         safeAreaInsets: stableInsets,
                         containerSize: proxy.size,
-                        allowsChapterTurn: allowsChapterTurn
+                        allowsForwardChapterTurn: allowsForwardChapterTurn
                     )
                 }
 
@@ -716,7 +809,7 @@ struct ReaderView: View {
         translation: CGSize,
         predictedEnd: CGSize,
         pages: [ReaderPageItem],
-        allowsChapterTurn: Bool
+        allowsForwardChapterTurn: Bool
     ) {
         // Ignore drags that are clearly vertical (e.g., the user is just resting a finger
         // and shifting it slightly downward). Horizontal motion has to dominate.
@@ -733,9 +826,9 @@ struct ReaderView: View {
         }
 
         if effective < 0 {
-            goToNextPage(pages: pages, allowsChapterTurn: allowsChapterTurn)
+            goToNextPage(pages: pages, allowsForwardChapterTurn: allowsForwardChapterTurn)
         } else {
-            goToPreviousPage(pages: pages, allowsChapterTurn: allowsChapterTurn)
+            goToPreviousPage(pages: pages)
         }
     }
 
@@ -751,7 +844,7 @@ struct ReaderView: View {
     /// and this stays the canonical boundary handler.
     private func boundarySwipeGesture(
         pages: [ReaderPageItem],
-        allowsChapterTurn: Bool = true,
+        allowsForwardChapterTurn: Bool = true,
         suppressForward: Bool = false,
         suppressBackward: Bool = false
     ) -> some Gesture {
@@ -769,7 +862,7 @@ struct ReaderView: View {
                     pageCount: pages.count,
                     translation: value.translation,
                     predictedEnd: value.predictedEndTranslation,
-                    allowsChapterTurn: allowsChapterTurn,
+                    allowsForwardChapterTurn: allowsForwardChapterTurn,
                     suppressForward: suppressForward,
                     suppressBackward: suppressBackward
                 )
@@ -781,7 +874,7 @@ struct ReaderView: View {
         pageCount: Int,
         translation: CGSize,
         predictedEnd: CGSize,
-        allowsChapterTurn: Bool = true,
+        allowsForwardChapterTurn: Bool = true,
         suppressForward: Bool = false,
         suppressBackward: Bool = false
     ) {
@@ -793,6 +886,10 @@ struct ReaderView: View {
 
         let overlayVisible = showControls || showChapterPicker || showPreferences || showBrightness
         let direction: ReaderPageTurnDirection = effective < 0 ? .forward : .backward
+        let allowsChapterTurn = ReaderPageAvailability.allowsBoundaryChapterTurn(
+            direction: direction,
+            allowsForwardChapterTurn: allowsForwardChapterTurn
+        )
         let action = ReaderPageTurnResolver.boundaryAction(
             direction: direction,
             startPageIndex: startPageIndex,
@@ -818,7 +915,7 @@ struct ReaderView: View {
         at location: CGPoint,
         in size: CGSize,
         pages: [ReaderPageItem],
-        allowsChapterTurn: Bool
+        allowsForwardChapterTurn: Bool
     ) {
         // While any overlay (controls / chapter picker / preferences) is visible, treat any
         // tap as "dismiss overlay" so the user can't accidentally turn pages while interacting
@@ -832,9 +929,9 @@ struct ReaderView: View {
         let x = location.x
 
         if x < width * 0.32 {
-            goToPreviousPage(pages: pages, allowsChapterTurn: allowsChapterTurn)
+            goToPreviousPage(pages: pages)
         } else if x > width * 0.68 {
-            goToNextPage(pages: pages, allowsChapterTurn: allowsChapterTurn)
+            goToNextPage(pages: pages, allowsForwardChapterTurn: allowsForwardChapterTurn)
         } else {
             toggleControls()
         }
@@ -848,7 +945,7 @@ struct ReaderView: View {
         textSize: CGSize,
         safeAreaInsets: EdgeInsets,
         containerSize: CGSize,
-        allowsChapterTurn: Bool
+        allowsForwardChapterTurn: Bool
     ) -> some View {
         let pageBody: AnyView = {
             if useTwoColumn(containerSize: containerSize) {
@@ -879,7 +976,7 @@ struct ReaderView: View {
                         handleReaderSwipe(translation: value.translation,
                                           predictedEnd: value.predictedEndTranslation,
                                           pages: pages,
-                                          allowsChapterTurn: allowsChapterTurn)
+                                          allowsForwardChapterTurn: allowsForwardChapterTurn)
                     }
             )
             .simultaneousGesture(
@@ -889,7 +986,7 @@ struct ReaderView: View {
                             at: event.location,
                             in: containerSize,
                             pages: pages,
-                            allowsChapterTurn: allowsChapterTurn
+                            allowsForwardChapterTurn: allowsForwardChapterTurn
                         )
                     }
             )
@@ -925,7 +1022,7 @@ struct ReaderView: View {
         textSize: CGSize,
         safeAreaInsets: EdgeInsets,
         containerSize: CGSize,
-        allowsChapterTurn: Bool
+        allowsForwardChapterTurn: Bool
     ) -> some View {
         kitPagerContent(
             transitionStyle: .scroll,
@@ -933,7 +1030,7 @@ struct ReaderView: View {
             textSize: textSize,
             safeAreaInsets: safeAreaInsets,
             containerSize: containerSize,
-            allowsChapterTurn: allowsChapterTurn
+            allowsForwardChapterTurn: allowsForwardChapterTurn
         )
     }
 
@@ -944,7 +1041,7 @@ struct ReaderView: View {
         textSize: CGSize,
         safeAreaInsets: EdgeInsets,
         containerSize: CGSize,
-        allowsChapterTurn: Bool
+        allowsForwardChapterTurn: Bool
     ) -> some View {
         kitPagerContent(
             transitionStyle: .pageCurl,
@@ -952,7 +1049,7 @@ struct ReaderView: View {
             textSize: textSize,
             safeAreaInsets: safeAreaInsets,
             containerSize: containerSize,
-            allowsChapterTurn: allowsChapterTurn
+            allowsForwardChapterTurn: allowsForwardChapterTurn
         )
     }
 
@@ -1000,7 +1097,7 @@ struct ReaderView: View {
         textSize: CGSize,
         safeAreaInsets: EdgeInsets,
         containerSize: CGSize,
-        allowsChapterTurn: Bool
+        allowsForwardChapterTurn: Bool
     ) -> some View {
         let usingTwoColumn = useTwoColumn(containerSize: containerSize)
         let continuous = usesContinuousChapterTurn(containerSize: containerSize)
@@ -1018,7 +1115,7 @@ struct ReaderView: View {
         var hasTrailingBookend = false
         var bodyCount = 0
         let boundaryPages = pages
-        let allowsBoundaryChapterTurn = allowsChapterTurn
+        let allowsBoundaryForwardChapterTurn = allowsForwardChapterTurn
         // Page hosts are immutable once handed to UIPageViewController. Encode every
         // render input that is not already part of ReaderPageItem's pagination/content
         // signature into the slot identity so a real visual change creates a fresh host,
@@ -1044,8 +1141,7 @@ struct ReaderView: View {
             let body = pages
             bodyCount = body.count
 
-            if allowsBoundaryChapterTurn,
-               currentChapterIndex > 0,
+            if currentChapterIndex > 0,
                let prevPages = cachedPageItems(forChapterIndex: currentChapterIndex - 1, textSize: textSize),
                let prevLast = prevPages.last {
                 let identity = slotIdentity(prevLast)
@@ -1058,7 +1154,7 @@ struct ReaderView: View {
                 slotIdentities.append(identity)
                 itemsByID[identity] = page
             }
-            if allowsBoundaryChapterTurn,
+            if allowsBoundaryForwardChapterTurn,
                currentChapterIndex < baseChapters.count - 1,
                let nextPages = cachedPageItems(forChapterIndex: currentChapterIndex + 1, textSize: textSize),
                let nextFirst = nextPages.first {
@@ -1172,14 +1268,14 @@ struct ReaderView: View {
                         at: event.location,
                         in: containerSize,
                         pages: boundaryPages,
-                        allowsChapterTurn: allowsBoundaryChapterTurn
+                        allowsForwardChapterTurn: allowsBoundaryForwardChapterTurn
                     )
                 }
         )
         .simultaneousGesture(
             boundarySwipeGesture(
                 pages: boundaryPages,
-                allowsChapterTurn: allowsBoundaryChapterTurn,
+                allowsForwardChapterTurn: allowsBoundaryForwardChapterTurn,
                 suppressForward: hasTrailingBookend,
                 suppressBackward: leadingBookendCount > 0
             )
@@ -2113,7 +2209,7 @@ struct ReaderView: View {
         }
     }
 
-    private func goToPreviousPage(pages: [ReaderPageItem], allowsChapterTurn: Bool) {
+    private func goToPreviousPage(pages: [ReaderPageItem]) {
         guard !showChapterPicker else { return }
         applyPageTurn(
             ReaderPageTurnResolver.action(
@@ -2123,12 +2219,12 @@ struct ReaderView: View {
                 currentChapterIndex: currentChapterIndex,
                 chapterCount: baseChapters.count,
                 usesTwoColumns: useTwoColumn,
-                allowsChapterTurn: allowsChapterTurn
+                allowsChapterTurn: true
             )
         )
     }
 
-    private func goToNextPage(pages: [ReaderPageItem], allowsChapterTurn: Bool) {
+    private func goToNextPage(pages: [ReaderPageItem], allowsForwardChapterTurn: Bool) {
         guard !showChapterPicker else { return }
         applyPageTurn(
             ReaderPageTurnResolver.action(
@@ -2138,7 +2234,7 @@ struct ReaderView: View {
                 currentChapterIndex: currentChapterIndex,
                 chapterCount: baseChapters.count,
                 usesTwoColumns: useTwoColumn,
-                allowsChapterTurn: allowsChapterTurn
+                allowsChapterTurn: allowsForwardChapterTurn
             )
         )
     }
@@ -2577,13 +2673,15 @@ struct ReaderView: View {
 
     @MainActor
     private func rememberPaginatedPages(_ pages: [String], for signature: String) {
-        paginationCache[signature] = pages
-        if paginationCache.count > paginationCacheCapacity {
-            // Drop an arbitrary older entry — fine for our purposes; full LRU is overkill.
-            if let stale = paginationCache.keys.first(where: { $0 != signature }) {
-                paginationCache[stale] = nil
-            }
-        }
+        // Prefetch runs concurrently with reading. Pin the visible signature so a
+        // background insert cannot make the rendered last page look like an unready
+        // placeholder and disable its chapter boundaries for the rest of the session.
+        let protectedSignatures = Set([visiblePageSignature].compactMap { $0 })
+        paginationCache.insert(
+            pages,
+            for: signature,
+            protecting: protectedSignatures
+        )
     }
 
     @MainActor

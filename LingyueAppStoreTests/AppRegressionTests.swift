@@ -109,6 +109,99 @@ final class ReadingStatsLedgerTests: XCTestCase {
 }
 
 final class ReaderPageTurnIntegrationTests: XCTestCase {
+    func testPaginationPrefetchCannotCascadeEvictVisibleChapter() {
+        var cache = ReaderPaginationCache(capacity: 3)
+        let visibleSignature = "chapter-10"
+        cache.insert(["visible"], for: visibleSignature)
+
+        for chapter in 11...20 {
+            cache.insert(
+                ["prefetched-\(chapter)"],
+                for: "chapter-\(chapter)",
+                protecting: [visibleSignature]
+            )
+        }
+
+        XCTAssertEqual(cache.count, 3)
+        XCTAssertEqual(cache[visibleSignature], ["visible"])
+        XCTAssertEqual(cache["chapter-20"], ["prefetched-20"])
+        XCTAssertNil(cache["chapter-11"])
+    }
+
+    func testRenderedCurrentChapterCanTurnAfterItsCacheEntryIsEvicted() {
+        let allowsTurn = ReaderPageAvailability.allowsForwardChapterTurn(
+            hasCachedPages: false,
+            visiblePageCount: 5,
+            visibleChapterIndex: 3,
+            currentChapterIndex: 3,
+            visiblePageSignature: "chapter-3-layout-a",
+            currentPageSignature: "chapter-3-layout-a",
+            chapterIsReady: true
+        )
+        let action = ReaderPageTurnResolver.action(
+            direction: .forward,
+            currentPageIndex: 4,
+            pageCount: 5,
+            currentChapterIndex: 3,
+            chapterCount: 8,
+            usesTwoColumns: false,
+            allowsChapterTurn: allowsTurn
+        )
+
+        XCTAssertTrue(allowsTurn)
+        XCTAssertEqual(action, .chapter(index: 4, landOnLastPage: false))
+    }
+
+    func testStaleRenderedPagesCannotTurnDuringRepagination() {
+        let allowsTurn = ReaderPageAvailability.allowsForwardChapterTurn(
+            hasCachedPages: false,
+            visiblePageCount: 5,
+            visibleChapterIndex: 3,
+            currentChapterIndex: 3,
+            visiblePageSignature: "chapter-3-layout-a",
+            currentPageSignature: "chapter-3-layout-b",
+            chapterIsReady: true
+        )
+
+        XCTAssertFalse(allowsTurn)
+    }
+
+    func testSwipeBackAfterChapterButtonDoesNotWaitForPagination() {
+        let allowsBackwardTurn = ReaderPageAvailability.allowsBoundaryChapterTurn(
+            direction: .backward,
+            allowsForwardChapterTurn: false
+        )
+        let action = ReaderPageTurnResolver.boundaryAction(
+            direction: .backward,
+            startPageIndex: 0,
+            pageCount: 1,
+            currentChapterIndex: 1,
+            chapterCount: 3,
+            usesTwoColumns: false,
+            allowsChapterTurn: allowsBackwardTurn
+        )
+
+        XCTAssertEqual(action, .chapter(index: 0, landOnLastPage: true))
+    }
+
+    func testLoadingPageStillCannotSwipeForwardPrematurely() {
+        let allowsForwardTurn = ReaderPageAvailability.allowsBoundaryChapterTurn(
+            direction: .forward,
+            allowsForwardChapterTurn: false
+        )
+        let action = ReaderPageTurnResolver.boundaryAction(
+            direction: .forward,
+            startPageIndex: 0,
+            pageCount: 1,
+            currentChapterIndex: 1,
+            chapterCount: 3,
+            usesTwoColumns: false,
+            allowsChapterTurn: allowsForwardTurn
+        )
+
+        XCTAssertEqual(action, .none)
+    }
+
     func testInteriorCurlBoundaryCallbackDoesNotSkipToNextChapter() {
         let action = ReaderPageTurnResolver.boundaryAction(
             direction: .forward,
