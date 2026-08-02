@@ -5,6 +5,206 @@ import LingyueCore
 @testable import LingyueAppStore
 
 final class ReadingStatsLedgerTests: XCTestCase {
+    func testReadableCharacterCountExcludesWhitespaceAndPunctuation() {
+        XCTAssertEqual(
+            ReadingTextMetrics.characterCount(in: "第一章：Hello, 世界！123\n"),
+            13
+        )
+    }
+
+    func testOnlyForwardTurnsCountAndTwoPageSpreadsUseTheirStep() {
+        let novel = makeNovel()
+        let start = Date(timeIntervalSince1970: 1_800_000_000)
+        var ledger = ReadingStatsLedger()
+        ledger.startReadingSession(
+            novel: novel,
+            timestamp: start,
+            progress: 0,
+            chapterIndex: 0,
+            chapterPageIndex: 0,
+            chapterSourceURLString: "chapter-0"
+        )
+
+        ledger.recordReading(
+            novel: novel,
+            timestamp: start.addingTimeInterval(10),
+            chapterTitle: "第一章",
+            progress: 0.1,
+            chapterIndex: 0,
+            chapterPageIndex: 1,
+            chapterSourceURLString: "chapter-0",
+            pageTextCharacterCount: 420
+        )
+        ledger.recordReading(
+            novel: novel,
+            timestamp: start.addingTimeInterval(20),
+            chapterTitle: "第一章",
+            progress: 0,
+            chapterIndex: 0,
+            chapterPageIndex: 0,
+            chapterSourceURLString: "chapter-0",
+            pageTextCharacterCount: 410
+        )
+        ledger.recordReading(
+            novel: novel,
+            timestamp: start.addingTimeInterval(30),
+            chapterTitle: "第一章",
+            progress: 0.2,
+            chapterIndex: 0,
+            chapterPageIndex: 2,
+            chapterSourceURLString: "chapter-0",
+            pageTextCharacterCount: 830,
+            pageTurnStep: 2
+        )
+
+        XCTAssertEqual(ledger.events.count, 2)
+        XCTAssertEqual(ledger.totalPageTurns, 2)
+        XCTAssertEqual(ledger.totalCharacterCount, 1_250)
+    }
+
+    func testLegacyWholeChapterEventIsRepairedExactlyOnce() throws {
+        let novel = makeNovel(progress: 1)
+        let start = Date(timeIntervalSince1970: 1_800_000_000)
+        let inflatedEventID = UUID()
+        var events: [ReadingStatsEvent] = [
+            makeEvent(novel: novel, timestamp: start, count: 500, chapter: "第一章", progress: 0.1),
+            makeEvent(novel: novel, timestamp: start.addingTimeInterval(1), count: 480, chapter: "第一章", progress: 0.2),
+            makeEvent(id: inflatedEventID, novel: novel, timestamp: start.addingTimeInterval(2), count: 3_000, chapter: "第二章", progress: 0.3)
+        ]
+        for offset in 3...7 {
+            events.append(
+                makeEvent(
+                    novel: novel,
+                    timestamp: start.addingTimeInterval(TimeInterval(offset)),
+                    count: 500,
+                    chapter: "第二章",
+                    progress: 0.3 + Double(offset - 2) * 0.05
+                )
+            )
+        }
+        events.append(
+            makeEvent(
+                novel: novel,
+                timestamp: start.addingTimeInterval(8),
+                count: 510,
+                chapter: "第三章",
+                progress: 0.7
+            )
+        )
+        let book = ReadingStatsBook(
+            id: novel.id,
+            title: novel.title,
+            author: novel.author,
+            coverPalette: novel.coverPalette,
+            coverImageURLString: nil,
+            sourceURLString: nil,
+            firstReadAt: start,
+            lastReadAt: start.addingTimeInterval(8),
+            deletedAt: nil,
+            currentProgress: 1,
+            totalDurationSeconds: 80,
+            pageTurns: events.count,
+            characterCount: events.reduce(0) { $0 + $1.characterCount }
+        )
+        let encoded = try JSONEncoder().encode(ReadingStatsLedger(books: [book], events: events))
+        var legacyObject = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+        )
+        legacyObject.removeValue(forKey: "characterCountingVersion")
+        let legacyData = try JSONSerialization.data(withJSONObject: legacyObject)
+        var ledger = try JSONDecoder().decode(ReadingStatsLedger.self, from: legacyData)
+
+        XCTAssertTrue(ledger.repairLegacyCharacterCounts())
+        XCTAssertEqual(
+            ledger.events.first(where: { $0.id == inflatedEventID })?.characterCount,
+            500
+        )
+        XCTAssertEqual(
+            ledger.books.first?.characterCount,
+            ledger.events.reduce(0) { $0 + $1.characterCount }
+        )
+        XCTAssertFalse(ledger.repairLegacyCharacterCounts())
+    }
+
+    func testCompletedBookMigrationRestoresItsActualPageTotal() throws {
+        let novel = makeNovel(progress: 1)
+        let start = Date(timeIntervalSince1970: 1_800_000_000)
+        let pageCounts = [500, 500, 500, 500, 500, 500, 300]
+        var events: [ReadingStatsEvent] = []
+        var tick = 0
+
+        for chapterIndex in 0..<100 {
+            let title = "第\(chapterIndex + 1)章"
+            let chapterProgress = Double(chapterIndex) / 100
+            if chapterIndex == 0 {
+                for count in pageCounts {
+                    events.append(
+                        makeEvent(
+                            novel: novel,
+                            timestamp: start.addingTimeInterval(TimeInterval(tick)),
+                            count: count,
+                            chapter: title,
+                            progress: chapterProgress + 0.005
+                        )
+                    )
+                    tick += 1
+                }
+            } else {
+                // Legacy boundary observation: whole 3,300-character chapter, followed
+                // by its real pages except page zero (which shares the same page key).
+                events.append(
+                    makeEvent(
+                        novel: novel,
+                        timestamp: start.addingTimeInterval(TimeInterval(tick)),
+                        count: 3_300,
+                        chapter: title,
+                        progress: chapterProgress
+                    )
+                )
+                tick += 1
+                for count in pageCounts.dropFirst() {
+                    events.append(
+                        makeEvent(
+                            novel: novel,
+                            timestamp: start.addingTimeInterval(TimeInterval(tick)),
+                            count: count,
+                            chapter: title,
+                            progress: chapterProgress + 0.005
+                        )
+                    )
+                    tick += 1
+                }
+            }
+        }
+
+        let book = ReadingStatsBook(
+            id: novel.id,
+            title: novel.title,
+            author: novel.author,
+            coverPalette: novel.coverPalette,
+            coverImageURLString: nil,
+            sourceURLString: nil,
+            firstReadAt: start,
+            lastReadAt: start.addingTimeInterval(TimeInterval(tick)),
+            deletedAt: nil,
+            currentProgress: 1,
+            totalDurationSeconds: TimeInterval(tick),
+            pageTurns: events.count,
+            characterCount: events.reduce(0) { $0 + $1.characterCount }
+        )
+        let encoded = try JSONEncoder().encode(ReadingStatsLedger(books: [book], events: events))
+        var legacyObject = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+        )
+        legacyObject.removeValue(forKey: "characterCountingVersion")
+        let legacyData = try JSONSerialization.data(withJSONObject: legacyObject)
+        var ledger = try JSONDecoder().decode(ReadingStatsLedger.self, from: legacyData)
+
+        XCTAssertGreaterThan(ledger.books[0].characterCount, 600_000)
+        ledger.repairLegacyCharacterCounts()
+        XCTAssertEqual(ledger.books[0].characterCount, 330_000)
+    }
+
     func testCompactionPreservesTotalsAndBoundsDetailedEvents() {
         let bookID = UUID()
         let reference = Date(timeIntervalSince1970: 1_800_000_000)
@@ -106,9 +306,77 @@ final class ReadingStatsLedgerTests: XCTestCase {
         }
         return (duration, pages, characters)
     }
+
+    private func makeNovel(progress: Double = 0) -> Novel {
+        Novel(
+            title: "测试书",
+            author: "灵阅",
+            genre: "测试",
+            summary: "",
+            lastChapter: "第一章",
+            progress: progress,
+            readMinutes: 0,
+            coverPalette: .teal,
+            isFeatured: false
+        )
+    }
+
+    private func makeEvent(
+        id: UUID = UUID(),
+        novel: Novel,
+        timestamp: Date,
+        count: Int,
+        chapter: String,
+        progress: Double
+    ) -> ReadingStatsEvent {
+        ReadingStatsEvent(
+            id: id,
+            bookID: novel.id,
+            bookTitle: novel.title,
+            timestamp: timestamp,
+            durationSeconds: 10,
+            pageTurns: 1,
+            characterCount: count,
+            chapterTitle: chapter,
+            progress: progress
+        )
+    }
 }
 
 final class ReaderPageTurnIntegrationTests: XCTestCase {
+    func testStatsRejectWholeChapterPlaceholderAndCountBothPagesInSpread() {
+        let placeholder = ReaderPageItem(
+            chapterIndex: 1,
+            pageIndex: 0,
+            chapterPageCount: 1,
+            chapterTitle: "第二章",
+            content: String(repeating: "整章正文", count: 1_000),
+            renderSignature: "placeholder",
+            isPaginated: false
+        )
+        let left = ReaderPageItem(
+            chapterIndex: 1,
+            pageIndex: 0,
+            chapterPageCount: 2,
+            chapterTitle: "第二章",
+            content: "左页，共四字。",
+            renderSignature: "left",
+            isPaginated: true
+        )
+        let right = ReaderPageItem(
+            chapterIndex: 1,
+            pageIndex: 1,
+            chapterPageCount: 2,
+            chapterTitle: "第二章",
+            content: "右页，也四字！",
+            renderSignature: "right",
+            isPaginated: true
+        )
+
+        XCTAssertNil(placeholder.readingStatsCharacterCount())
+        XCTAssertEqual(left.readingStatsCharacterCount(companionPage: right), 10)
+    }
+
     func testPaginationPrefetchCannotCascadeEvictVisibleChapter() {
         var cache = ReaderPaginationCache(capacity: 3)
         let visibleSignature = "chapter-10"

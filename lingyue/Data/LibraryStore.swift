@@ -55,6 +55,24 @@ struct ReadingStatsDailySummary: Hashable, Codable, Sendable {
     var characterCount: Int
 }
 
+enum ReadingTextMetrics {
+    /// Chinese reading statistics conventionally count readable letters and numbers,
+    /// not whitespace or punctuation. Counting every non-whitespace scalar inflated the
+    /// displayed value by including commas, quotation marks, and other layout symbols.
+    static func characterCount(in text: String) -> Int {
+        text.unicodeScalars.count { scalar in
+            switch scalar.properties.generalCategory {
+            case .uppercaseLetter, .lowercaseLetter, .titlecaseLetter,
+                 .modifierLetter, .otherLetter,
+                 .decimalNumber, .letterNumber, .otherNumber:
+                return true
+            default:
+                return false
+            }
+        }
+    }
+}
+
 private struct ReadingStatsCursor: Hashable, Codable, Sendable {
     let bookID: UUID
     var lastObservedAt: Date
@@ -70,15 +88,18 @@ struct ReadingStatsLedger: Hashable, Codable, Sendable {
     var events: [ReadingStatsEvent] = []
     var dailySummaries: [ReadingStatsDailySummary] = []
     fileprivate var cursors: [ReadingStatsCursor] = []
+    private var characterCountingVersion: Int
 
     static let maximumDetailedEventCount = 3_000
     static let detailedHistoryDays = 100
+    private static let currentCharacterCountingVersion = 1
 
     private enum CodingKeys: String, CodingKey {
         case books
         case events
         case dailySummaries
         case cursors
+        case characterCountingVersion
     }
 
     init(
@@ -90,6 +111,7 @@ struct ReadingStatsLedger: Hashable, Codable, Sendable {
         self.events = events
         self.dailySummaries = dailySummaries
         self.cursors = []
+        self.characterCountingVersion = Self.currentCharacterCountingVersion
     }
 
     init(from decoder: Decoder) throws {
@@ -101,6 +123,10 @@ struct ReadingStatsLedger: Hashable, Codable, Sendable {
             forKey: .dailySummaries
         ) ?? []
         cursors = try container.decodeIfPresent([ReadingStatsCursor].self, forKey: .cursors) ?? []
+        characterCountingVersion = try container.decodeIfPresent(
+            Int.self,
+            forKey: .characterCountingVersion
+        ) ?? 0
     }
 
     func encode(to encoder: Encoder) throws {
@@ -109,6 +135,116 @@ struct ReadingStatsLedger: Hashable, Codable, Sendable {
         try container.encode(events, forKey: .events)
         try container.encode(dailySummaries, forKey: .dailySummaries)
         try container.encode(cursors, forKey: .cursors)
+        try container.encode(characterCountingVersion, forKey: .characterCountingVersion)
+    }
+
+    /// Repairs detailed events written by the original counter. During a chapter change,
+    /// ReaderView briefly exposed an unpaginated placeholder whose text was the *entire next
+    /// chapter*. That whole chapter was recorded once, then its real pages were recorded
+    /// again. For a completed contiguous chapter run, the bad first event is identifiable:
+    /// it is a large outlier and equals the unread first page plus all following page events.
+    /// Replacing it with that remainder restores the page total without guessing a blanket
+    /// percentage. Ambiguous runs are deliberately left untouched.
+    @discardableResult
+    mutating func repairLegacyCharacterCounts() -> Bool {
+        guard characterCountingVersion < Self.currentCharacterCountingVersion else {
+            return false
+        }
+
+        var indicesByBook: [UUID: [Int]] = [:]
+        for index in events.indices where events[index].pageTurns > 0 {
+            indicesByBook[events[index].bookID, default: []].append(index)
+        }
+
+        for (bookID, unsortedIndices) in indicesByBook {
+            let indices = unsortedIndices.sorted { events[$0].timestamp < events[$1].timestamp }
+            let positiveCounts = indices
+                .map { events[$0].characterCount }
+                .filter { $0 > 0 }
+                .sorted()
+            guard !positiveCounts.isEmpty else { continue }
+
+            // Whole-chapter placeholders are normally several times larger than a rendered
+            // page. The median remains representative because there is at most one such
+            // placeholder per chapter run, while a chapter normally has several pages.
+            let typicalPageCount = positiveCounts[positiveCounts.count / 2]
+            let plausiblePageCeiling = max(typicalPageCount * 2, typicalPageCount + 800)
+            let bookIsFinished = books.first(where: { $0.id == bookID })?.currentProgress ?? 0 >= 0.999
+
+            var runStart = 0
+            while runStart < indices.count {
+                let chapterTitle = events[indices[runStart]].chapterTitle
+                var runEnd = runStart + 1
+                while runEnd < indices.count,
+                      events[indices[runEnd]].chapterTitle == chapterTitle {
+                    runEnd += 1
+                }
+
+                let beginsAfterAnotherChapter = runStart > 0
+                let hasFollowingChapter = runEnd < indices.count
+                let completedForward = hasFollowingChapter
+                    ? events[indices[runEnd]].progress > events[indices[runStart]].progress
+                    : bookIsFinished
+                let candidateIndex = indices[runStart]
+                let candidateCount = events[candidateIndex].characterCount
+
+                if beginsAfterAnotherChapter,
+                   completedForward,
+                   runEnd - runStart > 1,
+                   candidateCount > plausiblePageCeiling {
+                    let followingCount = indices[(runStart + 1)..<runEnd].reduce(0) {
+                        $0 + max(events[$1].characterCount, 0)
+                    }
+                    let inferredFirstPageCount = candidateCount - followingCount
+                    // A small amount of backtracking can make the following pages add up
+                    // to the entire chapter. In that still-unambiguous case, fall back to
+                    // the book's median rendered-page size instead of preserving the known
+                    // whole-chapter value. If following activity exceeds the chapter total,
+                    // the run is genuinely ambiguous and remains untouched.
+                    let repairedCount: Int? = if inferredFirstPageCount > 0,
+                                                inferredFirstPageCount <= plausiblePageCeiling {
+                        inferredFirstPageCount
+                    } else if candidateCount >= followingCount {
+                        typicalPageCount
+                    } else {
+                        nil
+                    }
+                    if let repairedCount {
+                        let event = events[candidateIndex]
+                        events[candidateIndex] = ReadingStatsEvent(
+                            id: event.id,
+                            bookID: event.bookID,
+                            bookTitle: event.bookTitle,
+                            timestamp: event.timestamp,
+                            durationSeconds: event.durationSeconds,
+                            pageTurns: event.pageTurns,
+                            characterCount: repairedCount,
+                            chapterTitle: event.chapterTitle,
+                            progress: event.progress
+                        )
+                    }
+                }
+
+                runStart = runEnd
+            }
+        }
+
+        // ReadingStatsBook is the lifetime cache used by the overview. Rebuild only its
+        // character total from the repaired source-of-truth activity; durations and page
+        // turns are unaffected by this migration.
+        var characterTotals: [UUID: Int] = [:]
+        for summary in dailySummaries {
+            characterTotals[summary.bookID, default: 0] += max(summary.characterCount, 0)
+        }
+        for event in events {
+            characterTotals[event.bookID, default: 0] += max(event.characterCount, 0)
+        }
+        for index in books.indices {
+            books[index].characterCount = characterTotals[books[index].id, default: 0]
+        }
+
+        characterCountingVersion = Self.currentCharacterCountingVersion
+        return true
     }
 
     var totalDurationSeconds: TimeInterval {
@@ -361,7 +497,8 @@ struct ReadingStatsLedger: Hashable, Codable, Sendable {
         chapterIndex: Int?,
         chapterPageIndex: Int?,
         chapterSourceURLString: String?,
-        pageTextCharacterCount: Int
+        pageTextCharacterCount: Int,
+        pageTurnStep: Int = 1
     ) {
         rememberBook(novel, at: timestamp)
 
@@ -401,7 +538,8 @@ struct ReadingStatsLedger: Hashable, Codable, Sendable {
             previous: previous,
             currentPageKey: pageKey,
             chapterIndex: chapterIndex,
-            chapterPageIndex: chapterPageIndex
+            chapterPageIndex: chapterPageIndex,
+            pageTurnStep: pageTurnStep
         )
 
         guard isPageTurn else {
@@ -515,7 +653,8 @@ struct ReadingStatsLedger: Hashable, Codable, Sendable {
         previous: ReadingStatsCursor,
         currentPageKey: String,
         chapterIndex: Int?,
-        chapterPageIndex: Int?
+        chapterPageIndex: Int?,
+        pageTurnStep: Int
     ) -> Bool {
         guard previous.lastPageKey != currentPageKey else { return false }
         guard let previousChapterIndex = previous.chapterIndex,
@@ -526,10 +665,10 @@ struct ReadingStatsLedger: Hashable, Codable, Sendable {
         }
 
         if chapterIndex == previousChapterIndex {
-            return abs(chapterPageIndex - previousChapterPageIndex) == 1
+            return chapterPageIndex - previousChapterPageIndex == max(pageTurnStep, 1)
         }
 
-        return abs(chapterIndex - previousChapterIndex) == 1
+        return chapterIndex - previousChapterIndex == 1
     }
 }
 
@@ -578,6 +717,7 @@ final class LibraryStore: ObservableObject {
         // events on load so the calendar/streak reflect actual reading rather than incidental
         // book-opens. Page-turn events have `pageTurns >= 1` by construction.
         loadedStats.events.removeAll { $0.pageTurns == 0 }
+        loadedStats.repairLegacyCharacterCounts()
         loadedStats.compactHistory()
         self.readingStats = loadedStats
         seedReadingStatsFromLibraryIfNeeded()
@@ -616,6 +756,7 @@ final class LibraryStore: ObservableObject {
     /// afterwards so the restore lands on disk before a quit.
     func replaceReadingStats(_ stats: ReadingStatsLedger) {
         var compacted = stats
+        compacted.repairLegacyCharacterCounts()
         compacted.compactHistory()
         readingStats = compacted
     }
@@ -786,6 +927,7 @@ final class LibraryStore: ObservableObject {
         chapterPageIndex: Int? = nil,
         chapterSourceURLString: String? = nil,
         pageTextCharacterCount: Int? = nil,
+        pageTurnStep: Int = 1,
         openedAt: Date = Date()
     ) {
         let clampedProgress = min(max(progress, 0), 1)
@@ -807,7 +949,8 @@ final class LibraryStore: ObservableObject {
             chapterIndex: chapterIndex,
             chapterPageIndex: chapterPageIndex,
             chapterSourceURLString: chapterSourceURLString,
-            pageTextCharacterCount: pageTextCharacterCount ?? 0
+            pageTextCharacterCount: pageTextCharacterCount ?? 0,
+            pageTurnStep: pageTurnStep
         )
 
         var updatedCategories = categories

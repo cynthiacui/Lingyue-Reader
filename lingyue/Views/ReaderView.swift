@@ -2052,7 +2052,8 @@ struct ReaderView: View {
             chapterPageCount: 1,
             chapterTitle: title,
             content: content,
-            renderSignature: renderSignature
+            renderSignature: renderSignature,
+            isPaginated: false
         )
     }
 
@@ -2406,6 +2407,7 @@ struct ReaderView: View {
         guard pendingRestoreChapterKey == nil else { return }
 
         let currentPage = currentPage(in: pages)
+        guard currentPage.isPaginated else { return }
         guard baseChapters.indices.contains(currentPage.chapterIndex) else { return }
 
         let currentChapter = baseChapters[currentPage.chapterIndex]
@@ -2424,12 +2426,25 @@ struct ReaderView: View {
         guard pendingRestoreChapterKey == nil else { return }
 
         let currentPage = currentPage(in: pages)
+        // A chapter switch can briefly expose a placeholder whose `content` is the entire
+        // unpaginated chapter. Recording that as one page was the source of the roughly-2x
+        // word totals: the whole chapter was counted here and its real pages were counted
+        // again after pagination completed.
+        guard currentPage.isPaginated else { return }
         guard baseChapters.indices.contains(currentPage.chapterIndex) else { return }
 
         let currentChapter = baseChapters[currentPage.chapterIndex]
         let progress = readingProgress(for: currentPage)
         let stateKey = "\(activeNovel.id.uuidString)-\(currentPage.chapterIndex)-\(currentPage.pageIndex)-\(pages.count)"
         guard force || stateKey != lastPersistedReadingState else { return }
+
+        let rightPageIndex = currentPage.pageIndex + 1
+        let rightPage = useTwoColumn && pages.indices.contains(rightPageIndex)
+            ? pages[rightPageIndex]
+            : nil
+        guard let visibleCharacterCount = currentPage.readingStatsCharacterCount(
+            companionPage: rightPage
+        ) else { return }
 
         lastPersistedReadingState = stateKey
         libraryStore.updateReadingState(
@@ -2439,12 +2454,9 @@ struct ReaderView: View {
             chapterIndex: currentPage.chapterIndex,
             chapterPageIndex: currentPage.pageIndex,
             chapterSourceURLString: currentChapter.sourceURLString,
-            pageTextCharacterCount: readableCharacterCount(in: currentPage.content)
+            pageTextCharacterCount: visibleCharacterCount,
+            pageTurnStep: useTwoColumn ? 2 : 1
         )
-    }
-
-    private func readableCharacterCount(in text: String) -> Int {
-        text.unicodeScalars.filter { !$0.properties.isWhitespace }.count
     }
 
     private func restoredChapterIndex() -> Int? {
@@ -2666,7 +2678,8 @@ struct ReaderView: View {
                     "\(chapterTitle.hashValue)",
                     "\(pageContent.hashValue)",
                     "\(contents.count)"
-                ].joined(separator: "|")
+                ].joined(separator: "|"),
+                isPaginated: true
             )
         }
     }
@@ -3232,7 +3245,7 @@ struct ReaderView: View {
     }
 }
 
-private struct ReaderPageItem: Identifiable {
+struct ReaderPageItem: Identifiable {
     let chapterIndex: Int
     let pageIndex: Int
     let chapterPageCount: Int
@@ -3242,9 +3255,18 @@ private struct ReaderPageItem: Identifiable {
     /// are immutable for a given identity, preventing an index-only state update from
     /// replacing a visible UIHostingController root during a swipe completion.
     let renderSignature: String
+    /// False only for the temporary whole-chapter/loading placeholder shown before the
+    /// paginator has produced real page boundaries. Statistics must never count it.
+    let isPaginated: Bool
 
     var id: String {
         "\(chapterIndex)-\(pageIndex)-\(renderSignature.hashValue)"
+    }
+
+    func readingStatsCharacterCount(companionPage: ReaderPageItem? = nil) -> Int? {
+        guard isPaginated else { return nil }
+        return ReadingTextMetrics.characterCount(in: content)
+            + (companionPage.map { ReadingTextMetrics.characterCount(in: $0.content) } ?? 0)
     }
 }
 
