@@ -268,6 +268,42 @@ final class ReaderTypographyTests: XCTestCase {
 
 @MainActor
 final class PageCurlPagerCacheTests: XCTestCase {
+    func testVisibleNeighborhoodIsRenderedAndLaidOutBeforeSwipe() throws {
+        let recorder = PagerRenderRecorder()
+        let slots = ["0-0-layout", "0-1-layout", "0-2-layout"]
+        let coordinator = PageCurlPager.Coordinator(
+            makePager(slots: slots, currentIndex: 1, recorder: recorder)
+        )
+        let pager = UIPageViewController(
+            transitionStyle: .scroll,
+            navigationOrientation: .horizontal
+        )
+        let viewportSize = CGSize(width: 390, height: 844)
+        pager.view.frame = CGRect(origin: .zero, size: viewportSize)
+        let current = try XCTUnwrap(coordinator.host(for: slots[1]))
+        pager.setViewControllers([current], direction: .forward, animated: false)
+
+        coordinator.prepareVisibleNeighborhood(in: pager)
+
+        XCTAssertEqual(Set(recorder.identities), Set(slots))
+        let blankReference = UIView(frame: CGRect(origin: .zero, size: viewportSize))
+        blankReference.backgroundColor = .white
+        let blankPixels = renderedPNG(of: blankReference)
+        for identity in slots {
+            let host = try XCTUnwrap(coordinator.host(for: identity))
+            XCTAssertEqual(host.view.bounds.size, viewportSize)
+            XCTAssertNotEqual(
+                renderedPNG(of: host.view),
+                blankPixels,
+                "Prepared page \(identity) must contain its SwiftUI frame before a swipe"
+            )
+            if identity != slots[1] {
+                XCTAssertNil(host.parent)
+                XCTAssertNil(host.view.superview)
+            }
+        }
+    }
+
     func testPageIndexUpdateDoesNotRebuildCachedPageRoots() {
         let recorder = PagerRenderRecorder()
         let slots = ["0-0-layout", "0-1-layout"]
@@ -355,8 +391,20 @@ private final class PagerRenderRecorder {
 
     func render(identity: String) -> AnyView {
         identities.append(identity)
-        return AnyView(Color.white)
+        return AnyView(Color.red)
     }
+}
+
+@MainActor
+private func renderedPNG(of view: UIView) -> Data? {
+    let format = UIGraphicsImageRendererFormat()
+    format.scale = 1
+    format.opaque = true
+    return UIGraphicsImageRenderer(size: view.bounds.size, format: format)
+        .image { context in
+            view.layer.render(in: context.cgContext)
+        }
+        .pngData()
 }
 
 @MainActor

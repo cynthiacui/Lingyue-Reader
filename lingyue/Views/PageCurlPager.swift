@@ -1,6 +1,20 @@
 import SwiftUI
 import UIKit
 
+/// UIPageViewController asks its data source for a neighbour only when a gesture is
+/// about to begin. A freshly-created UIHostingController can need another run-loop
+/// turn for its first SwiftUI layout, which lets a quick swipe land on a valid but
+/// visually empty host. Report settled viewport layouts so the coordinator can
+/// eagerly prepare the current page and its immediate neighbours beforehand.
+private final class ReaderPageViewController: UIPageViewController {
+    var onViewportLayout: (() -> Void)?
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        onViewportLayout?()
+    }
+}
+
 /// SwiftUI wrapper around `UIPageViewController` for both `.pageCurl` (real-book
 /// curl) and `.scroll` (follow-finger horizontal slide). SwiftUI's `TabView(.page)`
 /// drives slide on its own but writes its post-bounce selection back to the binding
@@ -26,7 +40,8 @@ struct PageCurlPager: UIViewControllerRepresentable {
     /// parent's page-index state; the parent owns the index↔chapter-page translation.
     @Binding var currentIndex: Int
     let backgroundColor: UIColor
-    /// Render a page by its stable identity. Called lazily as pages become visible.
+    /// Render a page by its stable identity. The visible page and its immediate
+    /// neighbours are prepared eagerly; all other pages remain lazy.
     let renderPage: (String) -> AnyView
     /// Called when a transition COMPLETES onto a slot (gesture-driven landing). The
     /// parent inspects the landed identity and, if it is a cross-chapter bookend,
@@ -38,7 +53,7 @@ struct PageCurlPager: UIViewControllerRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
     func makeUIViewController(context: Context) -> UIPageViewController {
-        let pvc = UIPageViewController(
+        let pvc = ReaderPageViewController(
             transitionStyle: transitionStyle,
             navigationOrientation: .horizontal,
             options: nil
@@ -51,6 +66,12 @@ struct PageCurlPager: UIViewControllerRepresentable {
             context.coordinator.shownIdentity = initialID
             pvc.setViewControllers([initial], direction: .forward, animated: false)
         }
+        let coordinator = context.coordinator
+        pvc.onViewportLayout = { [weak coordinator, weak pvc] in
+            guard let coordinator, let pvc else { return }
+            coordinator.prepareVisibleNeighborhood(in: pvc)
+        }
+        context.coordinator.prepareVisibleNeighborhood(in: pvc)
         return pvc
     }
 
@@ -58,6 +79,7 @@ struct PageCurlPager: UIViewControllerRepresentable {
         context.coordinator.parent = self
         pvc.view.backgroundColor = backgroundColor
         let slotsChanged = context.coordinator.refreshCachedRenders()
+        context.coordinator.prepareVisibleNeighborhood(in: pvc)
 
         guard let desiredID = context.coordinator.identity(at: currentIndex) else { return }
         let shownID = context.coordinator.shownIdentity
@@ -83,6 +105,7 @@ struct PageCurlPager: UIViewControllerRepresentable {
                let host = context.coordinator.host(for: shownID) {
                 ReaderDiagnostics.shared.log(.info, "pager neighbor refresh", context: ["shownID": shownID])
                 pvc.setViewControllers([host], direction: .forward, animated: false)
+                context.coordinator.prepareVisibleNeighborhood(in: pvc)
             }
             return
         }
@@ -109,6 +132,7 @@ struct PageCurlPager: UIViewControllerRepresentable {
     static func dismantleUIViewController(_ uiViewController: UIPageViewController,
                                           coordinator: Coordinator) {
         coordinator.isDismantled = true
+        (uiViewController as? ReaderPageViewController)?.onViewportLayout = nil
     }
 
     final class Coordinator: NSObject, UIPageViewControllerDataSource, UIPageViewControllerDelegate {
@@ -140,6 +164,13 @@ struct PageCurlPager: UIViewControllerRepresentable {
         var gestureTargetIdentity: String?
         // Hosts cached by stable identity so the live page survives a slot re-base.
         private var hosts: [String: UIHostingController<AnyView>] = [:]
+        // Records the viewport size at which each host completed its first synchronous
+        // layout. A matching entry means the host is ready to animate on screen; a size
+        // change (rotation / split view) prepares it again at the new geometry.
+        private var preparedHostSizes: [String: CGSize] = [:]
+        // Temporary containment can cause the pager itself to lay out again. Prevent
+        // that callback from recursively starting another preparation batch.
+        private var isPreparingHosts = false
         // Snapshot of the slot identities at the last refresh so we can detect
         // re-pagination / re-base and evict stale, non-visible hosts.
         private var lastSeenSlotIdentities: [String] = []
@@ -181,6 +212,84 @@ struct PageCurlPager: UIViewControllerRepresentable {
             return host
         }
 
+        /// Returns a cached host after forcing its SwiftUI tree through an initial layout
+        /// at the pager's real viewport size. This closes the lazy-host race where UIKit
+        /// starts displaying a neighbour before SwiftUI has produced its first frame.
+        func preparedHost(
+            for identity: String,
+            in pvc: UIPageViewController
+        ) -> UIHostingController<AnyView>? {
+            guard let host = host(for: identity) else { return nil }
+            guard !isPreparingHosts else { return host }
+            isPreparingHosts = true
+            defer { isPreparingHosts = false }
+            prepare(host, identity: identity, in: pvc)
+            return host
+        }
+
+        /// Eagerly prepare only the visible page and its adjacent neighbours. This keeps
+        /// memory bounded to the same host cache while ensuring both swipe directions are
+        /// ready before UIPageViewController asks for them during a gesture.
+        func prepareVisibleNeighborhood(in pvc: UIPageViewController) {
+            guard !isDismantled, !isPreparingHosts,
+                  let shownSlot = slotIndex(of: shownIdentity) else { return }
+            isPreparingHosts = true
+            defer { isPreparingHosts = false }
+            for slot in (shownSlot - 1)...(shownSlot + 1) {
+                guard let identity = identity(at: slot),
+                      let host = host(for: identity) else { continue }
+                prepare(host, identity: identity, in: pvc)
+            }
+        }
+
+        private func prepare(
+            _ host: UIHostingController<AnyView>,
+            identity: String,
+            in pvc: UIPageViewController
+        ) {
+            let viewportSize = pvc.view.bounds.size
+            guard viewportSize.width > 0, viewportSize.height > 0,
+                  preparedHostSizes[identity] != viewportSize else { return }
+
+            // A detached UIHostingController can complete Auto Layout without producing
+            // a SwiftUI display frame. Give fresh neighbours a genuine containment and
+            // appearance lifecycle so their render tree commits before UIKit requests
+            // them. Detach immediately afterward; UIPageViewController must be the one
+            // that owns the host when it begins the actual transition.
+            let needsTemporaryContainment = host.parent == nil
+            if needsTemporaryContainment {
+                pvc.addChild(host)
+                pvc.view.insertSubview(host.view, at: 0)
+                host.didMove(toParent: pvc)
+                host.beginAppearanceTransition(true, animated: false)
+            }
+
+            host.loadViewIfNeeded()
+            host.view.frame = CGRect(origin: .zero, size: viewportSize)
+            host.preferredContentSize = viewportSize
+            // `sizeThatFits` evaluates the SwiftUI layout synchronously after containment.
+            // Follow with UIKit layout so text and backgrounds have a complete first frame.
+            _ = host.sizeThatFits(in: viewportSize)
+            host.view.setNeedsLayout()
+            host.view.layoutIfNeeded()
+            host.view.setNeedsDisplay()
+            host.view.layer.displayIfNeeded()
+
+            if needsTemporaryContainment {
+                host.endAppearanceTransition()
+                // Snapshotting after screen updates forces SwiftUI to commit the first
+                // display frame while the host still has pager/window traits. The result
+                // itself is discarded; the live hosting view remains cached and ready.
+                _ = host.view.snapshotView(afterScreenUpdates: true)
+                host.beginAppearanceTransition(false, animated: false)
+                host.willMove(toParent: nil)
+                host.view.removeFromSuperview()
+                host.removeFromParent()
+                host.endAppearanceTransition()
+            }
+            preparedHostSizes[identity] = viewportSize
+        }
+
         private func identity(of viewController: UIViewController) -> String? {
             hosts.first(where: { $0.value === viewController })?.key
         }
@@ -207,7 +316,7 @@ struct PageCurlPager: UIViewControllerRepresentable {
         }
 
         private func performTransition(to identity: String, animated: Bool, in pvc: UIPageViewController) {
-            guard let target = host(for: identity) else { return }
+            guard let target = preparedHost(for: identity, in: pvc) else { return }
             let previousID = shownIdentity
             guard previousID != identity else { return }
             let newSlot = slotIndex(of: identity) ?? 0
@@ -224,6 +333,7 @@ struct PageCurlPager: UIViewControllerRepresentable {
             shownIdentity = identity
             if !animated {
                 pvc.setViewControllers([target], direction: direction, animated: false)
+                prepareVisibleNeighborhood(in: pvc)
                 return
             }
             isAnimating = true
@@ -241,6 +351,9 @@ struct PageCurlPager: UIViewControllerRepresentable {
                 ])
                 self.isAnimating = false
                 self.animationStartedAt = nil
+                if let pvc {
+                    self.prepareVisibleNeighborhood(in: pvc)
+                }
                 // iOS 26 UIPageViewController quirk: an animated setViewControllers can
                 // fire the completion with finished=false and leave the displayed VC
                 // unchanged from the previous page — but shownIdentity/currentIndex were
@@ -290,14 +403,14 @@ struct PageCurlPager: UIViewControllerRepresentable {
                                 viewControllerBefore vc: UIViewController) -> UIViewController? {
             guard let id = identity(of: vc), let i = slotIndex(of: id),
                   let prevID = identity(at: i - 1) else { return nil }
-            return host(for: prevID)
+            return preparedHost(for: prevID, in: pvc)
         }
 
         func pageViewController(_ pvc: UIPageViewController,
                                 viewControllerAfter vc: UIViewController) -> UIViewController? {
             guard let id = identity(of: vc), let i = slotIndex(of: id),
                   let nextID = identity(at: i + 1) else { return nil }
-            return host(for: nextID)
+            return preparedHost(for: nextID, in: pvc)
         }
 
         /// Reconcile the host cache with the current slot window. Slot identities include
@@ -326,12 +439,14 @@ struct PageCurlPager: UIViewControllerRepresentable {
             }
             for key in staleKeys {
                 hosts.removeValue(forKey: key)
+                preparedHostSizes.removeValue(forKey: key)
             }
             let slotsChanged = lastSeenSlotIdentities != parent.slotIdentities
             if slotsChanged {
                 let evictedKeys = hosts.keys.filter { !protectedIDs.contains($0) }
                 for key in evictedKeys {
                     hosts.removeValue(forKey: key)
+                    preparedHostSizes.removeValue(forKey: key)
                 }
                 lastSeenSlotIdentities = parent.slotIdentities
             }
@@ -422,6 +537,7 @@ struct PageCurlPager: UIViewControllerRepresentable {
             // landings this is a no-op. Called AFTER the binding sync so the page index is
             // already settled for the body case.
             parent.onCommit(landedID)
+            prepareVisibleNeighborhood(in: pvc)
             // Apply any pending programmatic target stashed during the transition.
             let pending = pendingIdentity
             pendingIdentity = nil
