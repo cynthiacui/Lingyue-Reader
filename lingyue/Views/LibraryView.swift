@@ -2333,36 +2333,60 @@ private struct EmptyCategoryCard: View {
     }
 }
 
-/// Placeholder shown inside a category that has no books yet. The section header
-/// already reports "0 本", so this row's job is purely to tell the user *how* to
-/// fill it — and the accurate answer is "move a book in", not "import from 发现"
-/// (imports land in 无分类, never directly into a user category). Kept slim and on
-/// the same solid-fill card language as real book rows, so an empty category reads
-/// as a quiet placeholder rather than a heavy dashed call-out that bloats the shelf.
+/// Friendly placeholder shown inside a category that has no books yet. It keeps the
+/// same height as a real book card so empty and populated shelves share one stable
+/// layout, while the subtle tint makes it read as an available place for a book.
 private struct EmptyCategoryRow: View {
     @Environment(\.appTheme) private var theme
 
     var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "tray")
-                .font(.system(size: 14, weight: .regular))
-                .foregroundStyle(theme.secondaryText.opacity(0.65))
+        HStack(spacing: 13) {
+            ZStack(alignment: .topTrailing) {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(theme.accent.opacity(0.11))
+                    .frame(width: 44, height: 44)
 
-            Text("暂无书籍 · 长按任意书籍可移入此分类")
-                .font(.system(size: 13))
-                .foregroundStyle(theme.secondaryText)
-                .lineLimit(1)
-                .minimumScaleFactor(0.85)
+                Image(systemName: "book.closed.fill")
+                    .font(.system(size: 19, weight: .medium))
+                    .foregroundStyle(theme.accent.opacity(0.82))
+                    .frame(width: 44, height: 44)
+
+                Image(systemName: "sparkles")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(theme.accent)
+                    .padding(3)
+                    .background(Circle().fill(theme.cardBackground))
+                    .offset(x: 4, y: -4)
+            }
+            .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("这里还没有书")
+                    .font(.system(size: 14, weight: .semibold, design: .rounded))
+                    .foregroundStyle(theme.primaryText)
+
+                Text("可以把新书移到这里哦")
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(theme.secondaryText)
+            }
 
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 14)
+        .frame(maxWidth: .infinity, minHeight: 88, alignment: .leading)
         .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(theme.cardBackground.opacity(0.5))
+            ZStack {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(theme.cardBackground.opacity(0.72))
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(theme.accent.opacity(0.045))
+            }
         )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(theme.accent.opacity(0.13), lineWidth: 1)
+        )
+        .accessibilityElement(children: .combine)
     }
 }
 
