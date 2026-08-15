@@ -111,7 +111,8 @@ private let libraryHelpItems: [LibraryHelpItem] = [
     LibraryHelpItem(icon: "arrow.down.circle", title: "下载管理", detail: "右上角查看下载进度，暂停或重试"),
     LibraryHelpItem(icon: "magnifyingglass", title: "搜索书架", detail: "下拉呼出搜索栏，跨分类按书名或作者查找"),
     LibraryHelpItem(icon: "square.grid.2x2", title: "分类整理", detail: "点击分类标题全屏展开，长按书籍可移动分类"),
-    LibraryHelpItem(icon: "hand.tap", title: "左滑操作", detail: "在书籍上左滑可清理已下载内容或删除")
+    LibraryHelpItem(icon: "archivebox", title: "归档书籍", detail: "长按书籍，或左滑点“分类”后选择归档；书籍和阅读记录都会保留"),
+    LibraryHelpItem(icon: "hand.tap", title: "左滑操作", detail: "在书籍上左滑可整理书籍、清理已下载内容或删除")
 ]
 
 struct LibraryView: View {
@@ -121,6 +122,7 @@ struct LibraryView: View {
     @EnvironmentObject private var libraryStore: LibraryStore
     @EnvironmentObject private var downloadManager: BookDownloadManager
     @EnvironmentObject private var overlayManager: OverlayManager
+    @EnvironmentObject private var updateAnnouncements: AppUpdateAnnouncementStore
 
     @State private var newCategoryName = ""
     @State private var newBookCategoryName = ""
@@ -131,6 +133,7 @@ struct LibraryView: View {
     @State private var isShowingDownloads = false
     @State private var isShowingTxtPicker = false
     @State private var txtImportToast: String?
+    @State private var archiveUndo: LibraryArchiveUndo?
     @State private var searchText = ""
     /// Tracks whether the "继续阅读" hero card has collapsed into its compact
     /// rail. Driven by scroll offset — flips as soon as the user starts moving
@@ -141,7 +144,7 @@ struct LibraryView: View {
     /// One-shot onboarding flag. Flipped to `true` the first time the user
     /// dismisses the help overlay; persists across launches via UserDefaults so
     /// the overlay never reappears.
-    @AppStorage("library.hasSeenHelpOverlay") private var hasSeenHelpOverlay = false
+    @AppStorage("library.hasSeenHelpOverlayV2") private var hasSeenHelpOverlay = false
 
     private var horizontalMargin: CGFloat {
         if dynamicTypeSize.isAccessibilitySize { return 12 }
@@ -157,6 +160,12 @@ struct LibraryView: View {
     }
 
     private var isSearching: Bool { !trimmedSearch.isEmpty }
+
+    /// Only membership changes require download-state reconciliation. Progress updates,
+    /// category moves, and archive moves keep the same IDs and should not trigger I/O.
+    private var libraryBookIDs: [UUID] {
+        libraryStore.allNovels.map(\.id).sorted { $0.uuidString < $1.uuidString }
+    }
 
     /// Cross-category title+author matches, recent-first. Mirrors the matcher and sort
     /// CategoryDetailView already uses for in-category search so the two screens behave
@@ -181,6 +190,12 @@ struct LibraryView: View {
         expandedCategoryID != nil
     }
 
+    private var shouldShowHelpOverlay: Bool {
+        !hasSeenHelpOverlay
+            && !updateAnnouncements.isExistingInstallation
+            && !CommandLine.arguments.contains("--screenshot-fixture")
+    }
+
     var body: some View {
         ZStack {
             ThemeBackgroundView()
@@ -194,6 +209,7 @@ struct LibraryView: View {
                     VStack(alignment: .leading, spacing: 18) {
                         currentlyReadingSection
                         categorizedBooksSection
+                        archivedBooksSection
                     }
                     .padding(.top, 8)
                     .padding(.bottom, 18)
@@ -268,10 +284,24 @@ struct LibraryView: View {
                     .allowsHitTesting(false)
                     .zIndex(13)
             }
+
+            if let archiveUndo {
+                VStack {
+                    Spacer()
+                    LibraryArchiveUndoToast {
+                        undoArchive(archiveUndo)
+                    }
+                    .padding(.horizontal, horizontalMargin)
+                    .padding(.bottom, 22)
+                }
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+                .zIndex(14)
+            }
         }
         .animation(.easeInOut(duration: 0.22), value: txtImportToast)
+        .animation(.easeInOut(duration: 0.22), value: archiveUndo)
         .overlay {
-            if !hasSeenHelpOverlay {
+            if shouldShowHelpOverlay {
                 LibraryHelpPopup(onDismiss: dismissHelpOverlay)
                     .transition(.opacity)
                     .ignoresSafeArea()
@@ -347,7 +377,7 @@ struct LibraryView: View {
         .task {
             await downloadManager.refreshStates(for: libraryStore.allNovels)
         }
-        .onChange(of: libraryStore.categories) { _, _ in
+        .onChange(of: libraryBookIDs) { _, _ in
             Task {
                 await downloadManager.refreshStates(for: libraryStore.allNovels)
             }
@@ -457,7 +487,12 @@ struct LibraryView: View {
                         BookPressableNavigationRow(
                             rowID: novel.id,
                             activeSwipeID: $activeSwipeID,
-                            label: { CategoryBookRow(novel: novel) },
+                            label: {
+                                CategoryBookRow(
+                                    novel: novel,
+                                    locationLabel: libraryStore.isArchived(novel) ? "已归档" : nil
+                                )
+                            },
                             onTap: { bookToOpen = novel },
                             onLongPress: { presentCategoryEditor(for: novel) },
                             onDownload: actions.onDownload,
@@ -510,7 +545,7 @@ struct LibraryView: View {
                 Button {
                     presentCategoryEditor(for: novel)
                 } label: {
-                    Label("移动到分类", systemImage: "folder")
+                    Label("整理书籍", systemImage: "folder")
                 }
 
                 if let onDownload = actions.onDownload {
@@ -612,6 +647,10 @@ struct LibraryView: View {
         }
     }
 
+    private var archivedBooksSection: some View {
+        ArchivedLibraryEntry(bookCount: libraryStore.archivedBooks.count)
+    }
+
     private func collapseExpandedCategory() {
         expandedCategoryID = nil
     }
@@ -646,14 +685,29 @@ struct LibraryView: View {
         overlayManager.present {
             CategoryEditOverlay(
                 novel: novel,
-                categories: $libraryStore.categories,
                 newCategoryName: $newBookCategoryName,
+                onArchived: showArchiveUndo,
                 onDismiss: {
                     newBookCategoryName = ""
                     overlayManager.dismiss()
                 }
             )
         }
+    }
+
+    private func showArchiveUndo(_ undo: LibraryArchiveUndo) {
+        archiveUndo = undo
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(4))
+            if archiveUndo == undo {
+                archiveUndo = nil
+            }
+        }
+    }
+
+    private func undoArchive(_ undo: LibraryArchiveUndo) {
+        _ = libraryStore.undoArchive(undo)
+        archiveUndo = nil
     }
 
     private func addCategory() {
@@ -715,7 +769,7 @@ struct LibraryView: View {
 /// fully downloaded or already in flight; `onClearDownloadData` is only offered
 /// when there's actually something cached to clear.
 @MainActor
-fileprivate func bookDownloadActions(
+func bookDownloadActions(
     for novel: Novel,
     manager: BookDownloadManager
 ) -> (onDownload: (() -> Void)?, onClearDownloadData: (() -> Void)?) {
@@ -763,6 +817,34 @@ private struct LibraryCenterToast: View {
     }
 }
 
+private struct LibraryArchiveUndoToast: View {
+    @Environment(\.appTheme) private var theme
+    let onUndo: () -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "archivebox.fill")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(theme.accent)
+
+            Text("已归档")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(theme.primaryText)
+
+            Spacer(minLength: 8)
+
+            Button("撤销", action: onUndo)
+                .font(.system(size: 14, weight: .bold))
+                .foregroundStyle(theme.accent)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 13)
+        .background(.regularMaterial, in: Capsule())
+        .shadow(color: .black.opacity(0.18), radius: 14, x: 0, y: 6)
+        .accessibilityElement(children: .contain)
+    }
+}
+
 /// First-launch help popup. Dim scrim + a single centered card listing every
 /// Library affordance with an icon, title, and one-line description. Tapping
 /// the scrim or "知道了" calls `onDismiss`, which flips the @AppStorage flag
@@ -788,29 +870,32 @@ private struct LibraryHelpPopup: View {
                         .foregroundStyle(theme.secondaryText)
                 }
 
-                VStack(alignment: .leading, spacing: 14) {
-                    ForEach(libraryHelpItems) { item in
-                        HStack(alignment: .top, spacing: 12) {
-                            Image(systemName: item.icon)
-                                .font(.system(size: 16, weight: .semibold))
-                                .foregroundStyle(theme.accent)
-                                .frame(width: 28, height: 28)
-                                .background(
-                                    Circle().fill(theme.accent.opacity(0.12))
-                                )
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(item.title)
-                                    .font(.system(size: 14, weight: .semibold))
-                                    .foregroundStyle(theme.primaryText)
-                                Text(item.detail)
-                                    .font(.system(size: 12))
-                                    .foregroundStyle(theme.secondaryText)
-                                    .fixedSize(horizontal: false, vertical: true)
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 14) {
+                        ForEach(libraryHelpItems) { item in
+                            HStack(alignment: .top, spacing: 12) {
+                                Image(systemName: item.icon)
+                                    .font(.system(size: 16, weight: .semibold))
+                                    .foregroundStyle(theme.accent)
+                                    .frame(width: 28, height: 28)
+                                    .background(
+                                        Circle().fill(theme.accent.opacity(0.12))
+                                    )
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(item.title)
+                                        .font(.system(size: 14, weight: .semibold))
+                                        .foregroundStyle(theme.primaryText)
+                                    Text(item.detail)
+                                        .font(.system(size: 12))
+                                        .foregroundStyle(theme.secondaryText)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                                Spacer(minLength: 0)
                             }
-                            Spacer(minLength: 0)
                         }
                     }
                 }
+                .frame(maxHeight: 410)
 
                 Button(action: onDismiss) {
                     Text("知道了")
@@ -979,7 +1064,7 @@ private struct BookPressableNavigationRow<Label: View>: View {
                     Button {
                         onLongPress()
                     } label: {
-                        SwiftUI.Label("移动到分类", systemImage: "folder")
+                        SwiftUI.Label("整理书籍", systemImage: "folder")
                     }
 
                     if let onDownload {
@@ -1260,7 +1345,7 @@ private struct IconSwipeRow<Label: View>: View {
                         Button {
                             onMoveToCategory()
                         } label: {
-                            SwiftUI.Label("移动到分类", systemImage: "folder")
+                            SwiftUI.Label("整理书籍", systemImage: "folder")
                         }
                     }
                     if let onDownload {
@@ -1401,20 +1486,21 @@ private struct IconSwipeRow<Label: View>: View {
     }
 }
 
-private struct CategoryEditOverlay: View {
+struct CategoryEditOverlay: View {
     let novel: Novel
-    @Binding var categories: [LibraryCategory]
     @Binding var newCategoryName: String
     @FocusState private var isNewCategoryFocused: Bool
     @Environment(\.appTheme) private var theme
+    @EnvironmentObject private var libraryStore: LibraryStore
     @AppStorage("reader.usesTraditionalChinese") private var usesTraditionalChinese = false
+    var onArchived: ((LibraryArchiveUndo) -> Void)? = nil
     let onDismiss: () -> Void
 
     var body: some View {
         CenteredOverlay {
             VStack(alignment: .leading, spacing: 14) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("移动到分类")
+                    Text("整理书籍")
                         .font(.system(size: 18, weight: .semibold))
                         .foregroundStyle(theme.primaryText)
 
@@ -1424,7 +1510,40 @@ private struct CategoryEditOverlay: View {
                         .lineLimit(1)
                 }
 
-                if categories.isEmpty {
+                if !libraryStore.isArchived(novel) {
+                    Button {
+                        archive()
+                    } label: {
+                        HStack(spacing: 12) {
+                            Image(systemName: "archivebox")
+                                .font(.system(size: 17, weight: .semibold))
+                                .foregroundStyle(theme.accent)
+                                .frame(width: 32, height: 32)
+                                .background(Circle().fill(theme.accent.opacity(0.12)))
+
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("归档此书")
+                                    .font(.system(size: 15, weight: .semibold))
+                                    .foregroundStyle(theme.primaryText)
+                                Text("从当前分类收起，保留书籍和阅读记录")
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(theme.secondaryText)
+                            }
+
+                            Spacer(minLength: 0)
+                        }
+                        .padding(12)
+                        .background(theme.accent.opacity(0.07))
+                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                Text("移动到分类")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(theme.secondaryText)
+
+                if libraryStore.categories.isEmpty {
                     Text("还没有分类，可以先创建一个。")
                         .font(.system(size: 13))
                         .foregroundStyle(theme.secondaryText)
@@ -1435,7 +1554,7 @@ private struct CategoryEditOverlay: View {
                 } else {
                     ScrollView {
                         LazyVStack(spacing: 6) {
-                            ForEach(categories) { category in
+                            ForEach(libraryStore.categories) { category in
                                 Button {
                                     move(novel, toCategoryID: category.id)
                                 } label: {
@@ -1534,17 +1653,7 @@ private struct CategoryEditOverlay: View {
 
     private func move(_ novel: Novel, toCategoryID categoryID: UUID) {
         withAnimation(.easeInOut(duration: 0.18)) {
-            for index in categories.indices {
-                categories[index].novels.removeAll { $0.id == novel.id }
-            }
-
-            guard let targetIndex = categories.firstIndex(where: { $0.id == categoryID }) else {
-                newCategoryName = ""
-                onDismiss()
-                return
-            }
-
-            categories[targetIndex].novels.append(novel)
+            _ = libraryStore.moveBook(novel, toCategoryID: categoryID)
             newCategoryName = ""
             onDismiss()
         }
@@ -1553,21 +1662,34 @@ private struct CategoryEditOverlay: View {
     private func createCategoryAndMove(_ novel: Novel) {
         guard !trimmedNewCategoryName.isEmpty else { return }
 
-        if let existingCategory = categories.first(where: { $0.name.caseInsensitiveCompare(trimmedNewCategoryName) == .orderedSame }) {
+        if let existingCategory = libraryStore.categories.first(where: {
+            $0.name.caseInsensitiveCompare(trimmedNewCategoryName) == .orderedSame
+        }) {
             move(novel, toCategoryID: existingCategory.id)
             return
         }
 
-        let newCategory = LibraryCategory(name: trimmedNewCategoryName, novels: [])
-        categories.append(newCategory)
+        guard libraryStore.addCategory(named: trimmedNewCategoryName),
+              let newCategory = libraryStore.categories.first(where: {
+                  $0.name.caseInsensitiveCompare(trimmedNewCategoryName) == .orderedSame
+              }) else {
+            return
+        }
         move(novel, toCategoryID: newCategory.id)
     }
 
     private func categoryContains(_ novel: Novel, categoryID: UUID) -> Bool {
-        categories
+        libraryStore.categories
             .first { $0.id == categoryID }?
             .novels
             .contains { $0.id == novel.id } ?? false
+    }
+
+    private func archive() {
+        guard let undo = libraryStore.archiveBook(novel) else { return }
+        onArchived?(undo)
+        newCategoryName = ""
+        onDismiss()
     }
 }
 
@@ -1966,7 +2088,7 @@ private struct StackedCategoryShelf: View {
         Button {
             onMoveCategory(novel)
         } label: {
-            Label("移动到分类", systemImage: "folder")
+            Label("整理书籍", systemImage: "folder")
         }
 
         if actions.onDownload != nil {
@@ -2248,6 +2370,7 @@ private struct CategoryBookRow: View {
     @Environment(\.appTheme) private var theme
     @EnvironmentObject private var downloadManager: BookDownloadManager
     let novel: Novel
+    var locationLabel: String? = nil
     @AppStorage("reader.usesTraditionalChinese") private var usesTraditionalChinese = false
 
     var body: some View {
@@ -2267,6 +2390,15 @@ private struct CategoryBookRow: View {
                 BookMetadataLine(novel: novel, usesTraditionalChinese: usesTraditionalChinese)
                     .font(.system(size: 12))
                     .foregroundStyle(theme.secondaryText)
+
+                if let locationLabel {
+                    Text(locationLabel)
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(theme.accent)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(theme.accent.opacity(0.12)))
+                }
 
                 Text(displayed(novel.lastChapter))
                     .font(.system(size: 13, design: .serif))
@@ -2416,7 +2548,6 @@ private struct CategoryDetailView: View {
             if let categoryEditBook {
                 CategoryEditOverlay(
                     novel: categoryEditBook,
-                    categories: $categories,
                     newCategoryName: $newBookCategoryName,
                     onDismiss: {
                         self.categoryEditBook = nil
@@ -2650,4 +2781,5 @@ private struct CategoryManagementView: View {
 #Preview {
     LibraryView()
         .environmentObject(LibraryStore())
+        .environmentObject(AppUpdateAnnouncementStore())
 }

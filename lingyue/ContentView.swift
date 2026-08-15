@@ -1,6 +1,212 @@
 import SwiftUI
 
+struct AppUpdateAnnouncementBullet: Identifiable, Equatable {
+    let icon: String
+    let text: String
+
+    var id: String { "\(icon):\(text)" }
+}
+
+enum AppUpdateAnnouncement: String, Identifiable, Equatable {
+    case libraryArchiveV1_2 = "library-archive-1.2"
+
+    var id: String { rawValue }
+
+    var introducedInVersion: String {
+        switch self {
+        case .libraryArchiveV1_2:
+            return "1.2"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .libraryArchiveV1_2:
+            return "archivebox.fill"
+        }
+    }
+
+    var eyebrow: String {
+        switch self {
+        case .libraryArchiveV1_2:
+            return "本次更新"
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .libraryArchiveV1_2:
+            return "书架新增「已归档」"
+        }
+    }
+
+    var summary: String {
+        switch self {
+        case .libraryArchiveV1_2:
+            return "看完后还想继续保留的书，现在可以放进「已归档」。"
+        }
+    }
+
+    var bullets: [AppUpdateAnnouncementBullet] {
+        switch self {
+        case .libraryArchiveV1_2:
+            return [
+                AppUpdateAnnouncementBullet(
+                    icon: "hand.tap",
+                    text: "长按书籍，或左滑后点“分类”，即可选择归档"
+                ),
+                AppUpdateAnnouncementBullet(
+                    icon: "book.closed",
+                    text: "归档后会离开原来的分类，但书籍、阅读进度和记录都还在"
+                ),
+                AppUpdateAnnouncementBullet(
+                    icon: "arrow.right.arrow.left",
+                    text: "在书架底部打开「已归档」，也可以再把书移动到其他分类"
+                )
+            ]
+        }
+    }
+}
+
+/// Decides whether this launch belongs to a fresh install or an update, then exposes
+/// versioned announcements one at a time. The first-installed version is written before
+/// the rest of the app creates any storage, so a fresh install remains in the fresh-install
+/// cohort across relaunches. For users upgrading from builds that predate this marker, any
+/// existing app defaults or Application Support data is treated as legacy-install evidence.
+///
+/// Each announcement owns a stable identifier and introduction version. Adding a future
+/// announcement therefore doesn't require another one-off boolean or custom launch path.
+final class AppUpdateAnnouncementStore: ObservableObject {
+    static let firstInstalledVersionKey = "app.firstInstalledVersion"
+    static let seenKeyPrefix = "app.updateAnnouncement.seen."
+
+    @Published private(set) var pendingAnnouncement: AppUpdateAnnouncement?
+    let isExistingInstallation: Bool
+
+    private let defaults: UserDefaults
+
+    init(
+        defaults: UserDefaults = .standard,
+        persistentDomainName: String? = nil,
+        currentVersion: String? = nil,
+        applicationSupportDirectory: URL? = nil,
+        fileManager: FileManager = .default,
+        arguments: [String] = CommandLine.arguments
+    ) {
+        self.defaults = defaults
+
+        let resolvedDomainName = persistentDomainName
+            ?? Bundle.main.bundleIdentifier
+            ?? "com.lingyue.reader"
+        let resolvedCurrentVersion = currentVersion
+            ?? (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String)
+            ?? "0"
+        let resolvedSupportDirectory = applicationSupportDirectory
+            ?? Self.defaultApplicationSupportDirectory(fileManager: fileManager)
+
+        let firstInstalledVersion: String
+        if let storedVersion = defaults.string(forKey: Self.firstInstalledVersionKey) {
+            firstInstalledVersion = storedVersion
+        } else {
+            let hadLegacyInstallation = Self.hasLegacyInstallationEvidence(
+                defaults: defaults,
+                persistentDomainName: resolvedDomainName,
+                applicationSupportDirectory: resolvedSupportDirectory,
+                fileManager: fileManager
+            )
+            firstInstalledVersion = hadLegacyInstallation ? "0" : resolvedCurrentVersion
+            defaults.set(firstInstalledVersion, forKey: Self.firstInstalledVersionKey)
+        }
+
+        isExistingInstallation = Self.isVersion(
+            firstInstalledVersion,
+            olderThan: resolvedCurrentVersion
+        )
+
+        let announcement = AppUpdateAnnouncement.libraryArchiveV1_2
+        let featureIsAvailable = !Self.isVersion(
+            resolvedCurrentVersion,
+            olderThan: announcement.introducedInVersion
+        )
+        let installationPredatesFeature = Self.isVersion(
+            firstInstalledVersion,
+            olderThan: announcement.introducedInVersion
+        )
+        let hasSeenAnnouncement = defaults.bool(forKey: Self.seenKey(for: announcement))
+        let suppressesLaunchUI = arguments.contains("--screenshot-fixture")
+
+        pendingAnnouncement = featureIsAvailable
+            && installationPredatesFeature
+            && !hasSeenAnnouncement
+            && !suppressesLaunchUI
+            ? announcement
+            : nil
+    }
+
+    func dismissPendingAnnouncement() {
+        guard let pendingAnnouncement else { return }
+        defaults.set(true, forKey: Self.seenKey(for: pendingAnnouncement))
+        self.pendingAnnouncement = nil
+    }
+
+    static func seenKey(for announcement: AppUpdateAnnouncement) -> String {
+        seenKeyPrefix + announcement.id
+    }
+
+    private static func defaultApplicationSupportDirectory(fileManager: FileManager) -> URL {
+        let baseURL = fileManager.urls(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask
+        ).first ?? fileManager.temporaryDirectory
+        return baseURL.appendingPathComponent("lingyue", isDirectory: true)
+    }
+
+    private static func hasLegacyInstallationEvidence(
+        defaults: UserDefaults,
+        persistentDomainName: String,
+        applicationSupportDirectory: URL,
+        fileManager: FileManager
+    ) -> Bool {
+        let existingDefaults = defaults.persistentDomain(forName: persistentDomainName) ?? [:]
+        let hasAppDefaults = existingDefaults.keys.contains { key in
+            key != firstInstalledVersionKey && !key.hasPrefix(seenKeyPrefix)
+        }
+        if hasAppDefaults { return true }
+
+        guard let contents = try? fileManager.contentsOfDirectory(
+            at: applicationSupportDirectory,
+            includingPropertiesForKeys: nil
+        ) else {
+            return false
+        }
+        return !contents.isEmpty
+    }
+
+    private static func isVersion(_ lhs: String, olderThan rhs: String) -> Bool {
+        let left = numericVersionComponents(lhs)
+        let right = numericVersionComponents(rhs)
+        let count = max(left.count, right.count)
+
+        for index in 0..<count {
+            let leftPart = index < left.count ? left[index] : 0
+            let rightPart = index < right.count ? right[index] : 0
+            if leftPart != rightPart { return leftPart < rightPart }
+        }
+        return false
+    }
+
+    private static func numericVersionComponents(_ version: String) -> [Int] {
+        let components = version
+            .split(whereSeparator: { !$0.isNumber })
+            .compactMap { Int($0) }
+        return components.isEmpty ? [0] : components
+    }
+}
+
 struct ContentView: View {
+    // Must be initialized before stores that may create Application Support files; this
+    // preserves the fresh-install/update distinction on the very first launch.
+    @StateObject private var updateAnnouncements = AppUpdateAnnouncementStore()
     @StateObject private var libraryStore = LibraryStore()
     @StateObject private var themeManager = AppThemeManager()
     @StateObject private var downloadManager = BookDownloadManager.shared
@@ -73,12 +279,31 @@ struct ContentView: View {
             }
         }
         .animation(ModalStyle.presentationAnimation, value: overlayManager.presentation?.id)
+        .overlay {
+            if let announcement = updateAnnouncements.pendingAnnouncement,
+               overlayManager.presentation == nil,
+               importCoordinator.staged == nil,
+               importCoordinator.errorMessage == nil,
+               !importCoordinator.isFetching {
+                AppUpdateAnnouncementPopup(announcement: announcement) {
+                    withAnimation(.easeInOut(duration: 0.24)) {
+                        updateAnnouncements.dismissPendingAnnouncement()
+                    }
+                }
+                .transition(.opacity.combined(with: .scale(scale: 0.97)))
+            }
+        }
+        .animation(
+            .easeInOut(duration: 0.24),
+            value: updateAnnouncements.pendingAnnouncement?.id
+        )
         .environmentObject(libraryStore)
         .environmentObject(themeManager)
         .environmentObject(downloadManager)
         .environmentObject(overlayManager)
         .environmentObject(tabSelection)
         .environmentObject(importCoordinator)
+        .environmentObject(updateAnnouncements)
         .environment(\.appTheme, effectiveTheme)
         .environment(\.sourceStack, .live)
         // Drive the background cross-fade from one central place so it animates
@@ -174,6 +399,89 @@ struct ContentView: View {
                     "error": String(describing: error)
                 ])
             }
+        }
+    }
+}
+
+private struct AppUpdateAnnouncementPopup: View {
+    @Environment(\.appTheme) private var theme
+
+    let announcement: AppUpdateAnnouncement
+    let onDismiss: () -> Void
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.46)
+                .ignoresSafeArea()
+
+            VStack(spacing: 20) {
+                ZStack {
+                    Circle()
+                        .fill(theme.accent.opacity(0.13))
+                        .frame(width: 74, height: 74)
+
+                    Image(systemName: announcement.icon)
+                        .font(.system(size: 31, weight: .semibold))
+                        .foregroundStyle(theme.accent)
+                }
+
+                VStack(spacing: 7) {
+                    Text(announcement.eyebrow)
+                        .font(.system(size: 12, weight: .bold, design: .rounded))
+                        .foregroundStyle(theme.accent)
+                        .textCase(.uppercase)
+
+                    Text(announcement.title)
+                        .font(.system(size: 21, weight: .bold))
+                        .foregroundStyle(theme.primaryText)
+                        .multilineTextAlignment(.center)
+
+                    Text(announcement.summary)
+                        .font(.system(size: 13))
+                        .foregroundStyle(theme.secondaryText)
+                        .multilineTextAlignment(.center)
+                }
+
+                VStack(alignment: .leading, spacing: 13) {
+                    ForEach(announcement.bullets) { bullet in
+                        updateRow(icon: bullet.icon, text: bullet.text)
+                    }
+                }
+
+                Button(action: onDismiss) {
+                    Text("知道了")
+                        .font(.system(size: 15, weight: .bold, design: .rounded))
+                        .foregroundStyle(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                        .background(Capsule().fill(theme.accent))
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(22)
+            .frame(maxWidth: 340)
+            .background(theme.cardBackground)
+            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .shadow(color: .black.opacity(0.28), radius: 22, x: 0, y: 12)
+            .padding(.horizontal, 24)
+        }
+        .accessibilityElement(children: .contain)
+    }
+
+    private func updateRow(icon: String, text: String) -> some View {
+        HStack(alignment: .top, spacing: 11) {
+            Image(systemName: icon)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(theme.accent)
+                .frame(width: 26, height: 26)
+                .background(Circle().fill(theme.accent.opacity(0.11)))
+
+            Text(text)
+                .font(.system(size: 13))
+                .foregroundStyle(theme.primaryText)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Spacer(minLength: 0)
         }
     }
 }

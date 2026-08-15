@@ -392,6 +392,19 @@ struct InAppBrowserView: View {
     }
 
     private func promptForCategory(_ candidate: WebBookCandidate, isReplacing: Bool) {
+        if isReplacing,
+           libraryStore.isArchivedBook(
+               sourceURLString: candidate.sourceURL.absoluteString,
+               title: candidate.title
+           ) {
+            startImport(
+                candidate,
+                isReplacing: true,
+                categoryName: LibraryStore.uncategorizedName
+            )
+            return
+        }
+
         let existing = libraryStore.categoryName(
             forBookWith: candidate.sourceURL.absoluteString,
             title: candidate.title
@@ -412,11 +425,14 @@ struct InAppBrowserView: View {
                 let enrichedCandidate = await enrichedCandidateForImport(candidate)
                 let novel = try await BookImportService.shared.importBook(from: enrichedCandidate)
                 let inserted = libraryStore.addImportedNovel(novel, categoryName: categoryName)
+                let remainsArchived = libraryStore.isArchived(novel)
                 importStatus = nil
                 let resultType: CustomAlertType = inserted ? .success : .info
-                let title = inserted ? "导入成功" : "已在书架"
+                let title = remainsArchived ? "归档书籍已更新" : (inserted ? "导入成功" : "已在书架")
                 let message: String
-                if isReplacing {
+                if remainsArchived {
+                    message = "已替换旧记录，并保留在「已归档」。打开章节时会联网加载正文。"
+                } else if isReplacing {
                     message = "已替换旧记录，加入「\(categoryName)」。打开章节时会联网加载正文。"
                 } else if inserted {
                     message = "已加入「\(categoryName)」。打开章节时会联网加载正文。"
@@ -536,6 +552,19 @@ struct InAppBrowserView: View {
 
     private func promptRuleCategory(_ candidate: RuleImportCandidate, isReplacing: Bool) {
         let detailURL = candidate.detection.detection.detailURL.absoluteString
+        if isReplacing,
+           libraryStore.isArchivedBook(
+               sourceURLString: detailURL,
+               title: candidate.displayTitle
+           ) {
+            startRuleImport(
+                candidate,
+                isReplacing: true,
+                categoryName: LibraryStore.uncategorizedName
+            )
+            return
+        }
+
         let existing = libraryStore.categoryName(
             forBookWith: detailURL,
             title: candidate.displayTitle
@@ -574,11 +603,14 @@ struct InAppBrowserView: View {
                     throw error
                 }
                 let inserted = libraryStore.addImportedNovel(novel, categoryName: categoryName)
+                let remainsArchived = libraryStore.isArchived(novel)
                 importStatus = nil
                 let resultType: CustomAlertType = inserted ? .success : .info
-                let title = inserted ? "导入成功" : "已在书架"
+                let title = remainsArchived ? "归档书籍已更新" : (inserted ? "导入成功" : "已在书架")
                 let message: String
-                if isReplacing {
+                if remainsArchived {
+                    message = "已替换旧记录，并保留在「已归档」。打开章节时会联网加载正文。"
+                } else if isReplacing {
                     message = "已替换旧记录，加入「\(categoryName)」。打开章节时会联网加载正文。"
                 } else if inserted {
                     message = "已加入「\(categoryName)」。打开章节时会联网加载正文。"

@@ -13,6 +13,34 @@ struct LibraryCategory: Identifiable, Hashable, Codable, Sendable {
     }
 }
 
+/// A book that remains in the user's library but is intentionally hidden from the
+/// day-to-day category shelves. `archivedAt` is the only archive-specific metadata:
+/// restoring a book always asks for a destination category rather than preserving an
+/// implicit relationship with its former category.
+struct ArchivedBookRecord: Identifiable, Hashable, Codable, Sendable {
+    var novel: Novel
+    let archivedAt: Date
+
+    var id: UUID { novel.id }
+}
+
+/// Short-lived capability used by the post-archive Undo toast. The archive itself does
+/// not remember former categories; this token exists in memory only while Undo is visible.
+struct LibraryArchiveUndo: Sendable, Equatable {
+    let bookID: UUID
+    let categoryID: UUID
+    let categoryIndex: Int
+}
+
+/// Versioned on-disk envelope. Older app versions stored a bare `[LibraryCategory]`;
+/// `loadLibrary` still decodes that shape and upgrades it in memory without changing any
+/// category names or inferring archive intent from user data.
+private struct LibraryStorageSnapshot: Codable, Sendable {
+    var version = 1
+    var categories: [LibraryCategory]
+    var archivedBooks: [ArchivedBookRecord]
+}
+
 struct ReadingStatsBook: Identifiable, Hashable, Codable, Sendable {
     let id: UUID
     var title: String
@@ -682,6 +710,12 @@ final class LibraryStore: ObservableObject {
         }
     }
 
+    @Published private(set) var archivedBooks: [ArchivedBookRecord] {
+        didSet {
+            scheduleSave()
+        }
+    }
+
     @Published private(set) var readingStats: ReadingStatsLedger {
         didSet {
             scheduleStatsSave()
@@ -701,14 +735,23 @@ final class LibraryStore: ObservableObject {
 
 #if DEBUG
         let usesScreenshotFixture = CommandLine.arguments.contains("--screenshot-fixture")
-        self.categories = usesScreenshotFixture
-            ? LibraryStore.screenshotFixtureCategories()
-            : (LibraryStore.loadCategories(from: storageURL) ?? [])
+        let loadedLibrary = usesScreenshotFixture
+            ? LibraryStorageSnapshot(
+                categories: LibraryStore.screenshotFixtureCategories(),
+                archivedBooks: []
+            )
+            : LibraryStore.loadLibrary(from: storageURL)
+        let normalizedLibrary = LibraryStore.normalizedLibrary(loadedLibrary)
+        self.categories = normalizedLibrary.categories
+        self.archivedBooks = normalizedLibrary.archivedBooks
         var loadedStats = usesScreenshotFixture
             ? ReadingStatsLedger()
             : (LibraryStore.loadReadingStats(from: statsStorageURL) ?? ReadingStatsLedger())
 #else
-        self.categories = LibraryStore.loadCategories(from: storageURL) ?? []
+        let loadedLibrary = LibraryStore.loadLibrary(from: storageURL)
+        let normalizedLibrary = LibraryStore.normalizedLibrary(loadedLibrary)
+        self.categories = normalizedLibrary.categories
+        self.archivedBooks = normalizedLibrary.archivedBooks
         var loadedStats = LibraryStore.loadReadingStats(from: statsStorageURL) ?? ReadingStatsLedger()
 #endif
         let statsBeforeMigration = loadedStats
@@ -726,7 +769,7 @@ final class LibraryStore: ObservableObject {
         }
 
         if storageDirectory == nil {
-            let activeBookIDs = Set(categories.flatMap(\.novels).map(\.id))
+            let activeBookIDs = Set(allNovels.map(\.id))
             Task {
                 await BookCoverStore.shared.removeOrphanedCovers(keeping: activeBookIDs)
             }
@@ -740,11 +783,11 @@ final class LibraryStore: ObservableObject {
         pendingSave = nil
         pendingStatsSave?.cancel()
         pendingStatsSave = nil
-        let snapshot = categories
+        let snapshot = librarySnapshot
         let url = storageURL
         let statsSnapshot = readingStats
         let statsURL = statsStorageURL
-        await Self.persist(snapshot, to: url)
+        await Self.persistLibrary(snapshot, to: url)
         await Self.persistReadingStats(statsSnapshot, to: statsURL)
     }
 
@@ -761,8 +804,26 @@ final class LibraryStore: ObservableObject {
         readingStats = compacted
     }
 
+    /// Backup-restore hook that replaces both mutually-exclusive book locations together.
+    func replaceLibrary(
+        categories: [LibraryCategory],
+        archivedBooks: [ArchivedBookRecord]
+    ) {
+        let normalized = Self.normalizedLibrary(
+            LibraryStorageSnapshot(categories: categories, archivedBooks: archivedBooks)
+        )
+        self.categories = normalized.categories
+        self.archivedBooks = normalized.archivedBooks
+    }
+
     var allNovels: [Novel] {
-        categories.flatMap(\.novels)
+        categories.flatMap(\.novels) + archivedBooks.map(\.novel)
+    }
+
+    var archivedNovels: [Novel] { archivedBooks.map(\.novel) }
+
+    func isArchived(_ novel: Novel) -> Bool {
+        archivedBooks.contains { $0.id == novel.id }
     }
 
     /// The novel the user has most recently opened, or nil if nothing has been
@@ -803,6 +864,13 @@ final class LibraryStore: ObservableObject {
         return nil
     }
 
+    func isArchivedBook(sourceURLString: String?, title: String) -> Bool {
+        let normalizedTitle = normalized(title)
+        return archivedBooks.contains {
+            matches($0.novel, sourceURLString: sourceURLString, normalizedTitle: normalizedTitle)
+        }
+    }
+
     func importedBookNeedsRepair(sourceURLString: String?, title: String) -> Bool {
         let normalizedTitle = normalized(title)
         guard let novel = allNovels.first(where: {
@@ -835,6 +903,11 @@ final class LibraryStore: ObservableObject {
 
     @discardableResult
     func addImportedNovel(_ novel: Novel, categoryName: String = LibraryStore.uncategorizedName) -> Bool {
+        let normalizedTitle = normalized(novel.title)
+        let existingArchiveDate = archivedBooks.first(where: {
+            matches($0.novel, sourceURLString: novel.sourceURLString, normalizedTitle: normalizedTitle)
+        })?.archivedAt
+
         removeExistingBook(
             sourceURLString: novel.sourceURLString,
             title: novel.title,
@@ -849,8 +922,15 @@ final class LibraryStore: ObservableObject {
         var stamped = novel
         stamped.addedAt = Date.now
 
-        let targetIndex = ensureCategory(named: categoryName)
-        categories[targetIndex].novels.insert(stamped, at: 0)
+        if let existingArchiveDate {
+            archivedBooks.insert(
+                ArchivedBookRecord(novel: stamped, archivedAt: existingArchiveDate),
+                at: 0
+            )
+        } else {
+            let targetIndex = ensureCategory(named: categoryName)
+            categories[targetIndex].novels.insert(stamped, at: 0)
+        }
         Task {
             await BookCoverStore.shared.prefetchCover(
                 for: stamped.id,
@@ -891,14 +971,97 @@ final class LibraryStore: ObservableObject {
         return true
     }
 
-    func deleteBook(_ novel: Novel) {
-        readingStats.rememberBook(novel, deletedAt: Date())
+    /// Moves an active book into the archive. The returned token powers the brief Undo
+    /// affordance and is deliberately not persisted.
+    @discardableResult
+    func archiveBook(
+        _ novel: Novel,
+        archivedAt: Date = Date()
+    ) -> LibraryArchiveUndo? {
+        guard let sourceLocation = location(for: novel.id),
+              case .category(let categoryIndex, let novelIndex) = sourceLocation else {
+            return nil
+        }
+
+        let storedNovel = categories[categoryIndex].novels[novelIndex]
+        let undo = LibraryArchiveUndo(
+            bookID: storedNovel.id,
+            categoryID: categories[categoryIndex].id,
+            categoryIndex: novelIndex
+        )
         var updatedCategories = categories
+        var updatedArchive = archivedBooks
+        updatedCategories[categoryIndex].novels.remove(at: novelIndex)
+        updatedArchive.removeAll { $0.id == storedNovel.id }
+        updatedArchive.insert(
+            ArchivedBookRecord(novel: storedNovel, archivedAt: archivedAt),
+            at: 0
+        )
+        categories = updatedCategories
+        archivedBooks = updatedArchive
+        return undo
+    }
+
+    @discardableResult
+    func undoArchive(_ undo: LibraryArchiveUndo) -> Bool {
+        guard let archivedIndex = archivedBooks.firstIndex(where: { $0.id == undo.bookID }) else {
+            return false
+        }
+        var updatedCategories = categories
+        let targetIndex: Int
+        if let existing = updatedCategories.firstIndex(where: { $0.id == undo.categoryID }) {
+            targetIndex = existing
+        } else {
+            targetIndex = ensureCategoryIndex(
+                named: Self.uncategorizedName,
+                in: &updatedCategories
+            )
+        }
+
+        var updatedArchive = archivedBooks
+        let restoredNovel = updatedArchive.remove(at: archivedIndex).novel
+        let insertionIndex = min(max(undo.categoryIndex, 0), updatedCategories[targetIndex].novels.count)
+        updatedCategories[targetIndex].novels.insert(restoredNovel, at: insertionIndex)
+        categories = updatedCategories
+        archivedBooks = updatedArchive
+        return true
+    }
+
+    /// Moves either an active or archived book into a normal category. This is the only
+    /// long-term restore path exposed by the archive UI.
+    @discardableResult
+    func moveBook(_ novel: Novel, toCategoryID categoryID: UUID) -> Bool {
+        guard categories.contains(where: { $0.id == categoryID }),
+              let location = location(for: novel.id) else {
+            return false
+        }
+
+        let storedNovel = self.novel(at: location)
+        var updatedCategories = categories
+        var updatedArchive = archivedBooks
+        removeBook(at: location, from: &updatedCategories, archivedBooks: &updatedArchive)
+
+        guard let refreshedTargetIndex = updatedCategories.firstIndex(where: { $0.id == categoryID }) else {
+            return false
+        }
+        updatedCategories[refreshedTargetIndex].novels.append(storedNovel)
+        categories = updatedCategories
+        archivedBooks = updatedArchive
+        return true
+    }
+
+    func deleteBook(_ novel: Novel) {
+        let storedNovel = location(for: novel.id).map { self.novel(at: $0) } ?? novel
+        readingStats.rememberBook(storedNovel, deletedAt: Date())
+        var updatedCategories = categories
+        var updatedArchive = archivedBooks
         for index in updatedCategories.indices {
             updatedCategories[index].novels.removeAll { $0.id == novel.id }
         }
+        updatedArchive.removeAll { $0.id == novel.id }
         categories = updatedCategories
-        removeStoredAssets(for: [novel])
+        archivedBooks = updatedArchive
+        removeStoredAssets(for: [storedNovel])
     }
 
     func deleteCategory(id: UUID) {
@@ -933,14 +1096,11 @@ final class LibraryStore: ObservableObject {
         let clampedProgress = min(max(progress, 0), 1)
         let trimmedChapterTitle = chapterTitle.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        guard let categoryIndex = categories.firstIndex(where: {
-            $0.novels.contains { $0.id == novelID }
-        }),
-        let novelIndex = categories[categoryIndex].novels.firstIndex(where: { $0.id == novelID }) else {
+        guard let location = location(for: novelID) else {
             return
         }
 
-        let existingNovel = categories[categoryIndex].novels[novelIndex]
+        let existingNovel = novel(at: location)
         readingStats.recordReading(
             novel: existingNovel,
             timestamp: openedAt,
@@ -953,7 +1113,6 @@ final class LibraryStore: ObservableObject {
             pageTurnStep: pageTurnStep
         )
 
-        var updatedCategories = categories
         var updatedNovel = existingNovel
         if !trimmedChapterTitle.isEmpty {
             updatedNovel.lastChapter = trimmedChapterTitle
@@ -967,8 +1126,7 @@ final class LibraryStore: ObservableObject {
             updatedNovel.readMinutes,
             Int((readingStats.books.first { $0.id == novelID }?.totalDurationSeconds ?? 0) / 60)
         )
-        updatedCategories[categoryIndex].novels[novelIndex] = updatedNovel
-        categories = updatedCategories
+        replaceNovel(updatedNovel, at: location)
     }
 
     func startReadingSession(
@@ -981,14 +1139,11 @@ final class LibraryStore: ObservableObject {
     ) {
         let clampedProgress = min(max(progress, 0), 1)
 
-        guard let categoryIndex = categories.firstIndex(where: {
-            $0.novels.contains { $0.id == novelID }
-        }),
-        let novelIndex = categories[categoryIndex].novels.firstIndex(where: { $0.id == novelID }) else {
+        guard let location = location(for: novelID) else {
             return
         }
 
-        let existingNovel = categories[categoryIndex].novels[novelIndex]
+        let existingNovel = novel(at: location)
         readingStats.startReadingSession(
             novel: existingNovel,
             timestamp: openedAt,
@@ -998,15 +1153,13 @@ final class LibraryStore: ObservableObject {
             chapterSourceURLString: chapterSourceURLString
         )
 
-        var updatedCategories = categories
         var updatedNovel = existingNovel
         updatedNovel.lastOpenedAt = openedAt
         updatedNovel.progress = clampedProgress
         updatedNovel.currentChapterIndex = chapterIndex
         updatedNovel.currentChapterPageIndex = chapterPageIndex
         updatedNovel.currentChapterSourceURLString = chapterSourceURLString
-        updatedCategories[categoryIndex].novels[novelIndex] = updatedNovel
-        categories = updatedCategories
+        replaceNovel(updatedNovel, at: location)
     }
 
     private func ensureCategory(named name: String) -> Int {
@@ -1016,6 +1169,69 @@ final class LibraryStore: ObservableObject {
 
         categories.append(LibraryCategory(name: name, novels: []))
         return categories.count - 1
+    }
+
+    private func ensureCategoryIndex(
+        named name: String,
+        in categories: inout [LibraryCategory]
+    ) -> Int {
+        if let existingIndex = categories.firstIndex(where: { $0.name == name }) {
+            return existingIndex
+        }
+        categories.append(LibraryCategory(name: name, novels: []))
+        return categories.count - 1
+    }
+
+    private enum StoredBookLocation {
+        case category(categoryIndex: Int, novelIndex: Int)
+        case archived(index: Int)
+    }
+
+    private func location(for novelID: UUID) -> StoredBookLocation? {
+        for categoryIndex in categories.indices {
+            if let novelIndex = categories[categoryIndex].novels.firstIndex(where: { $0.id == novelID }) {
+                return .category(categoryIndex: categoryIndex, novelIndex: novelIndex)
+            }
+        }
+        if let index = archivedBooks.firstIndex(where: { $0.id == novelID }) {
+            return .archived(index: index)
+        }
+        return nil
+    }
+
+    private func novel(at location: StoredBookLocation) -> Novel {
+        switch location {
+        case .category(let categoryIndex, let novelIndex):
+            return categories[categoryIndex].novels[novelIndex]
+        case .archived(let index):
+            return archivedBooks[index].novel
+        }
+    }
+
+    private func replaceNovel(_ novel: Novel, at location: StoredBookLocation) {
+        switch location {
+        case .category(let categoryIndex, let novelIndex):
+            var updatedCategories = categories
+            updatedCategories[categoryIndex].novels[novelIndex] = novel
+            categories = updatedCategories
+        case .archived(let index):
+            var updatedArchive = archivedBooks
+            updatedArchive[index].novel = novel
+            archivedBooks = updatedArchive
+        }
+    }
+
+    private func removeBook(
+        at location: StoredBookLocation,
+        from categories: inout [LibraryCategory],
+        archivedBooks: inout [ArchivedBookRecord]
+    ) {
+        switch location {
+        case .category(let categoryIndex, let novelIndex):
+            categories[categoryIndex].novels.remove(at: novelIndex)
+        case .archived(let index):
+            archivedBooks.remove(at: index)
+        }
     }
 
     private func normalized(_ text: String) -> String {
@@ -1108,6 +1324,16 @@ final class LibraryStore: ObservableObject {
                 matches($0, sourceURLString: sourceURLString, normalizedTitle: normalizedTitle)
             }
         }
+        let archivedMatches = archivedBooks.filter {
+            matches($0.novel, sourceURLString: sourceURLString, normalizedTitle: normalizedTitle)
+        }
+        for record in archivedMatches {
+            readingStats.rememberBook(record.novel, deletedAt: Date())
+            if record.id != replacementBookID { removedNovels.append(record.novel) }
+        }
+        archivedBooks.removeAll {
+            matches($0.novel, sourceURLString: sourceURLString, normalizedTitle: normalizedTitle)
+        }
         removeStoredAssets(for: removedNovels)
     }
 
@@ -1138,9 +1364,9 @@ final class LibraryStore: ObservableObject {
         pendingSave = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(800))
             guard !Task.isCancelled, let self else { return }
-            let snapshot = self.categories
+            let snapshot = self.librarySnapshot
             let url = self.storageURL
-            await Self.persist(snapshot, to: url)
+            await Self.persistLibrary(snapshot, to: url)
             if self.saveGeneration == generation {
                 self.pendingSave = nil
             }
@@ -1163,9 +1389,13 @@ final class LibraryStore: ObservableObject {
         }
     }
 
-    private static func persist(_ categories: [LibraryCategory], to url: URL) async {
+    private var librarySnapshot: LibraryStorageSnapshot {
+        LibraryStorageSnapshot(categories: categories, archivedBooks: archivedBooks)
+    }
+
+    private static func persistLibrary(_ snapshot: LibraryStorageSnapshot, to url: URL) async {
         do {
-            try await LibraryPersistenceWriter.shared.persist(categories, to: url)
+            try await LibraryPersistenceWriter.shared.persist(snapshot, to: url)
         } catch {
 #if DEBUG
             debugLog("[LibraryStore] save failed: \(error.localizedDescription)")
@@ -1183,9 +1413,46 @@ final class LibraryStore: ObservableObject {
         }
     }
 
-    private static func loadCategories(from storageURL: URL) -> [LibraryCategory]? {
-        guard let data = try? Data(contentsOf: storageURL, options: [.mappedIfSafe]) else { return nil }
-        return try? JSONDecoder().decode([LibraryCategory].self, from: data)
+    private static func loadLibrary(from storageURL: URL) -> LibraryStorageSnapshot {
+        guard let data = try? Data(contentsOf: storageURL, options: [.mappedIfSafe]) else {
+            return LibraryStorageSnapshot(categories: [], archivedBooks: [])
+        }
+        if let snapshot = try? JSONDecoder().decode(LibraryStorageSnapshot.self, from: data) {
+            return snapshot
+        }
+        if let legacyCategories = try? JSONDecoder().decode([LibraryCategory].self, from: data) {
+            return LibraryStorageSnapshot(categories: legacyCategories, archivedBooks: [])
+        }
+        return LibraryStorageSnapshot(categories: [], archivedBooks: [])
+    }
+
+    /// Enforces the single-location invariant at every external persistence boundary.
+    /// The first occurrence wins, preserving category order and keeping normal shelves
+    /// authoritative if a corrupt or hand-edited backup contains the same book twice.
+    private static func normalizedLibrary(
+        _ snapshot: LibraryStorageSnapshot
+    ) -> LibraryStorageSnapshot {
+        var seenBookIDs: Set<UUID> = []
+        var normalizedCategories: [LibraryCategory] = []
+        normalizedCategories.reserveCapacity(snapshot.categories.count)
+
+        for category in snapshot.categories {
+            let uniqueNovels = category.novels.filter { novel in
+                seenBookIDs.insert(novel.id).inserted
+            }
+            normalizedCategories.append(
+                LibraryCategory(id: category.id, name: category.name, novels: uniqueNovels)
+            )
+        }
+
+        let normalizedArchive = snapshot.archivedBooks.filter { record in
+            seenBookIDs.insert(record.id).inserted
+        }
+        return LibraryStorageSnapshot(
+            version: snapshot.version,
+            categories: normalizedCategories,
+            archivedBooks: normalizedArchive
+        )
     }
 
     private static func loadReadingStats(from storageURL: URL) -> ReadingStatsLedger? {

@@ -4,6 +4,122 @@ import XCTest
 import LingyueCore
 @testable import LingyueAppStore
 
+final class AppUpdateAnnouncementStoreTests: XCTestCase {
+    func testFreshInstallDoesNotShowUpdateAnnouncementAcrossRelaunches() throws {
+        let context = try makeContext()
+        defer { context.cleanup() }
+
+        let firstLaunch = AppUpdateAnnouncementStore(
+            defaults: context.defaults,
+            persistentDomainName: context.domainName,
+            currentVersion: "1.2",
+            applicationSupportDirectory: context.supportDirectory,
+            arguments: []
+        )
+
+        XCTAssertFalse(firstLaunch.isExistingInstallation)
+        XCTAssertNil(firstLaunch.pendingAnnouncement)
+        XCTAssertEqual(
+            context.defaults.string(forKey: AppUpdateAnnouncementStore.firstInstalledVersionKey),
+            "1.2"
+        )
+
+        let secondLaunch = AppUpdateAnnouncementStore(
+            defaults: context.defaults,
+            persistentDomainName: context.domainName,
+            currentVersion: "1.2",
+            applicationSupportDirectory: context.supportDirectory,
+            arguments: []
+        )
+
+        XCTAssertFalse(secondLaunch.isExistingInstallation)
+        XCTAssertNil(secondLaunch.pendingAnnouncement)
+    }
+
+    func testLegacyInstallShowsArchiveAnnouncementOnlyOnce() throws {
+        let context = try makeContext()
+        defer { context.cleanup() }
+        context.defaults.set(true, forKey: "library.hasSeenHelpOverlay")
+
+        let upgradedLaunch = AppUpdateAnnouncementStore(
+            defaults: context.defaults,
+            persistentDomainName: context.domainName,
+            currentVersion: "1.2",
+            applicationSupportDirectory: context.supportDirectory,
+            arguments: []
+        )
+
+        XCTAssertTrue(upgradedLaunch.isExistingInstallation)
+        XCTAssertEqual(upgradedLaunch.pendingAnnouncement, .libraryArchiveV1_2)
+
+        upgradedLaunch.dismissPendingAnnouncement()
+        XCTAssertNil(upgradedLaunch.pendingAnnouncement)
+        XCTAssertTrue(
+            context.defaults.bool(
+                forKey: AppUpdateAnnouncementStore.seenKey(for: .libraryArchiveV1_2)
+            )
+        )
+
+        let nextLaunch = AppUpdateAnnouncementStore(
+            defaults: context.defaults,
+            persistentDomainName: context.domainName,
+            currentVersion: "1.2",
+            applicationSupportDirectory: context.supportDirectory,
+            arguments: []
+        )
+        XCTAssertNil(nextLaunch.pendingAnnouncement)
+    }
+
+    func testExistingApplicationSupportDataCountsAsUpgradeEvidence() throws {
+        let context = try makeContext()
+        defer { context.cleanup() }
+        try FileManager.default.createDirectory(
+            at: context.supportDirectory,
+            withIntermediateDirectories: true
+        )
+        try Data("legacy".utf8).write(
+            to: context.supportDirectory.appendingPathComponent("LibraryStore.json")
+        )
+
+        let upgradedLaunch = AppUpdateAnnouncementStore(
+            defaults: context.defaults,
+            persistentDomainName: context.domainName,
+            currentVersion: "1.2",
+            applicationSupportDirectory: context.supportDirectory,
+            arguments: []
+        )
+
+        XCTAssertTrue(upgradedLaunch.isExistingInstallation)
+        XCTAssertEqual(upgradedLaunch.pendingAnnouncement, .libraryArchiveV1_2)
+    }
+
+    private func makeContext() throws -> AnnouncementTestContext {
+        let domainName = "AppUpdateAnnouncementStoreTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: domainName))
+        defaults.removePersistentDomain(forName: domainName)
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("AppUpdateAnnouncementStoreTests-\(UUID().uuidString)")
+        return AnnouncementTestContext(
+            defaults: defaults,
+            domainName: domainName,
+            rootDirectory: root,
+            supportDirectory: root.appendingPathComponent("lingyue", isDirectory: true)
+        )
+    }
+}
+
+private struct AnnouncementTestContext {
+    let defaults: UserDefaults
+    let domainName: String
+    let rootDirectory: URL
+    let supportDirectory: URL
+
+    func cleanup() {
+        defaults.removePersistentDomain(forName: domainName)
+        try? FileManager.default.removeItem(at: rootDirectory)
+    }
+}
+
 final class ReadingStatsLedgerTests: XCTestCase {
     func testReadableCharacterCountExcludesWhitespaceAndPunctuation() {
         XCTAssertEqual(
@@ -1120,6 +1236,7 @@ final class LibraryLifecycleIntegrationTests: XCTestCase {
         let stack = makeSourceStack(in: directory)
         let service = BackupService(libraryStore: store, stack: stack)
         let novel = makeNovel()
+        let archivedNovel = makeNovel(title: "归档回归测试")
         let cover = try makeCoverData()
         var ledger = ReadingStatsLedger()
         ledger.rememberBook(novel, at: novel.lastOpenedAt ?? Date())
@@ -1128,18 +1245,28 @@ final class LibraryLifecycleIntegrationTests: XCTestCase {
             createdAt: Date(),
             buildVariant: "appstore",
             library: [LibraryCategory(name: "测试", novels: [novel])],
+            archivedBooks: [
+                ArchivedBookRecord(
+                    novel: archivedNovel,
+                    archivedAt: Date(timeIntervalSince1970: 1_760_000_000)
+                )
+            ],
             readingStats: ledger,
             editableSources: [],
             sourcePreferences: [],
             sourceValidations: [],
-            bookCovers: [novel.id.uuidString: cover]
+            bookCovers: [
+                novel.id.uuidString: cover,
+                archivedNovel.id.uuidString: cover
+            ]
         )
 
         let encoded = try service.encodeArchive(archive)
         let decoded = try service.decodeArchive(from: encoded)
         try await service.restore(decoded)
 
-        XCTAssertEqual(store.allNovels, [novel])
+        XCTAssertEqual(store.allNovels, [novel, archivedNovel])
+        XCTAssertEqual(store.archivedNovels, [archivedNovel])
         XCTAssertEqual(store.readingStats.books.map(\.id), [novel.id])
         let restoredCover = await BookCoverStore.shared.coverData(
             for: novel.id,
@@ -1147,6 +1274,146 @@ final class LibraryLifecycleIntegrationTests: XCTestCase {
         )
         XCTAssertEqual(restoredCover, cover)
         await BookCoverStore.shared.removeCover(for: novel.id)
+        await BookCoverStore.shared.removeCover(for: archivedNovel.id)
+    }
+
+    func testArchiveUndoRestoresOriginalCategoryPosition() throws {
+        let store = LibraryStore(storageDirectory: temporaryDirectory())
+        let first = makeNovel(title: "第一本")
+        let archived = makeNovel(title: "第二本")
+        let last = makeNovel(title: "第三本")
+        let category = LibraryCategory(name: "测试", novels: [first, archived, last])
+        store.categories = [category]
+
+        let archivedAt = Date(timeIntervalSince1970: 1_770_000_000)
+        let undo = try XCTUnwrap(store.archiveBook(archived, archivedAt: archivedAt))
+
+        XCTAssertEqual(store.categories[0].novels.map(\.id), [first.id, last.id])
+        XCTAssertEqual(store.archivedBooks.map(\.id), [archived.id])
+        XCTAssertEqual(store.archivedBooks.first?.archivedAt, archivedAt)
+        XCTAssertTrue(store.allNovels.contains(where: { $0.id == archived.id }))
+
+        XCTAssertTrue(store.undoArchive(undo))
+        XCTAssertEqual(store.categories[0].novels.map(\.id), [first.id, archived.id, last.id])
+        XCTAssertTrue(store.archivedBooks.isEmpty)
+    }
+
+    func testArchivedBookIsExcludedFromContinueReadingAndMovesToChosenCategory() throws {
+        let store = LibraryStore(storageDirectory: temporaryDirectory())
+        let novel = makeNovel()
+        let source = LibraryCategory(name: "正在看", novels: [novel])
+        let destination = LibraryCategory(name: "以后再看", novels: [])
+        store.categories = [source, destination]
+
+        XCTAssertNotNil(store.mostRecentlyOpenedNovel)
+        XCTAssertNotNil(store.archiveBook(novel))
+        XCTAssertNil(store.mostRecentlyOpenedNovel)
+
+        XCTAssertTrue(store.moveBook(novel, toCategoryID: destination.id))
+        XCTAssertTrue(store.archivedBooks.isEmpty)
+        XCTAssertTrue(store.categories[0].novels.isEmpty)
+        XCTAssertEqual(store.categories[1].novels.map(\.id), [novel.id])
+    }
+
+    func testArchivePersistsAndReadingStateUpdatesInPlace() async throws {
+        let directory = temporaryDirectory()
+        let store = LibraryStore(storageDirectory: directory)
+        let novel = makeNovel()
+        store.categories = [LibraryCategory(name: "测试", novels: [novel])]
+        XCTAssertNotNil(store.archiveBook(novel))
+
+        store.updateReadingState(
+            for: novel.id,
+            chapterTitle: "第二章",
+            progress: 0.75,
+            chapterIndex: 1,
+            chapterPageIndex: 3,
+            chapterSourceURLString: "chapter-2"
+        )
+        await store.flush()
+
+        let reloaded = LibraryStore(storageDirectory: directory)
+        let persisted = try XCTUnwrap(reloaded.archivedNovels.first)
+        XCTAssertEqual(persisted.lastChapter, "第二章")
+        XCTAssertEqual(persisted.progress, 0.75)
+        XCTAssertEqual(persisted.currentChapterIndex, 1)
+        XCTAssertTrue(reloaded.categories.first?.novels.isEmpty == true)
+    }
+
+    func testLegacyLibraryKeepsUserCategoryAndDoesNotInferArchiveMeaning() throws {
+        let directory = temporaryDirectory()
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
+        let novel = makeNovel()
+        let legacyCategories = [LibraryCategory(name: "看过好看的", novels: [novel])]
+        let data = try JSONEncoder().encode(legacyCategories)
+        try data.write(to: directory.appendingPathComponent("LibraryStore.json"), options: .atomic)
+
+        let store = LibraryStore(storageDirectory: directory)
+
+        XCTAssertEqual(store.categories.map(\.name), ["看过好看的"])
+        XCTAssertEqual(store.categories.first?.novels.map(\.id), [novel.id])
+        XCTAssertTrue(store.archivedBooks.isEmpty)
+    }
+
+    func testRestoreDropsDuplicateArchiveLocation() {
+        let store = LibraryStore(storageDirectory: temporaryDirectory())
+        let novel = makeNovel()
+        store.replaceLibrary(
+            categories: [LibraryCategory(name: "测试", novels: [novel])],
+            archivedBooks: [ArchivedBookRecord(novel: novel, archivedAt: Date())]
+        )
+
+        XCTAssertEqual(store.allNovels.map(\.id), [novel.id])
+        XCTAssertTrue(store.archivedBooks.isEmpty)
+    }
+
+    func testReplacingArchivedImportPreservesArchiveLocation() throws {
+        let store = LibraryStore(storageDirectory: temporaryDirectory())
+        let original = makeNovel(sourceURLString: "https://example.com/book")
+        store.categories = [LibraryCategory(name: "测试", novels: [original])]
+        let archivedAt = Date(timeIntervalSince1970: 1_770_000_000)
+        XCTAssertNotNil(store.archiveBook(original, archivedAt: archivedAt))
+        XCTAssertTrue(
+            store.isArchivedBook(
+                sourceURLString: original.sourceURLString,
+                title: original.title
+            )
+        )
+        let replacement = makeNovel(sourceURLString: "https://example.com/book")
+
+        store.addImportedNovel(replacement, categoryName: "不应移动到这里")
+
+        XCTAssertEqual(store.archivedBooks.map(\.id), [replacement.id])
+        XCTAssertEqual(store.archivedBooks.first?.archivedAt, archivedAt)
+        XCTAssertFalse(store.categories.contains(where: { $0.name == "不应移动到这里" }))
+    }
+
+    func testOldBackupWithoutArchiveFieldStillDecodes() throws {
+        let directory = temporaryDirectory()
+        let store = LibraryStore(storageDirectory: directory)
+        let service = BackupService(libraryStore: store, stack: makeSourceStack(in: directory))
+        let archive = BackupArchive(
+            version: 1,
+            createdAt: Date(),
+            buildVariant: "appstore",
+            library: [],
+            readingStats: ReadingStatsLedger(),
+            editableSources: [],
+            sourcePreferences: [],
+            sourceValidations: [],
+            bookCovers: nil
+        )
+        let encoded = try service.encodeArchive(archive)
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        object.removeValue(forKey: "archivedBooks")
+        let legacyData = try JSONSerialization.data(withJSONObject: object)
+
+        let decoded = try service.decodeArchive(from: legacyData)
+
+        XCTAssertNil(decoded.archivedBooks)
     }
 
     func testDeletingBookRemovesItsSavedCover() async throws {
@@ -1155,6 +1422,7 @@ final class LibraryLifecycleIntegrationTests: XCTestCase {
         let novel = makeNovel()
         let cover = try makeCoverData()
         store.categories = [LibraryCategory(name: "测试", novels: [novel])]
+        XCTAssertNotNil(store.archiveBook(novel))
         await BookCoverStore.shared.restoreCovers(
             [novel.id.uuidString: cover],
             keeping: [novel.id]
@@ -1203,9 +1471,12 @@ final class LibraryLifecycleIntegrationTests: XCTestCase {
         )
     }
 
-    private func makeNovel() -> Novel {
+    private func makeNovel(
+        title: String = "回归测试",
+        sourceURLString: String? = nil
+    ) -> Novel {
         Novel(
-            title: "回归测试",
+            title: title,
             author: "灵阅",
             genre: "测试",
             summary: "用于验证备份与清理。",
@@ -1215,6 +1486,7 @@ final class LibraryLifecycleIntegrationTests: XCTestCase {
             lastOpenedAt: Date(timeIntervalSince1970: 1_750_000_000),
             coverPalette: .teal,
             isFeatured: false,
+            sourceURLString: sourceURLString,
             chapters: [
                 NovelChapter(title: "第一章", content: "测试正文")
             ]

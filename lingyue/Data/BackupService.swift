@@ -6,11 +6,10 @@ import LingyueCore
 /// locally stored covers + reading-stats ledger + editable rules +
 /// per-rule preferences + per-rule validation history.
 ///
-/// Versioned at the envelope level. `currentVersion` bumps any time a
-/// member type's schema changes in a way that can't be decoded by an
-/// older build — `BackupService.decodeArchive` refuses anything that
-/// isn't `currentVersion`, surfacing a user-readable error rather than
-/// silently producing garbage state.
+/// Versioned at the envelope level. `currentVersion` bumps whenever a
+/// new build writes data an older build must not silently discard. The
+/// decoder still accepts explicitly supported older versions so backups
+/// remain forward-migratable.
 ///
 /// `buildVariant` records whether the archive was produced by an
 /// Internal or AppStore build. We don't reject cross-variant restores
@@ -22,13 +21,15 @@ struct BackupArchive: Codable {
     var createdAt: Date
     var buildVariant: String
     var library: [LibraryCategory]
+    var archivedBooks: [ArchivedBookRecord]? = nil
     var readingStats: ReadingStatsLedger
     var editableSources: [SourceRule]
     var sourcePreferences: [SourcePreference]
     var sourceValidations: [SourceValidation]
     var bookCovers: [String: Data]?
 
-    static let currentVersion = 1
+    static let currentVersion = 2
+    static let supportedVersions = 1...currentVersion
 }
 
 enum BackupError: LocalizedError {
@@ -68,6 +69,7 @@ struct BackupService {
             createdAt: Date(),
             buildVariant: buildVariantTag,
             library: libraryStore.categories,
+            archivedBooks: libraryStore.archivedBooks,
             readingStats: libraryStore.readingStats,
             editableSources: editable,
             sourcePreferences: Array(prefs.values),
@@ -92,7 +94,7 @@ struct BackupService {
         } catch {
             throw BackupError.decodeFailed(error.localizedDescription)
         }
-        guard archive.version == BackupArchive.currentVersion else {
+        guard BackupArchive.supportedVersions.contains(archive.version) else {
             throw BackupError.unsupportedVersion(archive.version)
         }
         return archive
@@ -111,9 +113,15 @@ struct BackupService {
         if let file = stack.validationStore as? FileSourceValidationStore {
             try await file.replaceAll(archive.sourceValidations)
         }
-        libraryStore.categories = archive.library
+        libraryStore.replaceLibrary(
+            categories: archive.library,
+            archivedBooks: archive.archivedBooks ?? []
+        )
         libraryStore.replaceReadingStats(archive.readingStats)
-        let activeBookIDs = Set(archive.library.flatMap(\.novels).map(\.id))
+        let activeBookIDs = Set(
+            archive.library.flatMap(\.novels).map(\.id)
+            + (archive.archivedBooks ?? []).map(\.id)
+        )
         await BookCoverStore.shared.restoreCovers(
             archive.bookCovers ?? [:],
             keeping: activeBookIDs
