@@ -372,6 +372,29 @@ struct ReaderStateSnapshot: Sendable {
     let pageIndex: Int
     let totalPages: Int
     let pageSignature: String?
+    let performance: ReaderPerformanceSnapshot?
+
+    init(
+        novelID: UUID,
+        novelTitle: String,
+        chapterIndex: Int,
+        totalChapters: Int,
+        chapterTitle: String,
+        pageIndex: Int,
+        totalPages: Int,
+        pageSignature: String?,
+        performance: ReaderPerformanceSnapshot? = nil
+    ) {
+        self.novelID = novelID
+        self.novelTitle = novelTitle
+        self.chapterIndex = chapterIndex
+        self.totalChapters = totalChapters
+        self.chapterTitle = chapterTitle
+        self.pageIndex = pageIndex
+        self.totalPages = totalPages
+        self.pageSignature = pageSignature
+        self.performance = performance
+    }
 
     func asContext() -> [String: String] {
         var ctx: [String: String] = [
@@ -384,6 +407,31 @@ struct ReaderStateSnapshot: Sendable {
         if let pageSignature, !pageSignature.isEmpty {
             ctx["sig"] = pageSignature
         }
+        if let performance {
+            ctx["pageCache"] = "\(performance.paginationCacheEntries)/\(performance.paginationCacheCapacity)"
+            ctx["pageCacheHitMiss"] = "\(performance.paginationCacheHits)/\(performance.paginationCacheMisses)"
+            ctx["pageCacheEvict"] = "\(performance.paginationCacheEvictions)"
+            ctx["pageCacheMemTrim"] = "\(performance.paginationCacheMemoryTrims)"
+            ctx["prefetch"] = "\(performance.prefetchRunning)/\(performance.prefetchQueued)"
+            ctx["prefetchMax"] = "\(performance.prefetchMaximumRunning)/\(performance.prefetchMaximumQueued)"
+            ctx["prefetchCancel"] = "\(performance.prefetchCancelled)"
+        }
         return ctx
     }
+}
+
+/// Low-overhead counters captured alongside reader-state breadcrumbs. They turn a future
+/// long-session report into evidence: bounded cache size, cache churn, and prefetch pressure.
+struct ReaderPerformanceSnapshot: Sendable, Equatable {
+    let paginationCacheCapacity: Int
+    let paginationCacheEntries: Int
+    let paginationCacheHits: Int
+    let paginationCacheMisses: Int
+    let paginationCacheEvictions: Int
+    let paginationCacheMemoryTrims: Int
+    let prefetchRunning: Int
+    let prefetchQueued: Int
+    let prefetchMaximumRunning: Int
+    let prefetchMaximumQueued: Int
+    let prefetchCancelled: Int
 }

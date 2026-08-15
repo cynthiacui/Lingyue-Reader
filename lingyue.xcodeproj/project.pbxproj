@@ -18,6 +18,8 @@
 		64AE68042FB6C76D004058EE /* MeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000008 /* MeView.swift */; };
 		64AE68052FB6C76D004058EE /* ReaderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01000000000000000000000C /* ReaderView.swift */; };
 		64AE68062FB6C76D004058EE /* PageCurlPager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000018 /* PageCurlPager.swift */; };
+		64AE68302FB6C76D004058EE /* ReaderPrefetchScheduler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01000000000000000000003A /* ReaderPrefetchScheduler.swift */; };
+		64AE68312FB6C76D004058EE /* ReaderSessionState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01000000000000000000003B /* ReaderSessionState.swift */; };
 		64AE68072FB6C76D004058EE /* TabBarVisibility.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01000000000000000000001A /* TabBarVisibility.swift */; };
 		64AE68082FB6C76D004058EE /* InAppBrowserView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01000000000000000000000D /* InAppBrowserView.swift */; };
 		64AE68092FB6C76D004058EE /* LibraryStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01000000000000000000000E /* LibraryStore.swift */; };
@@ -108,6 +110,8 @@
 		010000000000000000000015 /* BookDownloadManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookDownloadManager.swift; sourceTree = "<group>"; };
 		010000000000000000000016 /* DownloadsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadsView.swift; sourceTree = "<group>"; };
 		010000000000000000000018 /* PageCurlPager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PageCurlPager.swift; sourceTree = "<group>"; };
+		01000000000000000000003A /* ReaderPrefetchScheduler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReaderPrefetchScheduler.swift; sourceTree = "<group>"; };
+		01000000000000000000003B /* ReaderSessionState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReaderSessionState.swift; sourceTree = "<group>"; };
 		010000000000000000000019 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		01000000000000000000001A /* TabBarVisibility.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabBarVisibility.swift; sourceTree = "<group>"; };
 		01000000000000000000001B /* ReadingStatsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReadingStatsView.swift; sourceTree = "<group>"; };
@@ -259,6 +263,8 @@
 				010000000000000000000008 /* MeView.swift */,
 				010000000000000000000309 /* Settings */,
 				01000000000000000000000C /* ReaderView.swift */,
+				01000000000000000000003A /* ReaderPrefetchScheduler.swift */,
+				01000000000000000000003B /* ReaderSessionState.swift */,
 				010000000000000000000018 /* PageCurlPager.swift */,
 				01000000000000000000001A /* TabBarVisibility.swift */,
 				01000000000000000000000D /* InAppBrowserView.swift */,
@@ -477,6 +483,8 @@
 				64AE68F62FB6C76D004058EE /* DiscoveryRecentSearches.swift in Sources */,
 				64AE68042FB6C76D004058EE /* MeView.swift in Sources */,
 				64AE68052FB6C76D004058EE /* ReaderView.swift in Sources */,
+				64AE68302FB6C76D004058EE /* ReaderPrefetchScheduler.swift in Sources */,
+				64AE68312FB6C76D004058EE /* ReaderSessionState.swift in Sources */,
 				64AE68062FB6C76D004058EE /* PageCurlPager.swift in Sources */,
 				64AE68072FB6C76D004058EE /* TabBarVisibility.swift in Sources */,
 				64AE68082FB6C76D004058EE /* InAppBrowserView.swift in Sources */,

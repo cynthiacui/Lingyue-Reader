@@ -15,6 +15,23 @@ private final class ReaderPageViewController: UIPageViewController {
     }
 }
 
+/// Hosting controller that carries its page identity independently of the cache.
+/// UIPageViewController may retain a controller after our bounded cache evicts it;
+/// keeping the identity on the controller makes late delegate/data-source callbacks
+/// O(1) and safe instead of reverse-scanning (or depending on) the cache contents.
+private final class ReaderPageHostingController: UIHostingController<AnyView> {
+    let pageIdentity: String
+
+    init(pageIdentity: String, rootView: AnyView) {
+        self.pageIdentity = pageIdentity
+        super.init(rootView: rootView)
+    }
+
+    @MainActor @preconcurrency required dynamic init?(coder aDecoder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+}
+
 /// SwiftUI wrapper around `UIPageViewController` for both `.pageCurl` (real-book
 /// curl) and `.scroll` (follow-finger horizontal slide). SwiftUI's `TabView(.page)`
 /// drives slide on its own but writes its post-bounce selection back to the binding
@@ -78,7 +95,7 @@ struct PageCurlPager: UIViewControllerRepresentable {
     func updateUIViewController(_ pvc: UIPageViewController, context: Context) {
         context.coordinator.parent = self
         pvc.view.backgroundColor = backgroundColor
-        let slotsChanged = context.coordinator.refreshCachedRenders()
+        context.coordinator.refreshCachedRenders()
         context.coordinator.prepareVisibleNeighborhood(in: pvc)
 
         guard let desiredID = context.coordinator.identity(at: currentIndex) else { return }
@@ -99,14 +116,7 @@ struct PageCurlPager: UIViewControllerRepresentable {
             // rubber-band against the stale neighbour ("翻不过去"). Force a no-op re-set to
             // refresh the neighbour cache. Guard against the animation/gesture queue so we
             // don't trip "Duplicate states in queue".
-            if slotsChanged,
-               !context.coordinator.isAnimating,
-               !context.coordinator.gestureInFlight,
-               let host = context.coordinator.host(for: shownID) {
-                ReaderDiagnostics.shared.log(.info, "pager neighbor refresh", context: ["shownID": shownID])
-                pvc.setViewControllers([host], direction: .forward, animated: false)
-                context.coordinator.prepareVisibleNeighborhood(in: pvc)
-            }
+            context.coordinator.refreshNeighborsIfNeeded(in: pvc)
             return
         }
 
@@ -132,11 +142,17 @@ struct PageCurlPager: UIViewControllerRepresentable {
     static func dismantleUIViewController(_ uiViewController: UIPageViewController,
                                           coordinator: Coordinator) {
         coordinator.isDismantled = true
+        coordinator.cancelTransitionWatchdog()
         (uiViewController as? ReaderPageViewController)?.onViewportLayout = nil
     }
 
     final class Coordinator: NSObject, UIPageViewControllerDataSource, UIPageViewControllerDelegate {
-        var parent: PageCurlPager
+        var parent: PageCurlPager {
+            didSet {
+                guard oldValue.slotIdentities != parent.slotIdentities else { return }
+                rebuildSlotIndex()
+            }
+        }
         /// Identity of the page UIPageViewController is currently displaying. Source of
         /// truth for transition decisions — survives slot-array re-numbering.
         var shownIdentity: String = ""
@@ -157,13 +173,27 @@ struct PageCurlPager: UIViewControllerRepresentable {
         // applying and bail otherwise.
         var pendingIdentity: String?
         var animationStartedAt: Date?
+        private var gestureStartedAt: Date?
+        /// True only while UIKit is executing one of our transition callbacks. SwiftUI
+        /// state writes made by `onCommit` can synchronously trigger representable updates;
+        /// this guard prevents a nested setViewControllers call in UIKit's callback stack.
+        private var isHandlingTransitionCallback = false
+        /// A single coalesced watchdog makes the state machine self-healing if UIKit drops
+        /// a completion callback (observed around interruptions/backgrounding). It is
+        /// cancelled/replaced for every new transition, so work stays O(1).
+        private var transitionWatchdog: DispatchWorkItem?
+        private let transitionWatchdogDelay: TimeInterval
         // UIKit can keep a neighbor controller alive while SwiftUI updates the slot
         // window (for example when prefetch adds a chapter bookend mid-drag). Keep
         // that identity in the cache until the gesture resolves so delegate callbacks
         // can still map the landed controller back to its page.
         var gestureTargetIdentity: String?
-        // Hosts cached by stable identity so the live page survives a slot re-base.
-        private var hosts: [String: UIHostingController<AnyView>] = [:]
+        // Hosts cached by stable identity so the live page survives a slot re-base. Keep
+        // only a small working set: without an explicit cap, a single extremely long
+        // chapter retains one UIHostingController per visited page for the whole session.
+        private var hosts: [String: ReaderPageHostingController] = [:]
+        private var hostAccessOrder: [String] = []
+        private let hostCacheCapacity = 9
         // Records the viewport size at which each host completed its first synchronous
         // layout. A matching entry means the host is ready to animate on screen; a size
         // change (rotation / split view) prepares it again at the new geometry.
@@ -174,14 +204,29 @@ struct PageCurlPager: UIViewControllerRepresentable {
         // Snapshot of the slot identities at the last refresh so we can detect
         // re-pagination / re-base and evict stale, non-visible hosts.
         private var lastSeenSlotIdentities: [String] = []
+        /// Identity lookup is on the page-turn hot path. Rebuild once when pagination
+        /// changes instead of scanning every page for each data-source/delegate callback.
+        private var slotIndexByIdentity: [String: Int] = [:]
+        // UIPageViewController caches a nil previous/next answer. When the slot window
+        // changes during a gesture or programmatic animation we cannot safely call
+        // setViewControllers immediately, but consuming the change at that point loses
+        // the only signal that its neighbour cache is stale. Keep the refresh pending
+        // until the transition has settled; otherwise a chapter bookend added mid-turn
+        // can remain unreachable for the rest of the reader session.
+        private(set) var needsNeighborRefresh = false
 
-        init(_ parent: PageCurlPager) {
+        var cachedHostCount: Int { hosts.count }
+
+        init(_ parent: PageCurlPager, transitionWatchdogDelay: TimeInterval = 3) {
             self.parent = parent
+            self.transitionWatchdogDelay = transitionWatchdogDelay
             let initialIdentity = parent.slotIdentities.indices.contains(parent.currentIndex)
                 ? parent.slotIdentities[parent.currentIndex]
                 : parent.slotIdentities.first
             self.shownIdentity = initialIdentity ?? ""
             self.lastSeenSlotIdentities = parent.slotIdentities
+            super.init()
+            rebuildSlotIndex()
         }
 
         // MARK: identity ↔ index helpers (resolved against the *current* slot array)
@@ -191,15 +236,34 @@ struct PageCurlPager: UIViewControllerRepresentable {
         }
 
         func slotIndex(of identity: String) -> Int? {
-            parent.slotIdentities.firstIndex(of: identity)
+            slotIndexByIdentity[identity]
+        }
+
+        private func rebuildSlotIndex() {
+            var rebuilt: [String: Int] = [:]
+            rebuilt.reserveCapacity(parent.slotIdentities.count)
+            for (index, identity) in parent.slotIdentities.enumerated() {
+                // Page identities are expected to be unique. Keeping the first occurrence
+                // is defensive and matches Array.firstIndex(of:) if malformed input arrives.
+                if rebuilt[identity] == nil {
+                    rebuilt[identity] = index
+                }
+            }
+            slotIndexByIdentity = rebuilt
         }
 
         /// Cached hosting controller for an identity. Returns nil if the identity is not
         /// part of the current slot array (defensive — a stale neighbour request).
         func host(for identity: String) -> UIHostingController<AnyView>? {
             guard slotIndex(of: identity) != nil else { return nil }
-            if let cached = hosts[identity] { return cached }
-            let host = UIHostingController(rootView: parent.renderPage(identity))
+            if let cached = hosts[identity] {
+                touchHost(identity)
+                return cached
+            }
+            let host = ReaderPageHostingController(
+                pageIdentity: identity,
+                rootView: parent.renderPage(identity)
+            )
             host.view.backgroundColor = parent.backgroundColor
             // The outer ReaderView already pins layout to a stable safe-area inset and
             // passes it explicitly into `pageView`. UIHostingController otherwise spawns a
@@ -209,7 +273,59 @@ struct PageCurlPager: UIViewControllerRepresentable {
             // out the host's safe-area regions so the hosted tree sees zero insets.
             host.safeAreaRegions = []
             hosts[identity] = host
+            touchHost(identity)
+            trimHostCache(preserving: retainedHostIdentities(including: identity))
             return host
+        }
+
+        private func touchHost(_ identity: String) {
+            hostAccessOrder.removeAll { $0 == identity }
+            hostAccessOrder.append(identity)
+        }
+
+        /// Identities UIKit can still reference, plus a two-slot radius around both the
+        /// displayed and desired page. The normal working set is at most seven hosts;
+        /// capacity nine leaves room for a gesture target and one deferred destination.
+        private func retainedHostIdentities(including requested: String? = nil) -> Set<String> {
+            let candidates: [String?] = [shownIdentity, gestureTargetIdentity, pendingIdentity, requested]
+            var retained = Set<String>(candidates.compactMap { value in
+                guard let value, !value.isEmpty else { return nil }
+                return value
+            })
+            let centers = [slotIndex(of: shownIdentity), parent.slotIdentities.indices.contains(parent.currentIndex)
+                ? parent.currentIndex
+                : nil]
+                .compactMap { $0 }
+            for center in centers {
+                for slot in (center - 2)...(center + 2) {
+                    if let identity = identity(at: slot) {
+                        retained.insert(identity)
+                    }
+                }
+            }
+            return retained
+        }
+
+        private func trimHostCache(preserving retained: Set<String>) {
+            while hosts.count > hostCacheCapacity {
+                guard let staleIndex = hostAccessOrder.firstIndex(where: {
+                    hosts[$0] != nil && !retained.contains($0)
+                }) else {
+                    // Active UIKit references may briefly exceed the nominal capacity.
+                    // Keep them; the next settled-page trim brings the cache back down.
+                    return
+                }
+                let staleIdentity = hostAccessOrder.remove(at: staleIndex)
+                hosts.removeValue(forKey: staleIdentity)
+                preparedHostSizes.removeValue(forKey: staleIdentity)
+            }
+            hostAccessOrder.removeAll { hosts[$0] == nil }
+        }
+
+        private func removeCachedHost(_ identity: String) {
+            hosts.removeValue(forKey: identity)
+            preparedHostSizes.removeValue(forKey: identity)
+            hostAccessOrder.removeAll { $0 == identity }
         }
 
         /// Returns a cached host after forcing its SwiftUI tree through an initial layout
@@ -234,12 +350,120 @@ struct PageCurlPager: UIViewControllerRepresentable {
             guard !isDismantled, !isPreparingHosts,
                   let shownSlot = slotIndex(of: shownIdentity) else { return }
             isPreparingHosts = true
-            defer { isPreparingHosts = false }
+            defer {
+                isPreparingHosts = false
+                trimHostCache(preserving: retainedHostIdentities())
+            }
             for slot in (shownSlot - 1)...(shownSlot + 1) {
                 guard let identity = identity(at: slot),
                       let host = host(for: identity) else { continue }
                 prepare(host, identity: identity, in: pvc)
             }
+        }
+
+        /// Re-sets the displayed host to make UIPageViewController ask its data source
+        /// for neighbours again. A slot change may arrive while UIKit has a transition
+        /// in flight, so this is deliberately retryable: the pending bit is cleared only
+        /// after the safe refresh actually happens.
+        @discardableResult
+        func refreshNeighborsIfNeeded(in pvc: UIPageViewController) -> Bool {
+            guard needsNeighborRefresh,
+                  !isDismantled,
+                  !isAnimating,
+                  !gestureInFlight,
+                  !isHandlingTransitionCallback,
+                  let desiredID = identity(at: parent.currentIndex),
+                  desiredID == shownIdentity,
+                  let host = host(for: shownIdentity) else {
+                return false
+            }
+
+            needsNeighborRefresh = false
+            ReaderDiagnostics.shared.log(.info, "pager neighbor refresh", context: [
+                "shownID": shownIdentity,
+                "slots": String(parent.slotIdentities.count)
+            ])
+            pvc.setViewControllers([host], direction: .forward, animated: false)
+            prepareVisibleNeighborhood(in: pvc)
+            return true
+        }
+
+        /// UIKit delegate/completion callbacks are still inside its transition stack.
+        /// Hop one run-loop turn before retrying a deferred neighbour refresh to avoid
+        /// the same duplicate-queue failure that guards requestTransition.
+        private func retryNeighborRefreshAfterTransition(in pvc: UIPageViewController?) {
+            guard needsNeighborRefresh, let pvc else { return }
+            DispatchQueue.main.async { [weak self, weak pvc] in
+                guard let self, let pvc else { return }
+                self.refreshNeighborsIfNeeded(in: pvc)
+            }
+        }
+
+        func cancelTransitionWatchdog() {
+            transitionWatchdog?.cancel()
+            transitionWatchdog = nil
+        }
+
+        /// Schedule one coalesced reconciliation pass. A genuine long-held interactive
+        /// curl is detected from UIKit's gesture recognizers and simply reschedules;
+        /// a lost callback with no live interaction is recovered automatically.
+        private func scheduleTransitionWatchdog(in pvc: UIPageViewController) {
+            cancelTransitionWatchdog()
+            guard !isDismantled, isAnimating || gestureInFlight else { return }
+
+            let work = DispatchWorkItem { [weak self, weak pvc] in
+                guard let self, let pvc, !self.isDismantled else { return }
+                self.transitionWatchdog = nil
+                if self.pagerHasActiveInteraction(pvc) {
+                    self.scheduleTransitionWatchdog(in: pvc)
+                    return
+                }
+                self.recoverStaleTransitionState(in: pvc)
+            }
+            transitionWatchdog = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + transitionWatchdogDelay, execute: work)
+        }
+
+        private func pagerHasActiveInteraction(_ pvc: UIPageViewController) -> Bool {
+            if pvc.transitionCoordinator?.isInteractive == true { return true }
+            return pvc.gestureRecognizers.contains {
+                $0.state == .began || $0.state == .changed
+            }
+        }
+
+        /// Last-resort reconciliation for missing UIKit callbacks. This collapses every
+        /// queued request to the parent binding's latest desired identity, then performs
+        /// one non-animated snap and one neighbour refresh. Cost is constant regardless
+        /// of how many SwiftUI updates arrived while the transition was stuck.
+        private func recoverStaleTransitionState(in pvc: UIPageViewController) {
+            guard !isDismantled, !isHandlingTransitionCallback,
+                  isAnimating || gestureInFlight else { return }
+
+            let now = Date()
+            ReaderDiagnostics.shared.log(.info, "pager recovered stale transition", context: [
+                "shownID": shownIdentity,
+                "desiredID": identity(at: parent.currentIndex) ?? "-",
+                "animationAgeMs": animationStartedAt.map { String(Int($0.distance(to: now) * 1_000)) } ?? "-",
+                "gestureAgeMs": gestureStartedAt.map { String(Int($0.distance(to: now) * 1_000)) } ?? "-",
+                "pending": pendingIdentity ?? "-"
+            ])
+
+            isAnimating = false
+            gestureInFlight = false
+            animationStartedAt = nil
+            gestureStartedAt = nil
+            gestureTargetIdentity = nil
+            pendingIdentity = nil
+
+            guard let desiredID = identity(at: parent.currentIndex),
+                  let target = preparedHost(for: desiredID, in: pvc) else { return }
+            let displayedID = pvc.viewControllers?.first.flatMap(identity(of:))
+            shownIdentity = desiredID
+            if displayedID != desiredID {
+                pvc.setViewControllers([target], direction: .forward, animated: false)
+            }
+            refreshNeighborsIfNeeded(in: pvc)
+            prepareVisibleNeighborhood(in: pvc)
         }
 
         private func prepare(
@@ -291,7 +515,7 @@ struct PageCurlPager: UIViewControllerRepresentable {
         }
 
         private func identity(of viewController: UIViewController) -> String? {
-            hosts.first(where: { $0.value === viewController })?.key
+            (viewController as? ReaderPageHostingController)?.pageIdentity
         }
 
         func requestTransition(to identity: String, animated: Bool, in pvc: UIPageViewController) {
@@ -300,7 +524,7 @@ struct PageCurlPager: UIViewControllerRepresentable {
             // now would crash with "Duplicate states in queue". Stash the desired
             // identity and let the completion / didFinishAnimating handler apply it
             // once the curl resolves.
-            if isAnimating || gestureInFlight {
+            if isAnimating || gestureInFlight || isHandlingTransitionCallback {
                 ReaderDiagnostics.shared.log(.info, "pager deferred (would-crash guard)", context: [
                     "toID": identity,
                     "shownID": shownIdentity,
@@ -338,9 +562,12 @@ struct PageCurlPager: UIViewControllerRepresentable {
             }
             isAnimating = true
             animationStartedAt = Date()
+            scheduleTransitionWatchdog(in: pvc)
             let startedAt = Date()
             pvc.setViewControllers([target], direction: direction, animated: true) { [weak self, weak pvc] finished in
                 guard let self = self else { return }
+                self.isHandlingTransitionCallback = true
+                defer { self.isHandlingTransitionCallback = false }
                 let durMs = Int(startedAt.distance(to: Date()) * 1000)
                 ReaderDiagnostics.shared.log(.pageTurnEnd, "programmatic complete", context: [
                     "toID": identity,
@@ -351,9 +578,11 @@ struct PageCurlPager: UIViewControllerRepresentable {
                 ])
                 self.isAnimating = false
                 self.animationStartedAt = nil
+                self.cancelTransitionWatchdog()
                 if let pvc {
                     self.prepareVisibleNeighborhood(in: pvc)
                 }
+                self.retryNeighborRefreshAfterTransition(in: pvc)
                 // iOS 26 UIPageViewController quirk: an animated setViewControllers can
                 // fire the completion with finished=false and leave the displayed VC
                 // unchanged from the previous page — but shownIdentity/currentIndex were
@@ -385,15 +614,25 @@ struct PageCurlPager: UIViewControllerRepresentable {
                       let pending,
                       pending != self.shownIdentity,
                       self.identity(at: self.parent.currentIndex) == pending else { return }
-                ReaderDiagnostics.shared.log(.info, "pager apply pending", context: [
-                    "toID": pending,
-                    "shownID": self.shownIdentity
-                ])
-                // Apply the queued update instantly — animating again would re-enter
-                // the same race we're guarding against. `performTransition` re-resolves
-                // the host for `pending`; if the identity is no longer in the slot array
-                // (re-based away) `host(for:)` returns nil and it's a safe no-op.
-                self.performTransition(to: pending, animated: false, in: pvc)
+                self.applyPendingTransitionAfterCallback(pending, in: pvc)
+            }
+        }
+
+        private func applyPendingTransitionAfterCallback(
+            _ identity: String,
+            in pvc: UIPageViewController
+        ) {
+            ReaderDiagnostics.shared.log(.info, "pager apply pending", context: [
+                "toID": identity,
+                "shownID": shownIdentity
+            ])
+            // Never call setViewControllers from inside a UIKit completion/delegate
+            // callback. Coalesce to the latest parent binding on the next run loop.
+            DispatchQueue.main.async { [weak self, weak pvc] in
+                guard let self, !self.isDismantled, let pvc,
+                      self.shownIdentity != identity,
+                      self.identity(at: self.parent.currentIndex) == identity else { return }
+                self.requestTransition(to: identity, animated: false, in: pvc)
             }
         }
 
@@ -438,21 +677,21 @@ struct PageCurlPager: UIViewControllerRepresentable {
                 !protectedIDs.contains($0) && !validIDs.contains($0)
             }
             for key in staleKeys {
-                hosts.removeValue(forKey: key)
-                preparedHostSizes.removeValue(forKey: key)
+                removeCachedHost(key)
             }
             let slotsChanged = lastSeenSlotIdentities != parent.slotIdentities
             if slotsChanged {
+                needsNeighborRefresh = true
                 let evictedKeys = hosts.keys.filter { !protectedIDs.contains($0) }
                 for key in evictedKeys {
-                    hosts.removeValue(forKey: key)
-                    preparedHostSizes.removeValue(forKey: key)
+                    removeCachedHost(key)
                 }
                 lastSeenSlotIdentities = parent.slotIdentities
             }
             for host in hosts.values {
                 host.view.backgroundColor = parent.backgroundColor
             }
+            trimHostCache(preserving: retainedHostIdentities())
             return slotsChanged
         }
 
@@ -466,8 +705,10 @@ struct PageCurlPager: UIViewControllerRepresentable {
         func pageViewController(_ pvc: UIPageViewController,
                                 willTransitionTo pendingViewControllers: [UIViewController]) {
             gestureInFlight = true
+            gestureStartedAt = Date()
             let toID = pendingViewControllers.first.flatMap { identity(of: $0) }
             gestureTargetIdentity = toID
+            scheduleTransitionWatchdog(in: pvc)
             ReaderDiagnostics.shared.log(.pageTurnStart, "gesture begin", context: [
                 "shownID": shownIdentity,
                 "toID": toID ?? "?"
@@ -478,6 +719,16 @@ struct PageCurlPager: UIViewControllerRepresentable {
                                 didFinishAnimating finished: Bool,
                                 previousViewControllers prev: [UIViewController],
                                 transitionCompleted completed: Bool) {
+            isHandlingTransitionCallback = true
+            defer {
+                isHandlingTransitionCallback = false
+                gestureTargetIdentity = nil
+                if isAnimating {
+                    scheduleTransitionWatchdog(in: pvc)
+                } else {
+                    cancelTransitionWatchdog()
+                }
+            }
             // `didFinishAnimating` fires for both gesture-driven and programmatic
             // transitions. Programmatic transitions also fire their own completion
             // closure (see `performTransition`); to keep our state machine
@@ -485,7 +736,7 @@ struct PageCurlPager: UIViewControllerRepresentable {
             // completion closure handle `isAnimating`.
             let wasGesture = gestureInFlight
             gestureInFlight = false
-            defer { gestureTargetIdentity = nil }
+            gestureStartedAt = nil
             // Drop writes after dismantle: the representable was torn down by an .id
             // rebuild (rotation, or — on the legacy path — a chapter swap) while a swipe
             // animation was still in flight. Without this guard, the old coordinator's
@@ -519,6 +770,7 @@ struct PageCurlPager: UIViewControllerRepresentable {
                         self.requestTransition(to: pending, animated: false, in: pvc)
                     }
                 }
+                retryNeighborRefreshAfterTransition(in: pvc)
                 return
             }
             let fromID = shownIdentity
@@ -538,17 +790,14 @@ struct PageCurlPager: UIViewControllerRepresentable {
             // already settled for the body case.
             parent.onCommit(landedID)
             prepareVisibleNeighborhood(in: pvc)
+            retryNeighborRefreshAfterTransition(in: pvc)
             // Apply any pending programmatic target stashed during the transition.
             let pending = pendingIdentity
             pendingIdentity = nil
             if let pending,
                pending != shownIdentity,
                identity(at: parent.currentIndex) == pending {
-                ReaderDiagnostics.shared.log(.info, "pager apply pending (post-gesture)", context: [
-                    "toID": pending,
-                    "shownID": shownIdentity
-                ])
-                performTransition(to: pending, animated: false, in: pvc)
+                applyPendingTransitionAfterCallback(pending, in: pvc)
             }
         }
     }

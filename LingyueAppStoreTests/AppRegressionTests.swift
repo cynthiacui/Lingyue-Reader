@@ -344,6 +344,52 @@ final class ReadingStatsLedgerTests: XCTestCase {
 }
 
 final class ReaderPageTurnIntegrationTests: XCTestCase {
+    func testContentRevisionSeparatesSameLengthChapterCorrections() {
+        let original = ReaderContentRevision.fingerprint(title: "第一章", content: "甲乙丙丁")
+        let corrected = ReaderContentRevision.fingerprint(title: "第一章", content: "甲乙丙戊")
+
+        XCTAssertNotEqual(original, corrected)
+        XCTAssertEqual(
+            original,
+            ReaderContentRevision.fingerprint(title: "第一章", content: "甲乙丙丁")
+        )
+    }
+
+    func testFiveThousandContinuousForwardTurnsCrossEveryChapterBoundary() {
+        let chapterCount = 1_001
+        let pageCount = 5
+        var chapterIndex = 0
+        var pageIndex = 0
+        var chapterTransitions = 0
+
+        for _ in 0..<5_000 {
+            let action = ReaderPageTurnResolver.action(
+                direction: .forward,
+                currentPageIndex: pageIndex,
+                pageCount: pageCount,
+                currentChapterIndex: chapterIndex,
+                chapterCount: chapterCount,
+                usesTwoColumns: false
+            )
+            switch action {
+            case .page(let nextPageIndex):
+                pageIndex = nextPageIndex
+            case .chapter(let nextChapterIndex, let landOnLastPage):
+                XCTAssertFalse(landOnLastPage)
+                chapterIndex = nextChapterIndex
+                pageIndex = 0
+                chapterTransitions += 1
+            case .none:
+                XCTFail("Navigation stopped before the modeled end of the book")
+                return
+            }
+        }
+
+        XCTAssertEqual(chapterIndex, 1_000)
+        XCTAssertEqual(pageIndex, 0)
+        XCTAssertEqual(chapterTransitions, 1_000)
+    }
+
     func testStatsRejectWholeChapterPlaceholderAndCountBothPagesInSpread() {
         let placeholder = ReaderPageItem(
             chapterIndex: 1,
@@ -394,6 +440,109 @@ final class ReaderPageTurnIntegrationTests: XCTestCase {
         XCTAssertEqual(cache[visibleSignature], ["visible"])
         XCTAssertEqual(cache["chapter-20"], ["prefetched-20"])
         XCTAssertNil(cache["chapter-11"])
+    }
+
+    func testPaginationCachePromotesEntriesOnRead() {
+        var cache = ReaderPaginationCache(capacity: 3)
+        cache.insert(["a"], for: "a")
+        cache.insert(["b"], for: "b")
+        cache.insert(["c"], for: "c")
+
+        XCTAssertEqual(cache["a"], ["a"])
+        cache.insert(["d"], for: "d")
+
+        XCTAssertNil(cache["b"])
+        XCTAssertEqual(cache["a"], ["a"])
+        XCTAssertEqual(cache["d"], ["d"])
+    }
+
+    func testPaginationCacheProtectsCurrentNavigationWindow() {
+        var cache = ReaderPaginationCache(capacity: 3)
+        cache.insert(["previous"], for: "previous")
+        cache.insert(["current"], for: "current")
+        cache.insert(["next"], for: "next")
+
+        cache.insert(
+            ["distant"],
+            for: "distant",
+            protecting: ["current", "next"]
+        )
+
+        XCTAssertNil(cache["previous"])
+        XCTAssertEqual(cache["current"], ["current"])
+        XCTAssertEqual(cache["next"], ["next"])
+    }
+
+    func testPaginationCacheRemainsBoundedAcrossTenThousandChapterResults() {
+        let capacity = 24
+        var cache = ReaderPaginationCache(capacity: capacity)
+
+        for chapterIndex in 0..<10_000 {
+            let protected = Set((chapterIndex - 2...chapterIndex + 2).map { "chapter-\($0)" })
+            let signature = "chapter-\(chapterIndex)"
+            cache.insert(["page-\(chapterIndex)"], for: signature, protecting: protected)
+            XCTAssertLessThanOrEqual(cache.count, capacity)
+            if chapterIndex.isMultiple(of: 4) {
+                XCTAssertEqual(cache[signature], ["page-\(chapterIndex)"])
+            }
+        }
+
+        let retained = Set((9_995..<10_000).map { "chapter-\($0)" })
+        let trimmedCount = cache.retainOnly(signatures: retained)
+        let metrics = cache.metrics
+
+        XCTAssertEqual(cache.count, retained.count)
+        XCTAssertGreaterThan(trimmedCount, 0)
+        XCTAssertEqual(metrics.entries, retained.count)
+        XCTAssertEqual(metrics.hitCount, 2_500)
+        XCTAssertGreaterThan(metrics.evictionCount, 9_000)
+        XCTAssertEqual(metrics.memoryTrimmedCount, trimmedCount)
+    }
+
+    func testPaginationCacheCapacityWinsWhenEveryOldEntryIsProtected() {
+        var cache = ReaderPaginationCache(capacity: 3)
+        cache.insert(["a"], for: "a")
+        cache.insert(["b"], for: "b")
+        cache.insert(["c"], for: "c")
+        cache.insert(["d"], for: "d", protecting: ["a", "b", "c"])
+
+        XCTAssertEqual(cache.count, 3)
+        XCTAssertEqual(cache["d"], ["d"])
+        XCTAssertEqual(cache.metrics.evictionCount, 1)
+    }
+
+    func testReaderDiagnosticsSnapshotIncludesBoundedPerformanceCounters() {
+        let snapshot = ReaderStateSnapshot(
+            novelID: UUID(),
+            novelTitle: "长会话测试",
+            chapterIndex: 4,
+            totalChapters: 10,
+            chapterTitle: "第五章",
+            pageIndex: 2,
+            totalPages: 8,
+            pageSignature: "signature",
+            performance: ReaderPerformanceSnapshot(
+                paginationCacheCapacity: 24,
+                paginationCacheEntries: 5,
+                paginationCacheHits: 20,
+                paginationCacheMisses: 3,
+                paginationCacheEvictions: 7,
+                paginationCacheMemoryTrims: 2,
+                prefetchRunning: 2,
+                prefetchQueued: 1,
+                prefetchMaximumRunning: 2,
+                prefetchMaximumQueued: 3,
+                prefetchCancelled: 4
+            )
+        )
+
+        let context = snapshot.asContext()
+        XCTAssertEqual(context["pageCache"], "5/24")
+        XCTAssertEqual(context["pageCacheHitMiss"], "20/3")
+        XCTAssertEqual(context["pageCacheMemTrim"], "2")
+        XCTAssertEqual(context["prefetch"], "2/1")
+        XCTAssertEqual(context["prefetchMax"], "2/3")
+        XCTAssertEqual(context["prefetchCancel"], "4")
     }
 
     func testRenderedCurrentChapterCanTurnAfterItsCacheEntryIsEvicted() {
@@ -604,6 +753,47 @@ final class PageCurlPagerCacheTests: XCTestCase {
         XCTAssertEqual(recorder.identities.last, revisedSlots[1])
     }
 
+    func testSlotIndexUpdatesWhenPaginationReplacesTheSlotWindow() {
+        let recorder = PagerRenderRecorder()
+        let coordinator = PageCurlPager.Coordinator(
+            makePager(slots: ["old-0", "old-1"], currentIndex: 0, recorder: recorder)
+        )
+
+        XCTAssertEqual(coordinator.slotIndex(of: "old-1"), 1)
+
+        coordinator.parent = makePager(
+            slots: ["new-0", "new-1", "new-2"],
+            currentIndex: 1,
+            recorder: recorder
+        )
+
+        XCTAssertNil(coordinator.slotIndex(of: "old-1"))
+        XCTAssertEqual(coordinator.slotIndex(of: "new-2"), 2)
+    }
+
+    func testFiveThousandPageIdentityLookupsRemainExactAfterRebase() {
+        let recorder = PagerRenderRecorder()
+        let slots = (0..<5_000).map { "chapter-page-\($0)" }
+        let coordinator = PageCurlPager.Coordinator(
+            makePager(slots: slots, currentIndex: 0, recorder: recorder)
+        )
+
+        for (index, identity) in slots.enumerated() {
+            XCTAssertEqual(coordinator.slotIndex(of: identity), index)
+        }
+
+        let rebasedSlots = slots.reversed()
+        coordinator.parent = makePager(
+            slots: Array(rebasedSlots),
+            currentIndex: 0,
+            recorder: recorder
+        )
+        for (index, identity) in rebasedSlots.enumerated() {
+            XCTAssertEqual(coordinator.slotIndex(of: identity), index)
+        }
+        XCTAssertNil(coordinator.slotIndex(of: "stale-page"))
+    }
+
     func testSlotRefreshKeepsGestureTargetIdentifiableUntilLanding() throws {
         let recorder = PagerRenderRecorder()
         let slots = ["0-0-layout", "0-1-layout"]
@@ -636,6 +826,135 @@ final class PageCurlPagerCacheTests: XCTestCase {
 
         XCTAssertEqual(coordinator.shownIdentity, slots[1])
         XCTAssertNil(coordinator.gestureTargetIdentity)
+    }
+
+    func testSlotChangeDuringGestureDefersAndRetriesNeighborRefresh() throws {
+        let recorder = PagerRenderRecorder()
+        let currentID = "0-0-layout"
+        let nextID = "1-0-layout"
+        let coordinator = PageCurlPager.Coordinator(
+            makePager(slots: [currentID], currentIndex: 0, recorder: recorder)
+        )
+        let pager = UIPageViewController(
+            transitionStyle: .scroll,
+            navigationOrientation: .horizontal
+        )
+        let current = try XCTUnwrap(coordinator.host(for: currentID))
+        pager.setViewControllers([current], direction: .forward, animated: false)
+
+        // This is the long-session race: prefetch adds the next chapter's bookend
+        // while UIKit is resolving a page gesture. Refreshing the pager at this point
+        // is unsafe, but forgetting the refresh makes UIKit cache "no next page".
+        coordinator.gestureInFlight = true
+        coordinator.parent = makePager(
+            slots: [currentID, nextID],
+            currentIndex: 0,
+            recorder: recorder
+        )
+
+        XCTAssertTrue(coordinator.refreshCachedRenders())
+        XCTAssertTrue(coordinator.needsNeighborRefresh)
+        XCTAssertFalse(coordinator.refreshNeighborsIfNeeded(in: pager))
+        XCTAssertTrue(coordinator.needsNeighborRefresh)
+
+        coordinator.gestureInFlight = false
+
+        XCTAssertTrue(coordinator.refreshNeighborsIfNeeded(in: pager))
+        XCTAssertFalse(coordinator.needsNeighborRefresh)
+        XCTAssertNotNil(coordinator.pageViewController(pager, viewControllerAfter: current))
+    }
+
+    func testCancelledGestureAutomaticallyAppliesDeferredNeighborRefresh() async throws {
+        let recorder = PagerRenderRecorder()
+        let slots = ["0-0-layout", "0-1-layout"]
+        let coordinator = PageCurlPager.Coordinator(
+            makePager(slots: slots, currentIndex: 0, recorder: recorder)
+        )
+        let pager = UIPageViewController(
+            transitionStyle: .scroll,
+            navigationOrientation: .horizontal
+        )
+        let current = try XCTUnwrap(coordinator.host(for: slots[0]))
+        let gestureTarget = try XCTUnwrap(coordinator.host(for: slots[1]))
+        pager.setViewControllers([current], direction: .forward, animated: false)
+
+        coordinator.pageViewController(pager, willTransitionTo: [gestureTarget])
+        coordinator.parent = makePager(
+            slots: slots + ["1-0-bookend"],
+            currentIndex: 0,
+            recorder: recorder
+        )
+        XCTAssertTrue(coordinator.refreshCachedRenders())
+        XCTAssertTrue(coordinator.needsNeighborRefresh)
+
+        coordinator.pageViewController(
+            pager,
+            didFinishAnimating: true,
+            previousViewControllers: [current],
+            transitionCompleted: false
+        )
+        try await Task.sleep(for: .milliseconds(30))
+
+        XCTAssertFalse(coordinator.needsNeighborRefresh)
+        XCTAssertFalse(coordinator.gestureInFlight)
+    }
+
+    func testMissingGestureCallbackSelfHeals() async throws {
+        let recorder = PagerRenderRecorder()
+        let slots = ["0-0-layout", "0-1-layout"]
+        let coordinator = PageCurlPager.Coordinator(
+            makePager(slots: slots, currentIndex: 0, recorder: recorder),
+            transitionWatchdogDelay: 0.01
+        )
+        let pager = UIPageViewController(
+            transitionStyle: .scroll,
+            navigationOrientation: .horizontal
+        )
+        let current = try XCTUnwrap(coordinator.host(for: slots[0]))
+        let gestureTarget = try XCTUnwrap(coordinator.host(for: slots[1]))
+        pager.setViewControllers([current], direction: .forward, animated: false)
+
+        // Intentionally omit didFinishAnimating to model a UIKit callback lost to an
+        // interruption/background transition. The watchdog must not poison the session.
+        coordinator.pageViewController(pager, willTransitionTo: [gestureTarget])
+        XCTAssertTrue(coordinator.gestureInFlight)
+
+        try await Task.sleep(for: .milliseconds(50))
+
+        XCTAssertFalse(coordinator.gestureInFlight)
+        XCTAssertEqual(coordinator.shownIdentity, slots[0])
+    }
+
+    func testHostCacheStaysBoundedAcrossVeryLongChapter() throws {
+        let recorder = PagerRenderRecorder()
+        let slots = (0..<250).map { "0-\($0)-layout" }
+        let coordinator = PageCurlPager.Coordinator(
+            makePager(slots: slots, currentIndex: 0, recorder: recorder)
+        )
+        let pager = UIPageViewController(
+            transitionStyle: .scroll,
+            navigationOrientation: .horizontal
+        )
+        let firstHost = try XCTUnwrap(coordinator.host(for: slots[0]))
+        pager.setViewControllers([firstHost], direction: .forward, animated: false)
+
+        for index in slots.indices {
+            coordinator.parent = makePager(
+                slots: slots,
+                currentIndex: index,
+                recorder: recorder
+            )
+            coordinator.shownIdentity = slots[index]
+            XCTAssertNotNil(coordinator.host(for: slots[index]))
+            coordinator.prepareVisibleNeighborhood(in: pager)
+        }
+
+        XCTAssertLessThanOrEqual(coordinator.cachedHostCount, 9)
+        XCTAssertNotNil(
+            coordinator.pageViewController(pager, viewControllerAfter: firstHost),
+            "An evicted controller retained by UIKit must still identify itself in O(1)"
+        )
+        XCTAssertLessThanOrEqual(coordinator.cachedHostCount, 9)
     }
 
     private func makePager(
@@ -673,6 +992,124 @@ private func renderedPNG(of view: UIView) -> Data? {
             view.layer.render(in: context.cgContext)
         }
         .pngData()
+}
+
+@MainActor
+final class ReaderPrefetchSchedulerTests: XCTestCase {
+    func testSchedulerNeverExceedsConfiguredConcurrency() async throws {
+        let scheduler = ReaderPrefetchScheduler(maxConcurrentJobs: 2)
+        var active = 0
+        var maximumActive = 0
+        var completed = 0
+
+        let jobs = (0..<6).map { index in
+            ReaderPrefetchScheduler.Job(id: "chapter-\(index)") { ticket in
+                active += 1
+                maximumActive = max(maximumActive, active)
+                try? await Task.sleep(for: .milliseconds(20))
+                ticket.commit { completed += 1 }
+                active -= 1
+            }
+        }
+
+        scheduler.replaceDesiredJobs(jobs)
+        try await waitForPrefetchScheduler(scheduler)
+
+        XCTAssertEqual(maximumActive, 2)
+        XCTAssertEqual(completed, jobs.count)
+        XCTAssertTrue(scheduler.isIdle)
+    }
+
+    func testReplacingWindowRejectsStaleJobCommit() async throws {
+        let scheduler = ReaderPrefetchScheduler(maxConcurrentJobs: 1)
+        var committed: [String] = []
+
+        scheduler.replaceDesiredJobs([
+            ReaderPrefetchScheduler.Job(id: "old") { ticket in
+                try? await Task.sleep(for: .milliseconds(50))
+                ticket.commit { committed.append("old") }
+            }
+        ])
+        await Task.yield()
+        scheduler.replaceDesiredJobs([
+            ReaderPrefetchScheduler.Job(id: "new") { ticket in
+                ticket.commit { committed.append("new") }
+            }
+        ])
+
+        try await waitForPrefetchScheduler(scheduler)
+
+        XCTAssertEqual(committed, ["new"])
+    }
+
+    func testFiveHundredRapidWindowReplacementsStayBoundedAndRejectStaleCommits() async throws {
+        let scheduler = ReaderPrefetchScheduler(maxConcurrentJobs: 2)
+        var currentGeneration = -1
+        var staleCommitCount = 0
+        var finalCommits: Set<String> = []
+
+        for generation in 0..<500 {
+            currentGeneration = generation
+            let jobs = (0..<3).map { offset in
+                ReaderPrefetchScheduler.Job(id: "\(generation)-\(offset)") { ticket in
+                    try? await Task.sleep(for: .milliseconds(2))
+                    ticket.commit {
+                        if generation != currentGeneration {
+                            staleCommitCount += 1
+                        }
+                        if generation == 499 {
+                            finalCommits.insert("\(generation)-\(offset)")
+                        }
+                    }
+                }
+            }
+            scheduler.replaceDesiredJobs(jobs)
+            if generation.isMultiple(of: 20) {
+                await Task.yield()
+            }
+        }
+
+        try await waitForPrefetchScheduler(scheduler, timeoutIterations: 300)
+        let metrics = scheduler.metrics
+
+        XCTAssertEqual(staleCommitCount, 0)
+        XCTAssertEqual(finalCommits, ["499-0", "499-1", "499-2"])
+        XCTAssertLessThanOrEqual(metrics.maximumRunning, metrics.concurrencyLimit)
+        XCTAssertLessThanOrEqual(metrics.maximumQueued, 3)
+        XCTAssertGreaterThan(metrics.cancelled, 0)
+        XCTAssertEqual(metrics.running, 0)
+        XCTAssertEqual(metrics.queued, 0)
+    }
+
+    func testCancelAllRejectsInFlightCommitAndRecordsCancellation() async throws {
+        let scheduler = ReaderPrefetchScheduler(maxConcurrentJobs: 1)
+        var committed = false
+
+        scheduler.replaceDesiredJobs([
+            ReaderPrefetchScheduler.Job(id: "memory-pressure") { ticket in
+                try? await Task.sleep(for: .milliseconds(20))
+                ticket.commit { committed = true }
+            }
+        ])
+        await Task.yield()
+        scheduler.cancelAll()
+        try await waitForPrefetchScheduler(scheduler)
+
+        XCTAssertFalse(committed)
+        XCTAssertEqual(scheduler.metrics.cancelled, 1)
+        XCTAssertTrue(scheduler.isIdle)
+    }
+
+    private func waitForPrefetchScheduler(
+        _ scheduler: ReaderPrefetchScheduler,
+        timeoutIterations: Int = 100
+    ) async throws {
+        for _ in 0..<timeoutIterations {
+            if scheduler.isIdle { return }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTFail("Prefetch scheduler did not become idle")
+    }
 }
 
 @MainActor

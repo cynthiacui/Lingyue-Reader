@@ -60,56 +60,6 @@ enum ReaderPageAvailability {
     }
 }
 
-/// Small, age-ordered pagination cache. Dictionary iteration order is deliberately
-/// unspecified, so using `keys.first` for eviction can repeatedly discard a chapter
-/// that is still being read while retaining much older entries. Keeping an explicit
-/// order makes eviction stable across a long reading session and lets callers pin the
-/// visible chapter while prefetch adds surrounding chapters.
-struct ReaderPaginationCache {
-    private let capacity: Int
-    private var pagesBySignature: [String: [String]] = [:]
-    private var insertionOrder: [String] = []
-
-    init(capacity: Int) {
-        self.capacity = max(capacity, 1)
-    }
-
-    subscript(signature: String) -> [String]? {
-        pagesBySignature[signature]
-    }
-
-    var count: Int { pagesBySignature.count }
-
-    mutating func insert(
-        _ pages: [String],
-        for signature: String,
-        protecting protectedSignatures: Set<String> = []
-    ) {
-        pagesBySignature[signature] = pages
-        insertionOrder.removeAll { $0 == signature }
-        insertionOrder.append(signature)
-
-        let protected = protectedSignatures.union([signature])
-        while pagesBySignature.count > capacity {
-            guard let staleIndex = insertionOrder.firstIndex(where: {
-                pagesBySignature[$0] != nil && !protected.contains($0)
-            }) else {
-                // This can only occur when the caller protects more entries than the
-                // configured capacity. Retaining those entries is safer than evicting
-                // a live page and the excess resolves on a later unprotected insertion.
-                break
-            }
-            let staleSignature = insertionOrder.remove(at: staleIndex)
-            pagesBySignature[staleSignature] = nil
-        }
-    }
-
-    mutating func removeAll() {
-        pagesBySignature.removeAll()
-        insertionOrder.removeAll()
-    }
-}
-
 struct ReaderView: View {
     let novel: Novel
 
@@ -120,6 +70,10 @@ struct ReaderView: View {
     /// reader's follow-system-dark logic so 夜读 auto-activates from the OS
     /// setting regardless of which app theme is selected.
     @StateObject private var systemAppearance = SystemAppearance()
+    @StateObject private var navigationState = ReaderNavigationState()
+    @StateObject private var chapterRepository = ReaderChapterRepository()
+    @StateObject private var paginationCoordinator = ReaderPaginationCoordinator()
+    @StateObject private var prefetchScheduler = ReaderPrefetchScheduler(maxConcurrentJobs: 2)
     /// Live window safe-area insets, read from the active key window. Used to clear the
     /// landscape Dynamic Island / notch / iPad rounded-corner safe area, which the
     /// outer `.ignoresSafeArea()` zeroes out of `proxy.safeAreaInsets`.
@@ -149,10 +103,6 @@ struct ReaderView: View {
     /// launches so the popup never reappears after the first read.
     @AppStorage("reader.hasSeenHelpOverlay") private var hasSeenReaderHelpOverlay = false
 
-    @State private var currentChapterIndex = 0
-    @State private var currentChapterPageIndex = 0
-    @State private var visiblePages: [ReaderPageItem] = []
-    @State private var visiblePageSignature: String?
     @State private var showControls = false
     @State private var showChapterPicker = false
     @State private var showPreferences = false
@@ -160,24 +110,6 @@ struct ReaderView: View {
     /// exclusive with `showPreferences` and `showChapterPicker` — opening any one closes
     /// the others.
     @State private var showBrightness = false
-    @State private var didSetInitialPage = false
-    @State private var loadedChapterOverrides: [String: NovelChapter] = [:]
-    @State private var loadingChapterKeys: Set<String> = []
-    @State private var chapterLoadErrors: [String: String] = [:]
-    @State private var repairedNovel: Novel?
-    @State private var isRepairingCatalog = false
-    @State private var catalogRepairError: String?
-    @State private var lastPersistedReadingState: String?
-    @State private var pendingRestoreChapterKey: String?
-    @State private var pendingRestoreChapterPageIndex: Int?
-    @State private var prefetchingChapterKeys: Set<String> = []
-    @State private var downloadedChapterKeys: Set<String> = []
-    @State private var shouldJumpToLastPageAfterPagination = false
-    /// Cache of paginated page contents keyed by paginationSignature. Lets revisits to a
-    /// chapter (and visits to chapters pre-paginated by the prefetch loop) skip the async
-    /// pagination step entirely so the reader doesn't flash a placeholder.
-    @State private var paginationCache = ReaderPaginationCache(capacity: 24)
-    @State private var lastKnownTextSize: CGSize = .zero
     /// Most recent container size observed by the body. Used by `useTwoColumn` and by tap-zone /
     /// auto-scroll code that runs outside a render pass and otherwise has no access to the
     /// container width. Zero until the first GeometryReader pass settles.
@@ -210,7 +142,6 @@ struct ReaderView: View {
     /// bookend landing to preserve its live host, but reusing that same coordinator for
     /// an instant/fallback chapter jump lets an old gesture or cached page from the
     /// previous chapter write back after the jump.
-    @State private var pagerNavigationVersion = 0
     /// Max-seen safe-area top/bottom insets. Toggling `.statusBarHidden(!showControls)`
     /// shrinks `safeAreaInsets.top` on devices where the status bar contributes to the
     /// inset (older iPhones, iPad in some configs), which would otherwise reflow the page
@@ -222,7 +153,6 @@ struct ReaderView: View {
     /// Page index at the moment a slide/pageCurl drag begins, so we know whether the user
     /// started the swipe at a chapter boundary. By `.onEnded` time UIPageViewController may
     /// have already committed an in-chapter turn and mutated `currentChapterPageIndex`.
-    @State private var boundarySwipeStartPageIndex: Int?
     init(novel: Novel) {
         self.novel = novel
         // Seed stabilized insets from the active key window *before* the first body
@@ -234,6 +164,117 @@ struct ReaderView: View {
         let insets = Self.currentKeyWindowSafeAreaInsets()
         _stableSafeAreaTop = State(initialValue: insets.top)
         _stableSafeAreaBottom = State(initialValue: insets.bottom)
+    }
+
+    // MARK: Session state façades
+
+    // Keeping the existing names makes this migration behavior-preserving while moving
+    // ownership out of the 3,000+ line view. The next extractions can move methods behind
+    // these same seams without changing pager/render call sites again.
+    private var currentChapterIndex: Int {
+        get { navigationState.chapterIndex }
+        nonmutating set { navigationState.chapterIndex = newValue }
+    }
+
+    private var currentChapterPageIndex: Int {
+        get { navigationState.chapterPageIndex }
+        nonmutating set { navigationState.chapterPageIndex = newValue }
+    }
+
+    private var currentChapterPageIndexBinding: Binding<Int> {
+        Binding(
+            get: { navigationState.chapterPageIndex },
+            set: { navigationState.chapterPageIndex = $0 }
+        )
+    }
+
+    private var didSetInitialPage: Bool {
+        get { navigationState.didSetInitialPage }
+        nonmutating set { navigationState.didSetInitialPage = newValue }
+    }
+
+    private var lastPersistedReadingState: String? {
+        get { navigationState.lastPersistedReadingState }
+        nonmutating set { navigationState.lastPersistedReadingState = newValue }
+    }
+
+    private var pendingRestoreChapterKey: String? {
+        get { navigationState.pendingRestoreChapterKey }
+        nonmutating set { navigationState.pendingRestoreChapterKey = newValue }
+    }
+
+    private var pendingRestoreChapterPageIndex: Int? {
+        get { navigationState.pendingRestoreChapterPageIndex }
+        nonmutating set { navigationState.pendingRestoreChapterPageIndex = newValue }
+    }
+
+    private var pagerNavigationVersion: Int {
+        get { navigationState.pagerVersion }
+        nonmutating set { navigationState.pagerVersion = newValue }
+    }
+
+    private var boundarySwipeStartPageIndex: Int? {
+        get { navigationState.boundarySwipeStartPageIndex }
+        nonmutating set { navigationState.boundarySwipeStartPageIndex = newValue }
+    }
+
+    private var loadedChapterOverrides: [String: NovelChapter] {
+        get { chapterRepository.loadedOverrides }
+        nonmutating set { chapterRepository.loadedOverrides = newValue }
+    }
+
+    private var loadingChapterKeys: Set<String> {
+        get { chapterRepository.loadingKeys }
+        nonmutating set { chapterRepository.loadingKeys = newValue }
+    }
+
+    private var chapterLoadErrors: [String: String] {
+        get { chapterRepository.loadErrors }
+        nonmutating set { chapterRepository.loadErrors = newValue }
+    }
+
+    private var downloadedChapterKeys: Set<String> {
+        get { chapterRepository.downloadedKeys }
+        nonmutating set { chapterRepository.downloadedKeys = newValue }
+    }
+
+    private var repairedNovel: Novel? {
+        get { chapterRepository.repairedNovel }
+        nonmutating set { chapterRepository.repairedNovel = newValue }
+    }
+
+    private var isRepairingCatalog: Bool {
+        get { chapterRepository.isRepairingCatalog }
+        nonmutating set { chapterRepository.isRepairingCatalog = newValue }
+    }
+
+    private var catalogRepairError: String? {
+        get { chapterRepository.catalogRepairError }
+        nonmutating set { chapterRepository.catalogRepairError = newValue }
+    }
+
+    private var visiblePages: [ReaderPageItem] {
+        get { paginationCoordinator.visiblePages }
+        nonmutating set { paginationCoordinator.visiblePages = newValue }
+    }
+
+    private var visiblePageSignature: String? {
+        get { paginationCoordinator.visibleSignature }
+        nonmutating set { paginationCoordinator.visibleSignature = newValue }
+    }
+
+    private var lastKnownTextSize: CGSize {
+        get { paginationCoordinator.lastTextSize }
+        nonmutating set { paginationCoordinator.lastTextSize = newValue }
+    }
+
+    private var shouldJumpToLastPageAfterPagination: Bool {
+        get { paginationCoordinator.shouldJumpToLastPage }
+        nonmutating set { paginationCoordinator.shouldJumpToLastPage = newValue }
+    }
+
+    private var contentRevisions: ReaderContentRevisionStore {
+        paginationCoordinator.contentRevisions
     }
 
     private static func currentKeyWindowSafeAreaInsets() -> UIEdgeInsets {
@@ -271,7 +312,9 @@ struct ReaderView: View {
     /// Snapshot of "where the user is" for the diagnostics log. Reads from the
     /// reader's @State, so callers must be on the main actor.
     private var diagnosticsSnapshot: ReaderStateSnapshot {
-        ReaderStateSnapshot(
+        let cacheMetrics = paginationCoordinator.cacheMetrics
+        let prefetchMetrics = prefetchScheduler.metrics
+        return ReaderStateSnapshot(
             novelID: activeNovel.id,
             novelTitle: activeNovel.title,
             chapterIndex: currentChapterIndex,
@@ -279,7 +322,20 @@ struct ReaderView: View {
             chapterTitle: currentChapter.map { displayed($0.title) } ?? "",
             pageIndex: currentChapterPageIndex,
             totalPages: visiblePages.count,
-            pageSignature: visiblePageSignature
+            pageSignature: visiblePageSignature,
+            performance: ReaderPerformanceSnapshot(
+                paginationCacheCapacity: cacheMetrics.capacity,
+                paginationCacheEntries: cacheMetrics.entries,
+                paginationCacheHits: cacheMetrics.hitCount,
+                paginationCacheMisses: cacheMetrics.missCount,
+                paginationCacheEvictions: cacheMetrics.evictionCount,
+                paginationCacheMemoryTrims: cacheMetrics.memoryTrimmedCount,
+                prefetchRunning: prefetchMetrics.running,
+                prefetchQueued: prefetchMetrics.queued,
+                prefetchMaximumRunning: prefetchMetrics.maximumRunning,
+                prefetchMaximumQueued: prefetchMetrics.maximumQueued,
+                prefetchCancelled: prefetchMetrics.cancelled
+            )
         )
     }
 
@@ -382,6 +438,7 @@ struct ReaderView: View {
             )
             let textSize = readerTextSize(containerSize: proxy.size, safeAreaInsets: stableInsets)
             let pageSignature = paginationSignature(textSize: textSize)
+            let prefetchPlanSignature = prefetchPlanSignature(textSize: textSize)
             let cachedPages = cachedPageItems(forChapterIndex: currentChapterIndex, textSize: textSize)
             let pages = cachedPages ?? activeVisiblePages()
             let allowsForwardChapterTurn = ReaderPageAvailability.allowsForwardChapterTurn(
@@ -530,25 +587,46 @@ struct ReaderView: View {
                 ratchetStableSafeAreaInsets(top: nil, bottom: newValue)
             }
             .onDisappear {
+                stopAutoScroll()
+                prefetchScheduler.cancelAll()
                 ReaderDiagnostics.shared.log(.lifecycle, "ReaderView onDisappear", context: [
                     "ch": String(currentChapterIndex),
                     "page": String(currentChapterPageIndex)
                 ])
+                ReaderDiagnostics.shared.snapshot(diagnosticsSnapshot)
                 ReaderDiagnostics.shared.flushNow()
                 persistReadingState(pages: pages, force: true)
-                stopAutoScroll()
             }
             .onChange(of: scenePhase) { _, newPhase in
-                guard newPhase != .active else { return }
+                if newPhase == .active {
+                    updatePrefetchWindow(around: currentChapterIndex, textSize: textSize)
+                    return
+                }
+                prefetchScheduler.cancelAll()
                 ReaderDiagnostics.shared.log(.lifecycle, "scenePhase change", context: [
                     "phase": String(describing: newPhase),
                     "ch": String(currentChapterIndex),
                     "page": String(currentChapterPageIndex)
                 ])
+                ReaderDiagnostics.shared.snapshot(diagnosticsSnapshot)
                 persistReadingState(pages: pages, force: true)
                 if newPhase == .background {
                     Task { await libraryStore.flush() }
                 }
+            }
+            .onReceive(NotificationCenter.default.publisher(
+                for: UIApplication.didReceiveMemoryWarningNotification
+            )) { _ in
+                prefetchScheduler.cancelAll()
+                let removedCount = paginationCoordinator.handleMemoryPressure(
+                    protecting: protectedPaginationSignatures()
+                )
+                ReaderDiagnostics.shared.log(.memoryWarning, "reader caches trimmed", context: [
+                    "removedPageEntries": String(removedCount),
+                    "retainedPageEntries": String(paginationCoordinator.cacheCount)
+                ])
+                ReaderDiagnostics.shared.snapshot(diagnosticsSnapshot)
+                ReaderDiagnostics.shared.flushNow()
             }
             .onChange(of: textSize) { _, newValue in
                 if newValue.width > 0, newValue.height > 0 {
@@ -608,6 +686,9 @@ struct ReaderView: View {
             .task(id: currentChapterIndex) {
                 persistReadingState(pages: activeVisiblePages())
                 await prepareChapter(at: currentChapterIndex)
+            }
+            .task(id: prefetchPlanSignature) {
+                updatePrefetchWindow(around: currentChapterIndex, textSize: textSize)
             }
             .task {
                 await repairCatalogIfNeeded()
@@ -1065,10 +1146,10 @@ struct ReaderView: View {
         let signature = paginationSignature(
             chapterIndex: index,
             chapter: chapter,
-            contentLength: chapter.content.count,
             textSize: textSize
         )
-        guard let cached = paginationCache[signature], !cached.isEmpty else { return nil }
+        guard let cached = paginationCoordinator.cachedPages(for: signature),
+              !cached.isEmpty else { return nil }
         return pageItems(
             from: cached,
             chapterIndex: index,
@@ -1201,7 +1282,7 @@ struct ReaderView: View {
                 set: { newSpread in currentChapterPageIndex = newSpread * 2 }
             )
         } else {
-            pagerBinding = $currentChapterPageIndex
+            pagerBinding = currentChapterPageIndexBinding
         }
 
         // Commit a bookend landing by re-basing onto the neighbor chapter. `item.pageIndex`
@@ -2537,7 +2618,6 @@ struct ReaderView: View {
         return paginationSignature(
             chapterIndex: currentChapterIndex,
             chapter: chapter,
-            contentLength: chapter?.content.count ?? 0,
             textSize: textSize
         )
     }
@@ -2545,10 +2625,12 @@ struct ReaderView: View {
     private func paginationSignature(
         chapterIndex: Int,
         chapter: NovelChapter?,
-        contentLength: Int,
         textSize: CGSize
     ) -> String {
         let chapterKey = chapter.map(chapterCacheKey) ?? "\(chapterIndex)"
+        let contentRevision = chapter.map {
+            contentRevisions.revision(for: $0, key: chapterKey)
+        } ?? "none"
         let loadState = loadingChapterKeys.contains(chapterKey) ? "loading" : "idle"
         let errorState = chapterLoadErrors[chapterKey] ?? ""
         let width = Int(textSize.width.rounded())
@@ -2556,7 +2638,7 @@ struct ReaderView: View {
         return [
             "\(chapterIndex)",
             chapterKey,
-            "\(contentLength)",
+            contentRevision,
             loadState,
             errorState,
             "\(width)x\(height)",
@@ -2583,7 +2665,7 @@ struct ReaderView: View {
         // Cache hit: apply paginated pages synchronously so the reader doesn't flash a
         // placeholder while waiting on Task.detached. Covers revisits and chapters that the
         // prefetch loop has already pre-paginated for the current settings.
-        if let cached = paginationCache[signature], !cached.isEmpty {
+        if let cached = paginationCoordinator.cachedPages(for: signature), !cached.isEmpty {
             ReaderDiagnostics.shared.log(.paginationEnd, "cache hit", context: [
                 "ch": String(chapterIndex),
                 "pages": String(cached.count),
@@ -2686,15 +2768,32 @@ struct ReaderView: View {
 
     @MainActor
     private func rememberPaginatedPages(_ pages: [String], for signature: String) {
-        // Prefetch runs concurrently with reading. Pin the visible signature so a
-        // background insert cannot make the rendered last page look like an unready
-        // placeholder and disable its chapter boundaries for the rest of the session.
-        let protectedSignatures = Set([visiblePageSignature].compactMap { $0 })
-        paginationCache.insert(
+        paginationCoordinator.storePages(
             pages,
             for: signature,
-            protecting: protectedSignatures
+            protecting: protectedPaginationSignatures()
         )
+    }
+
+    /// Keep the current chapter and a two-chapter radius resident. Those are the only
+    /// entries that can become the pager's immediate body/bookend pages; distant prefetch
+    /// results are always the first eviction candidates.
+    private func protectedPaginationSignatures() -> Set<String> {
+        var protected = Set([visiblePageSignature].compactMap { $0 })
+        let textSize = lastKnownTextSize
+        guard textSize.width > 0, textSize.height > 0 else { return protected }
+
+        for chapterIndex in (currentChapterIndex - 2)...(currentChapterIndex + 2) {
+            guard baseChapters.indices.contains(chapterIndex) else { continue }
+            let baseChapter = baseChapters[chapterIndex]
+            let chapter = loadedChapterOverrides[chapterCacheKey(baseChapter)] ?? baseChapter
+            protected.insert(paginationSignature(
+                chapterIndex: chapterIndex,
+                chapter: chapter,
+                textSize: textSize
+            ))
+        }
+        return protected
     }
 
     @MainActor
@@ -2769,7 +2868,6 @@ struct ReaderView: View {
     private func prepareChapter(at index: Int) async {
         guard baseChapters.indices.contains(index) else { return }
         await loadCachedChapterIfAvailable(at: index)
-        prefetchUpcomingChapters(after: index)
         await loadChapterIfNeeded(at: index)
     }
 
@@ -2793,15 +2891,40 @@ struct ReaderView: View {
     }
 
     @MainActor
-    private func prefetchUpcomingChapters(after index: Int) {
-        guard cacheEnabled else { return }
+    private func prefetchPlanSignature(textSize: CGSize) -> String {
+        [
+            cacheEnabled ? "enabled" : "disabled",
+            String(currentChapterIndex),
+            "\(Int(textSize.width.rounded()))x\(Int(textSize.height.rounded()))",
+            "\(fontSize)",
+            "\(lineSpacing)",
+            "\(paragraphSpacingMultiplier)",
+            fontFamilyRaw,
+            usesTraditionalChinese ? "traditional" : "simplified"
+        ].joined(separator: "|")
+    }
+
+    @MainActor
+    private func updatePrefetchWindow(around index: Int, textSize: CGSize) {
+        guard cacheEnabled, textSize.width > 0, textSize.height > 0 else {
+            prefetchScheduler.cancelAll()
+            return
+        }
 
         // Next 2 chapters (forward reading) plus the previous chapter. The previous one is
         // what makes the continuous *backward* turn's leading bookend land — without it the
         // prior chapter is rarely paginated in `paginationCache` after a jump or relaunch.
-        for offset in [1, 2, -1] {
-            prefetchChapterContent(at: index + offset)
+        let layoutRevision = prefetchPlanSignature(textSize: textSize)
+        let jobs = [1, -1, 2].compactMap { offset -> ReaderPrefetchScheduler.Job? in
+            let chapterIndex = index + offset
+            guard baseChapters.indices.contains(chapterIndex) else { return nil }
+            let chapter = baseChapters[chapterIndex]
+            let key = chapterCacheKey(chapter)
+            return ReaderPrefetchScheduler.Job(id: "\(key)|\(layoutRevision)") { ticket in
+                await prefetchChapterContent(at: chapterIndex, ticket: ticket)
+            }
         }
+        prefetchScheduler.replaceDesiredJobs(jobs)
     }
 
     /// Ensure a neighbor chapter is pre-paginated into `paginationCache` so the continuous
@@ -2813,8 +2936,12 @@ struct ReaderView: View {
     /// `prePaginate` itself is a no-op when the signature is already cached, so repeated calls
     /// are cheap.
     @MainActor
-    private func prefetchChapterContent(at chapterIndex: Int) {
-        guard cacheEnabled, baseChapters.indices.contains(chapterIndex) else { return }
+    private func prefetchChapterContent(
+        at chapterIndex: Int,
+        ticket: ReaderPrefetchTicket
+    ) async {
+        guard ticket.isValid, !Task.isCancelled,
+              cacheEnabled, baseChapters.indices.contains(chapterIndex) else { return }
 
         let chapter = baseChapters[chapterIndex]
         let key = chapterCacheKey(chapter)
@@ -2823,48 +2950,60 @@ struct ReaderView: View {
 
         // Local or already-loaded: pre-paginate without any network fetch.
         if hasInlineContent {
-            Task { await prePaginate(chapter: resolved, originalChapter: chapter, chapterIndex: chapterIndex) }
+            await prePaginate(
+                chapter: resolved,
+                originalChapter: chapter,
+                chapterIndex: chapterIndex,
+                ticket: ticket
+            )
             return
         }
 
         // Remote + not loaded: fetch, then pre-paginate.
         guard chapter.sourceURLString != nil,
               loadedChapterOverrides[key] == nil,
-              !loadingChapterKeys.contains(key),
-              !prefetchingChapterKeys.contains(key) else {
+              !loadingChapterKeys.contains(key) else {
             return
         }
 
-        prefetchingChapterKeys.insert(key)
         ReaderDiagnostics.shared.log(.taskStart, "chapter prefetch", context: [
             "ch": String(chapterIndex),
             "key": String(key.prefix(16))
         ])
-        Task {
-            let start = Date()
-            do {
-                let loadedChapter = try await ChapterContentCache.shared.chapter(for: chapter)
-                let merged = mergedOverride(loaded: loadedChapter, matching: chapter)
-                await MainActor.run {
+        let start = Date()
+        do {
+            let loadedChapter = try await ChapterContentCache.shared.chapter(for: chapter)
+            guard ticket.isValid, !Task.isCancelled else {
+                ReaderDiagnostics.shared.log(.taskCancel, "chapter prefetch stale", context: [
+                    "ch": String(chapterIndex)
+                ])
+                return
+            }
+            let merged = mergedOverride(loaded: loadedChapter, matching: chapter)
+            guard ticket.commit({
                     loadedChapterOverrides[key] = merged
                     downloadedChapterKeys.insert(key)
-                    _ = prefetchingChapterKeys.remove(key)
-                }
-                await prePaginate(chapter: merged, originalChapter: chapter, chapterIndex: chapterIndex)
-                ReaderDiagnostics.shared.log(.taskEnd, "chapter prefetch", context: [
-                    "ch": String(chapterIndex),
-                    "durMs": String(Int(Date().timeIntervalSince(start) * 1000))
-                ])
-            } catch {
-                await MainActor.run {
-                    _ = prefetchingChapterKeys.remove(key)
-                }
-                ReaderDiagnostics.shared.log(.taskEnd, "chapter prefetch failed", context: [
-                    "ch": String(chapterIndex),
-                    "durMs": String(Int(Date().timeIntervalSince(start) * 1000)),
-                    "err": String(describing: error).prefix(80).description
-                ])
-            }
+            }) else { return }
+            await prePaginate(
+                chapter: merged,
+                originalChapter: chapter,
+                chapterIndex: chapterIndex,
+                ticket: ticket
+            )
+            ReaderDiagnostics.shared.log(.taskEnd, "chapter prefetch", context: [
+                "ch": String(chapterIndex),
+                "durMs": String(Int(Date().timeIntervalSince(start) * 1000))
+            ])
+        } catch is CancellationError {
+            ReaderDiagnostics.shared.log(.taskCancel, "chapter prefetch cancelled", context: [
+                "ch": String(chapterIndex)
+            ])
+        } catch {
+            ReaderDiagnostics.shared.log(.taskEnd, "chapter prefetch failed", context: [
+                "ch": String(chapterIndex),
+                "durMs": String(Int(Date().timeIntervalSince(start) * 1000)),
+                "err": String(describing: error).prefix(80).description
+            ])
         }
     }
 
@@ -2873,7 +3012,13 @@ struct ReaderView: View {
     /// navigates to this chapter and the signature matches, the visible-pages rebuild becomes
     /// a synchronous cache hit — no placeholder flash.
     @MainActor
-    private func prePaginate(chapter: NovelChapter, originalChapter: NovelChapter, chapterIndex: Int) async {
+    private func prePaginate(
+        chapter: NovelChapter,
+        originalChapter: NovelChapter,
+        chapterIndex: Int,
+        ticket: ReaderPrefetchTicket
+    ) async {
+        guard ticket.isValid, !Task.isCancelled else { return }
         let textSize = lastKnownTextSize
         guard textSize.width > 0, textSize.height > 0 else { return }
 
@@ -2884,10 +3029,9 @@ struct ReaderView: View {
         let signature = paginationSignature(
             chapterIndex: chapterIndex,
             chapter: chapter,
-            contentLength: chapter.content.count,
             textSize: textSize
         )
-        guard paginationCache[signature] == nil else { return }
+        guard paginationCoordinator.cachedPages(for: signature) == nil else { return }
 
         let fontSize = self.fontSize
         let lineSpacing = self.lineSpacing
@@ -2898,7 +3042,7 @@ struct ReaderView: View {
             "len": String(displayedContent.count)
         ])
         let start = Date()
-        let pages = await Task.detached(priority: .utility) {
+        let work = Task.detached(priority: .utility) {
             Self.paginate(
                 content: displayedContent,
                 textSize: textSize,
@@ -2907,17 +3051,22 @@ struct ReaderView: View {
                 paragraphSpacing: paragraphSpacing,
                 fontFamily: fontFamily
             )
-        }.value
+        }
+        let pages = await withTaskCancellationHandler {
+            await work.value
+        } onCancel: {
+            work.cancel()
+        }
 
         let durMs = Int(Date().timeIntervalSince(start) * 1000)
-        guard !pages.isEmpty else {
+        guard ticket.isValid, !Task.isCancelled, !pages.isEmpty else {
             ReaderDiagnostics.shared.log(.paginationCancel, "prefetch prePaginate", context: [
                 "ch": String(chapterIndex),
                 "durMs": String(durMs)
             ])
             return
         }
-        rememberPaginatedPages(pages, for: signature)
+        guard ticket.commit({ rememberPaginatedPages(pages, for: signature) }) else { return }
         ReaderDiagnostics.shared.log(.paginationEnd, "prefetch prePaginate", context: [
             "ch": String(chapterIndex),
             "pages": String(pages.count),
@@ -2973,9 +3122,9 @@ struct ReaderView: View {
             loadedChapterOverrides.removeAll()
             loadingChapterKeys.removeAll()
             chapterLoadErrors.removeAll()
-            prefetchingChapterKeys.removeAll()
+            prefetchScheduler.cancelAll()
             downloadedChapterKeys.removeAll()
-            paginationCache.removeAll()
+            paginationCoordinator.clearCache()
             currentChapterIndex = 0
             currentChapterPageIndex = 0
             shouldJumpToLastPageAfterPagination = false
