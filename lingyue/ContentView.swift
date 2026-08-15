@@ -62,6 +62,10 @@ enum AppUpdateAnnouncement: String, Identifiable, Equatable {
                 AppUpdateAnnouncementBullet(
                     icon: "arrow.right.arrow.left",
                     text: "在书架底部打开「已归档」，也可以再把书移动到其他分类"
+                ),
+                AppUpdateAnnouncementBullet(
+                    icon: "arrow.up.arrow.down",
+                    text: "长按分类标题，就能拖动调整分类顺序"
                 )
             ]
         }
@@ -79,6 +83,7 @@ enum AppUpdateAnnouncement: String, Identifiable, Equatable {
 final class AppUpdateAnnouncementStore: ObservableObject {
     static let firstInstalledVersionKey = "app.firstInstalledVersion"
     static let seenKeyPrefix = "app.updateAnnouncement.seen."
+    static let forceShowArgument = "--show-update-announcement"
 
     @Published private(set) var pendingAnnouncement: AppUpdateAnnouncement?
     let isExistingInstallation: Bool
@@ -134,13 +139,16 @@ final class AppUpdateAnnouncementStore: ObservableObject {
         )
         let hasSeenAnnouncement = defaults.bool(forKey: Self.seenKey(for: announcement))
         let suppressesLaunchUI = arguments.contains("--screenshot-fixture")
+        let forcesAnnouncement = arguments.contains(Self.forceShowArgument)
 
-        pendingAnnouncement = featureIsAvailable
-            && installationPredatesFeature
-            && !hasSeenAnnouncement
-            && !suppressesLaunchUI
+        pendingAnnouncement = forcesAnnouncement
             ? announcement
-            : nil
+            : featureIsAvailable
+                && installationPredatesFeature
+                && !hasSeenAnnouncement
+                && !suppressesLaunchUI
+                ? announcement
+                : nil
     }
 
     func dismissPendingAnnouncement() {

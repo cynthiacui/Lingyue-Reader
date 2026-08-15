@@ -110,7 +110,7 @@ private let libraryHelpItems: [LibraryHelpItem] = [
     LibraryHelpItem(icon: "doc.badge.plus", title: "导入本地小说", detail: "左上角按钮导入 TXT / EPUB / HTML 文件"),
     LibraryHelpItem(icon: "arrow.down.circle", title: "下载管理", detail: "右上角查看下载进度，暂停或重试"),
     LibraryHelpItem(icon: "magnifyingglass", title: "搜索书架", detail: "下拉呼出搜索栏，跨分类按书名或作者查找"),
-    LibraryHelpItem(icon: "square.grid.2x2", title: "分类整理", detail: "点击分类标题全屏展开，长按书籍可移动分类"),
+    LibraryHelpItem(icon: "square.grid.2x2", title: "分类整理", detail: "长按分类标题可拖动排序；长按书籍可移动到其他分类"),
     LibraryHelpItem(icon: "archivebox", title: "归档书籍", detail: "长按书籍，或左滑点“分类”后选择归档；书籍和阅读记录都会保留"),
     LibraryHelpItem(icon: "hand.tap", title: "左滑操作", detail: "在书籍上左滑可整理书籍、清理已下载内容或删除")
 ]
@@ -135,6 +135,8 @@ struct LibraryView: View {
     @State private var txtImportToast: String?
     @State private var archiveUndo: LibraryArchiveUndo?
     @State private var searchText = ""
+    @State private var draggedCategoryID: UUID?
+    @State private var categoryDragFeedback = 0
     /// Tracks whether the "继续阅读" hero card has collapsed into its compact
     /// rail. Driven by scroll offset — flips as soon as the user starts moving
     /// the list, so the books below get more room without waiting for a big drag.
@@ -300,6 +302,7 @@ struct LibraryView: View {
         }
         .animation(.easeInOut(duration: 0.22), value: txtImportToast)
         .animation(.easeInOut(duration: 0.22), value: archiveUndo)
+        .sensoryFeedback(.selection, trigger: categoryDragFeedback)
         .overlay {
             if shouldShowHelpOverlay {
                 LibraryHelpPopup(onDismiss: dismissHelpOverlay)
@@ -623,13 +626,29 @@ struct LibraryView: View {
             if libraryStore.categories.isEmpty {
                 EmptyCategoryCard()
             } else {
+                let categoryOrder = libraryStore.categories.map(\.id)
                 VStack(alignment: .leading, spacing: 22) {
                     ForEach(libraryStore.categories) { category in
                         StackedCategoryShelf(
                             category: category,
+                            categoryOrder: categoryOrder,
                             namespace: stackNamespace,
                             isExpanded: expandedCategoryID == category.id,
                             activeSwipeID: $activeSwipeID,
+                            draggedCategoryID: $draggedCategoryID,
+                            onCategoryDragBegan: {
+                                closeActiveSwipe()
+                                categoryDragFeedback &+= 1
+                            },
+                            onReorderCategory: { sourceID, targetID in
+                                libraryStore.moveCategory(
+                                    id: sourceID,
+                                    toPositionOf: targetID
+                                )
+                            },
+                            onMoveCategoryBy: { offset in
+                                libraryStore.moveCategory(id: category.id, by: offset)
+                            },
                             onTopTap: { novel in
                                 bookToOpen = novel
                             },
@@ -1977,19 +1996,482 @@ private struct DownloadStatusBadge: View {
     }
 }
 
+private enum CategoryDropIndicatorEdge: Equatable {
+    case top
+    case bottom
+}
+
+private struct CategoryDropIndicator: View {
+    @Environment(\.appTheme) private var theme
+    let edge: CategoryDropIndicatorEdge?
+
+    @ViewBuilder
+    var body: some View {
+        if let edge {
+            VStack(spacing: 0) {
+                if edge == .bottom { Spacer(minLength: 0) }
+
+                Capsule()
+                    .fill(theme.accent)
+                    .frame(height: 3)
+                    .padding(.horizontal, 6)
+                    .shadow(color: theme.accent.opacity(0.28), radius: 3)
+
+                if edge == .top { Spacer(minLength: 0) }
+            }
+            .offset(y: edge == .top ? -11 : 11)
+            .transition(.opacity.combined(with: .scale(scale: 0.96)))
+        }
+    }
+}
+
+private struct CategoryDragPreview: View {
+    @Environment(\.appTheme) private var theme
+    @EnvironmentObject private var downloadManager: BookDownloadManager
+    let category: LibraryCategory
+    let visibleNovels: [Novel]
+    let width: CGFloat
+
+    private let cardHeight: CGFloat = 88
+    private let peekOffset: CGFloat = 22
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Text(category.name)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(theme.primaryText)
+                    .lineLimit(1)
+
+                Spacer(minLength: 8)
+
+                Text("\(category.novels.count) 本")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(theme.secondaryText)
+            }
+            .frame(minHeight: 34)
+
+            if visibleNovels.isEmpty {
+                EmptyCategoryRow()
+            } else {
+                VStack(spacing: -(cardHeight - peekOffset)) {
+                    ForEach(Array(visibleNovels.enumerated()), id: \.element.id) { index, novel in
+                        StackBookCard(novel: novel)
+                            .frame(height: cardHeight)
+                            .scaleEffect(1 - CGFloat(index) * 0.005, anchor: .top)
+                            .zIndex(Double(visibleNovels.count - index))
+                    }
+                }
+            }
+        }
+        .padding(12)
+        .frame(width: min(max(width, 320), 430))
+        .background(theme.cardBackground.opacity(0.98))
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(theme.accent.opacity(0.24), lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.2), radius: 18, x: 0, y: 10)
+        .allowsHitTesting(false)
+    }
+}
+
+private struct CategoryShelfWidthPreferenceKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        let next = nextValue()
+        if next > 0 { value = next }
+    }
+}
+
+/// Passively observes the finger that initiated a category drag. Keeping this
+/// recognizer in `.possible` means it never competes with UIKit's private drag
+/// recognizers; it only gives us a guaranteed release/cancel signal.
+private final class CategoryDragReleaseObserver: UIGestureRecognizer, UIGestureRecognizerDelegate {
+    var onTouchBegan: (() -> Void)?
+    var onRelease: (() -> Void)?
+
+    init(
+        onTouchBegan: @escaping () -> Void,
+        onRelease: @escaping () -> Void
+    ) {
+        self.onTouchBegan = onTouchBegan
+        self.onRelease = onRelease
+        super.init(target: nil, action: nil)
+        cancelsTouchesInView = false
+        delaysTouchesBegan = false
+        delaysTouchesEnded = false
+        delegate = self
+    }
+
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
+        onTouchBegan?()
+        state = .began
+    }
+
+    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) {
+        state = .changed
+    }
+
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) {
+        onRelease?()
+        state = .ended
+    }
+
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) {
+        // UIDragInteraction cancels sibling recognizers when it takes ownership
+        // of the touch. That is the start of a real drag, not a finger release;
+        // hiding the hosted preview here leaves UIKit's empty white container.
+        // The drag delegate's end/cancel callbacks handle genuine termination.
+        state = .cancelled
+    }
+
+    override func canPrevent(_ preventedGestureRecognizer: UIGestureRecognizer) -> Bool {
+        false
+    }
+
+    override func canBePrevented(by preventingGestureRecognizer: UIGestureRecognizer) -> Bool {
+        false
+    }
+
+    func gestureRecognizer(
+        _ gestureRecognizer: UIGestureRecognizer,
+        shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
+    ) -> Bool {
+        true
+    }
+}
+
+/// UIKit exposes both the exact lift preview and a reliable session-ended callback.
+/// Keeping the interaction on a transparent header-sized view avoids SwiftUI's
+/// automatic title-only lift card while preserving the title as the sole drag handle.
+private struct CategoryDragHandle<Preview: View>: UIViewRepresentable {
+    let identifier: String
+    let onDragBegan: () -> Void
+    let onTouchReleased: () -> Void
+    let onDragEnded: () -> Void
+    let preview: () -> Preview
+
+    init(
+        identifier: String,
+        onDragBegan: @escaping () -> Void,
+        onTouchReleased: @escaping () -> Void,
+        onDragEnded: @escaping () -> Void,
+        @ViewBuilder preview: @escaping () -> Preview
+    ) {
+        self.identifier = identifier
+        self.onDragBegan = onDragBegan
+        self.onTouchReleased = onTouchReleased
+        self.onDragEnded = onDragEnded
+        self.preview = preview
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(
+            identifier: identifier,
+            onDragBegan: onDragBegan,
+            onTouchReleased: onTouchReleased,
+            onDragEnded: onDragEnded,
+            preview: preview
+        )
+    }
+
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView()
+        view.backgroundColor = .clear
+        view.isAccessibilityElement = false
+        view.addGestureRecognizer(
+            CategoryDragReleaseObserver(
+                onTouchBegan: { [weak coordinator = context.coordinator] in
+                    coordinator?.touchDidBegin()
+                },
+                onRelease: { [weak coordinator = context.coordinator] in
+                    coordinator?.touchDidEnd()
+                }
+            )
+        )
+        view.addInteraction(UIDragInteraction(delegate: context.coordinator))
+        return view
+    }
+
+    func updateUIView(_ uiView: UIView, context: Context) {
+        context.coordinator.update(
+            identifier: identifier,
+            onDragBegan: onDragBegan,
+            onTouchReleased: onTouchReleased,
+            onDragEnded: onDragEnded,
+            preview: preview
+        )
+    }
+
+    final class Coordinator: NSObject, UIDragInteractionDelegate {
+        private var identifier: String
+        private var onDragBegan: () -> Void
+        private var onTouchReleased: () -> Void
+        private var onDragEnded: () -> Void
+        private var makePreview: () -> AnyView
+        private var previewController: UIHostingController<AnyView>?
+        private var isTouchDown = false
+
+        init(
+            identifier: String,
+            onDragBegan: @escaping () -> Void,
+            onTouchReleased: @escaping () -> Void,
+            onDragEnded: @escaping () -> Void,
+            preview: @escaping () -> Preview
+        ) {
+            self.identifier = identifier
+            self.onDragBegan = onDragBegan
+            self.onTouchReleased = onTouchReleased
+            self.onDragEnded = onDragEnded
+            self.makePreview = { AnyView(preview()) }
+        }
+
+        func update(
+            identifier: String,
+            onDragBegan: @escaping () -> Void,
+            onTouchReleased: @escaping () -> Void,
+            onDragEnded: @escaping () -> Void,
+            preview: @escaping () -> Preview
+        ) {
+            self.identifier = identifier
+            self.onDragBegan = onDragBegan
+            self.onTouchReleased = onTouchReleased
+            self.onDragEnded = onDragEnded
+            self.makePreview = { AnyView(preview()) }
+        }
+
+        func dragInteraction(
+            _ interaction: UIDragInteraction,
+            itemsForBeginning session: UIDragSession
+        ) -> [UIDragItem] {
+            // A short lift can finish before UIKit asks for its items. Never let
+            // that late callback restore selection after the finger is already up.
+            guard isTouchDown else { return [] }
+            onDragBegan()
+            preparePreview()
+
+            let provider = NSItemProvider()
+            let data = Data(identifier.utf8)
+            provider.registerDataRepresentation(
+                forTypeIdentifier: UTType.plainText.identifier,
+                visibility: .ownProcess
+            ) { completion in
+                completion(data, nil)
+                return nil
+            }
+
+            let item = UIDragItem(itemProvider: provider)
+            item.localObject = identifier
+            item.previewProvider = { [weak self] in
+                guard let previewView = self?.previewController?.view else { return nil }
+                return UIDragPreview(
+                    view: previewView,
+                    parameters: Self.previewParameters(for: previewView)
+                )
+            }
+            return [item]
+        }
+
+        func dragInteraction(
+            _ interaction: UIDragInteraction,
+            previewForLifting item: UIDragItem,
+            session: UIDragSession
+        ) -> UITargetedDragPreview? {
+            guard let sourceView = interaction.view,
+                  let previewView = previewController?.view else {
+                return nil
+            }
+
+            let target = UIDragPreviewTarget(
+                container: sourceView,
+                center: CGPoint(
+                    x: sourceView.bounds.midX,
+                    // Keep the full shelf preview aligned with the title row
+                    // instead of centering its tall body around the finger.
+                    y: sourceView.bounds.minY + previewView.bounds.height / 2
+                )
+            )
+            return UITargetedDragPreview(
+                view: previewView,
+                parameters: Self.previewParameters(for: previewView),
+                target: target
+            )
+        }
+
+        func dragInteraction(
+            _ interaction: UIDragInteraction,
+            session: UIDragSession,
+            willEndWith operation: UIDropOperation
+        ) {
+            // Clear the source highlight as soon as the finger is released. Waiting
+            // for `didEndWith` leaves it selected throughout the cancel animation.
+            finishDragImmediately()
+        }
+
+        func dragInteraction(
+            _ interaction: UIDragInteraction,
+            previewForCancelling item: UIDragItem,
+            withDefault defaultPreview: UITargetedDragPreview
+        ) -> UITargetedDragPreview? {
+            // Releasing immediately after the lift begins follows UIKit's cancel
+            // path and may not reach `willEndWith` before the return animation.
+            // Reset here so the shelf cannot remain visually selected meanwhile.
+            finishDragImmediately()
+            // Avoid UIKit moving the tall preview back over the source shelf,
+            // which looks like a half-selected frame after the real touch ended.
+            return nil
+        }
+
+        func dragInteraction(
+            _ interaction: UIDragInteraction,
+            item: UIDragItem,
+            willAnimateCancelWith animator: UIDragAnimating
+        ) {
+            // Covers cancellation before a visible preview has fully formed.
+            finishDragImmediately()
+        }
+
+        func dragInteraction(
+            _ interaction: UIDragInteraction,
+            session: UIDragSession,
+            didEndWith operation: UIDropOperation
+        ) {
+            finishDragImmediately()
+            onDragEnded()
+            previewController = nil
+        }
+
+        func dragInteraction(
+            _ interaction: UIDragInteraction,
+            sessionAllowsMoveOperation session: UIDragSession
+        ) -> Bool {
+            true
+        }
+
+        func dragInteraction(
+            _ interaction: UIDragInteraction,
+            sessionIsRestrictedToDraggingApplication session: UIDragSession
+        ) -> Bool {
+            true
+        }
+
+        func dragInteraction(
+            _ interaction: UIDragInteraction,
+            prefersFullSizePreviewsFor session: UIDragSession
+        ) -> Bool {
+            true
+        }
+
+        func touchDidBegin() {
+            isTouchDown = true
+        }
+
+        func touchDidEnd() {
+            finishDragImmediately()
+        }
+
+        private func preparePreview() {
+            let controller = UIHostingController(rootView: makePreview())
+            // The drag window has its own safe-area insets. If the hosting
+            // controller adopts them after UIKit reparents the preview, SwiftUI
+            // pushes the shelf content down and leaves a blank white band above it.
+            controller.safeAreaRegions = []
+            controller.view.backgroundColor = .clear
+            controller.view.isOpaque = false
+            controller.view.insetsLayoutMarginsFromSafeArea = false
+            let size = controller.sizeThatFits(
+                in: CGSize(width: 460, height: 600)
+            )
+            controller.view.bounds = CGRect(origin: .zero, size: size)
+            controller.view.layoutIfNeeded()
+            previewController = controller
+        }
+
+        private static func previewParameters(for previewView: UIView) -> UIDragPreviewParameters {
+            let parameters = UIDragPreviewParameters()
+            // Both the lift transition and the settled drag preview need these
+            // parameters. Otherwise UIKit restores its default rectangular white
+            // background after the lift, which shows through the rounded corners.
+            parameters.backgroundColor = .clear
+            parameters.visiblePath = UIBezierPath(
+                roundedRect: previewView.bounds,
+                cornerRadius: 18
+            )
+            return parameters
+        }
+
+        private func finishDragImmediately() {
+            isTouchDown = false
+            // The custom preview is backed by this hosted view on current UIKit
+            // versions. Hiding it on the actual touch-up prevents a stale snapshot
+            // from lingering while UIKit finishes its cancellation bookkeeping.
+            previewController?.view.layer.removeAllAnimations()
+            previewController?.view.alpha = 0
+            onTouchReleased()
+        }
+    }
+}
+
+private struct CategoryReorderDropDelegate: DropDelegate {
+    let targetCategoryID: UUID
+    @Binding var draggedCategoryID: UUID?
+    @Binding var isTargeted: Bool
+    let onReorderCategory: (UUID, UUID) -> Bool
+
+    func validateDrop(info: DropInfo) -> Bool {
+        draggedCategoryID != nil && info.hasItemsConforming(to: [UTType.plainText])
+    }
+
+    func dropEntered(info: DropInfo) {
+        isTargeted = draggedCategoryID != nil && draggedCategoryID != targetCategoryID
+    }
+
+    func dropExited(info: DropInfo) {
+        isTargeted = false
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        // Categorization is an in-place reorder, not a copy. Explicit move semantics
+        // also removes the system's misleading green "+" badge from the drag preview.
+        DropProposal(operation: .move)
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        guard let sourceID = draggedCategoryID else { return false }
+        defer {
+            isTargeted = false
+            draggedCategoryID = nil
+        }
+        if sourceID == targetCategoryID { return true }
+        return onReorderCategory(sourceID, targetCategoryID)
+    }
+}
+
 private struct StackedCategoryShelf: View {
     @Environment(\.appTheme) private var theme
     @EnvironmentObject private var downloadManager: BookDownloadManager
     let category: LibraryCategory
+    let categoryOrder: [UUID]
     let namespace: Namespace.ID
     let isExpanded: Bool
     @Binding var activeSwipeID: UUID?
+    @Binding var draggedCategoryID: UUID?
+    let onCategoryDragBegan: () -> Void
+    let onReorderCategory: (UUID, UUID) -> Bool
+    let onMoveCategoryBy: (Int) -> Bool
     let onTopTap: (Novel) -> Void
     let onExpand: () -> Void
     let onMoveCategory: (Novel) -> Void
     let onDownload: (Novel) -> Void
     let onClearDownloadData: (Novel) -> Void
     let onDelete: (Novel) -> Void
+
+    @State private var isCategoryDropTargeted = false
+    @State private var categoryShelfWidth: CGFloat = 340
+    @State private var isCategoryHighlighted = false
 
     private let cardHeight: CGFloat = 88
     private let peekOffset: CGFloat = 22
@@ -2004,11 +2486,22 @@ private struct StackedCategoryShelf: View {
         }
     }
 
+    private var dropIndicatorEdge: CategoryDropIndicatorEdge? {
+        guard isCategoryDropTargeted,
+              let sourceID = draggedCategoryID,
+              sourceID != category.id,
+              let sourceIndex = categoryOrder.firstIndex(of: sourceID),
+              let targetIndex = categoryOrder.firstIndex(of: category.id) else {
+            return nil
+        }
+        return sourceIndex < targetIndex ? .bottom : .top
+    }
+
     var body: some View {
         let visible = Array(sortedNovels.prefix(maxVisible))
 
         VStack(alignment: .leading, spacing: 8) {
-            HStack {
+            HStack(spacing: 8) {
                 Text(category.name)
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundStyle(theme.primaryText)
@@ -2019,6 +2512,49 @@ private struct StackedCategoryShelf: View {
                 Text("\(category.novels.count) 本")
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(theme.secondaryText)
+
+                Image(systemName: "line.3.horizontal")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(theme.secondaryText.opacity(0.58))
+                    .accessibilityHidden(true)
+            }
+            .frame(maxWidth: .infinity, minHeight: 34, alignment: .leading)
+            .contentShape(Rectangle())
+            .overlay {
+                let categoryID = category.id
+                CategoryDragHandle(
+                    identifier: categoryID.uuidString,
+                    onDragBegan: {
+                        draggedCategoryID = categoryID
+                        isCategoryHighlighted = true
+                        onCategoryDragBegan()
+                    },
+                    onTouchReleased: {
+                        isCategoryHighlighted = false
+                    },
+                    onDragEnded: {
+                        if draggedCategoryID == categoryID {
+                            draggedCategoryID = nil
+                        }
+                    }
+                ) {
+                    CategoryDragPreview(
+                        category: category,
+                        visibleNovels: visible,
+                        width: categoryShelfWidth
+                    )
+                    .environmentObject(downloadManager)
+                }
+                .accessibilityHidden(true)
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("\(category.name)，\(category.novels.count) 本")
+            .accessibilityHint("长按并拖动可调整分类顺序")
+            .accessibilityAction(named: "上移") {
+                _ = onMoveCategoryBy(-1)
+            }
+            .accessibilityAction(named: "下移") {
+                _ = onMoveCategoryBy(1)
             }
 
             if visible.isEmpty {
@@ -2079,6 +2615,52 @@ private struct StackedCategoryShelf: View {
                 .animation(librarySwipeSpring, value: isSwipeActive)
             }
         }
+        .background {
+            GeometryReader { proxy in
+                Color.clear.preference(
+                    key: CategoryShelfWidthPreferenceKey.self,
+                    value: proxy.size.width
+                )
+            }
+        }
+        .onPreferenceChange(CategoryShelfWidthPreferenceKey.self) { width in
+            guard width > 0, abs(width - categoryShelfWidth) > 0.5 else { return }
+            categoryShelfWidth = width
+        }
+        .overlay {
+            ZStack {
+                if isCategoryHighlighted {
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .fill(theme.accent.opacity(0.085))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                .stroke(theme.accent.opacity(0.28), lineWidth: 1)
+                        )
+                        .padding(-8)
+                        .transition(.opacity.combined(with: .scale(scale: 0.985)))
+                }
+
+                CategoryDropIndicator(edge: dropIndicatorEdge)
+            }
+            .allowsHitTesting(false)
+        }
+        .scaleEffect(isCategoryHighlighted ? 1.008 : 1)
+        .animation(
+            isCategoryHighlighted
+                ? .easeInOut(duration: 0.16)
+                : .easeOut(duration: 0.14),
+            value: isCategoryHighlighted
+        )
+        .animation(.easeInOut(duration: 0.16), value: dropIndicatorEdge)
+        .onDrop(
+            of: [UTType.plainText.identifier],
+            delegate: CategoryReorderDropDelegate(
+                targetCategoryID: category.id,
+                draggedCategoryID: $draggedCategoryID,
+                isTargeted: $isCategoryDropTargeted,
+                onReorderCategory: onReorderCategory
+            )
+        )
     }
 
     @ViewBuilder

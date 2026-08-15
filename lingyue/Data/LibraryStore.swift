@@ -971,6 +971,37 @@ final class LibraryStore: ObservableObject {
         return true
     }
 
+    /// Places a category at the position of another category. Moving downward inserts
+    /// after the target; moving upward inserts before it, matching the direction users
+    /// expect when they drop one shelf onto another. The array is assigned once so the
+    /// UI publishes one coherent change and persistence is scheduled only once.
+    @discardableResult
+    func moveCategory(id sourceID: UUID, toPositionOf targetID: UUID) -> Bool {
+        guard sourceID != targetID,
+              let sourceIndex = categories.firstIndex(where: { $0.id == sourceID }),
+              let targetIndex = categories.firstIndex(where: { $0.id == targetID }) else {
+            return false
+        }
+
+        var reordered = categories
+        let movingCategory = reordered.remove(at: sourceIndex)
+        reordered.insert(movingCategory, at: min(targetIndex, reordered.count))
+        categories = reordered
+        return true
+    }
+
+    /// Keyboard and VoiceOver counterpart to drag-and-drop category ordering.
+    @discardableResult
+    func moveCategory(id: UUID, by offset: Int) -> Bool {
+        guard offset != 0,
+              let sourceIndex = categories.firstIndex(where: { $0.id == id }) else {
+            return false
+        }
+        let targetIndex = sourceIndex + offset
+        guard categories.indices.contains(targetIndex) else { return false }
+        return moveCategory(id: id, toPositionOf: categories[targetIndex].id)
+    }
+
     /// Moves an active book into the archive. The returned token powers the brief Undo
     /// affordance and is deliberately not persisted.
     @discardableResult

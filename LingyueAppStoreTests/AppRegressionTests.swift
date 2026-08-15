@@ -5,6 +5,34 @@ import LingyueCore
 @testable import LingyueAppStore
 
 final class AppUpdateAnnouncementStoreTests: XCTestCase {
+    func testForceLaunchArgumentShowsAnnouncementAgainWithoutChangingInstallCohort() throws {
+        let context = try makeContext()
+        defer { context.cleanup() }
+        context.defaults.set(
+            true,
+            forKey: AppUpdateAnnouncementStore.seenKey(for: .libraryArchiveV1_2)
+        )
+
+        let forcedLaunch = AppUpdateAnnouncementStore(
+            defaults: context.defaults,
+            persistentDomainName: context.domainName,
+            currentVersion: "1.2",
+            applicationSupportDirectory: context.supportDirectory,
+            arguments: [AppUpdateAnnouncementStore.forceShowArgument]
+        )
+
+        XCTAssertFalse(forcedLaunch.isExistingInstallation)
+        XCTAssertEqual(forcedLaunch.pendingAnnouncement, .libraryArchiveV1_2)
+    }
+
+    func testArchiveAnnouncementIntroducesCategoryReordering() {
+        XCTAssertTrue(
+            AppUpdateAnnouncement.libraryArchiveV1_2.bullets.contains {
+                $0.text == "长按分类标题，就能拖动调整分类顺序"
+            }
+        )
+    }
+
     func testFreshInstallDoesNotShowUpdateAnnouncementAcrossRelaunches() throws {
         let context = try makeContext()
         defer { context.cleanup() }
@@ -1230,6 +1258,36 @@ final class ReaderPrefetchSchedulerTests: XCTestCase {
 
 @MainActor
 final class LibraryLifecycleIntegrationTests: XCTestCase {
+    func testCategoryReorderMovesBothDirectionsAndPersists() async throws {
+        let directory = temporaryDirectory()
+        let first = LibraryCategory(name: "第一类", novels: [makeNovel(title: "第一本")])
+        let second = LibraryCategory(name: "第二类", novels: [])
+        let third = LibraryCategory(name: "第三类", novels: [makeNovel(title: "第三本")])
+        let store = LibraryStore(storageDirectory: directory)
+        store.categories = [first, second, third]
+
+        XCTAssertTrue(store.moveCategory(id: first.id, toPositionOf: third.id))
+        XCTAssertEqual(store.categories.map(\.id), [second.id, third.id, first.id])
+        XCTAssertEqual(store.categories.last?.novels.first?.title, "第一本")
+
+        XCTAssertTrue(store.moveCategory(id: first.id, toPositionOf: second.id))
+        XCTAssertEqual(store.categories.map(\.id), [first.id, second.id, third.id])
+
+        XCTAssertTrue(store.moveCategory(id: second.id, by: 1))
+        XCTAssertEqual(store.categories.map(\.id), [first.id, third.id, second.id])
+        XCTAssertTrue(store.moveCategory(id: second.id, by: -1))
+        XCTAssertEqual(store.categories.map(\.id), [first.id, second.id, third.id])
+
+        XCTAssertFalse(store.moveCategory(id: first.id, toPositionOf: first.id))
+        XCTAssertFalse(store.moveCategory(id: UUID(), toPositionOf: second.id))
+        XCTAssertFalse(store.moveCategory(id: first.id, by: -1))
+
+        await store.flush()
+        let reloaded = LibraryStore(storageDirectory: directory)
+        XCTAssertEqual(reloaded.categories.map(\.id), [first.id, second.id, third.id])
+        XCTAssertEqual(reloaded.categories.flatMap(\.novels).map(\.title), ["第一本", "第三本"])
+    }
+
     func testBackupRestoreRehydratesLibraryStatsAndCover() async throws {
         let directory = temporaryDirectory()
         let store = LibraryStore(storageDirectory: directory)
