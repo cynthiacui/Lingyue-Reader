@@ -1,6 +1,5 @@
 import SwiftUI
 import UIKit
-import UniformTypeIdentifiers
 
 private let librarySwipeSpring: Animation = .spring(response: 0.32, dampingFraction: 0.86)
 
@@ -118,6 +117,7 @@ private let libraryHelpItems: [LibraryHelpItem] = [
 struct LibraryView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
     @Environment(\.appTheme) private var theme
     @EnvironmentObject private var libraryStore: LibraryStore
     @EnvironmentObject private var downloadManager: BookDownloadManager
@@ -135,7 +135,10 @@ struct LibraryView: View {
     @State private var txtImportToast: String?
     @State private var archiveUndo: LibraryArchiveUndo?
     @State private var searchText = ""
-    @State private var draggedCategoryID: UUID?
+    @State private var categoryReorderState = CategoryReorderState()
+    @State private var categoryDragAutoScrollRequest: CategoryDragAutoScrollRequest?
+    @State private var categoryShelfFrames: [UUID: CGRect] = [:]
+    @State private var categoryDragLocation: CategoryDragLocation?
     @State private var categoryDragFeedback = 0
     /// Tracks whether the "继续阅读" hero card has collapsed into its compact
     /// rail. Driven by scroll offset — flips as soon as the user starts moving
@@ -180,12 +183,7 @@ struct LibraryView: View {
                 $0.title.localizedCaseInsensitiveContains(q) ||
                 $0.author.localizedCaseInsensitiveContains(q)
             }
-            .sorted { lhs, rhs in
-                let l = lhs.librarySortRank
-                let r = rhs.librarySortRank
-                if l != r { return l > r }
-                return lhs.readMinutes > rhs.readMinutes
-            }
+            .sorted { $0.isOrderedBeforeInLibrary($1) }
     }
 
     private var hasActiveOverlay: Bool {
@@ -207,51 +205,57 @@ struct LibraryView: View {
             } else if isSearching {
                 searchResultsList
             } else {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 18) {
-                        currentlyReadingSection
-                        categorizedBooksSection
-                        archivedBooksSection
-                    }
-                    .padding(.top, 8)
-                    .padding(.bottom, 18)
-                    .background(
-                        GeometryReader { proxy in
-                            Color.clear.preference(
-                                key: LibraryScrollOffsetKey.self,
-                                value: proxy.frame(in: .named("LibraryScroll")).minY
-                            )
+                ScrollViewReader { scrollProxy in
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 18) {
+                            currentlyReadingSection
+                            categorizedBooksSection
+                            archivedBooksSection
                         }
-                    )
-                }
-                .coordinateSpace(name: "LibraryScroll")
-                .onPreferenceChange(LibraryScrollOffsetKey.self) { offset in
-                    closeActiveSwipe()
-                    updateHeroMinimized(forScrollOffset: offset)
-                }
-                // Mail-style global dismissal: any tap inside the library closes an
-                // open swipe alongside whatever the tapped child does. simultaneous
-                // means action-button taps still fire (the button's own closeSwipe()
-                // is redundant with this but harmless), and a tap on a different row
-                // both closes the swipe and forwards the tap. Excludes the toolbar /
-                // navigation chrome — those use onChange hooks below.
-                .simultaneousGesture(
-                    TapGesture().onEnded { closeActiveSwipe() }
-                )
-                // Vertical drag (scroll attempt) closes too — covers the case where the
-                // content fits the viewport and offset never changes, so the preference
-                // path above can't fire. We only close on predominantly vertical drags
-                // so a horizontal swipe still reaches IconSwipeRow's own gesture.
-                .simultaneousGesture(
-                    DragGesture(minimumDistance: 10)
-                        .onChanged { value in
-                            if abs(value.translation.height) > abs(value.translation.width) {
-                                closeActiveSwipe()
+                        .padding(.top, 8)
+                        .padding(.bottom, 18)
+                        .background(
+                            GeometryReader { proxy in
+                                Color.clear.preference(
+                                    key: LibraryScrollOffsetKey.self,
+                                    value: proxy.frame(in: .named("LibraryScroll")).minY
+                                )
                             }
-                        }
-                )
-                .contentMargins(.horizontal, horizontalMargin, for: .scrollContent)
-                .safeAreaPadding(.bottom, 12)
+                        )
+                    }
+                    .coordinateSpace(name: "LibraryScroll")
+                    .onPreferenceChange(LibraryScrollOffsetKey.self) { offset in
+                        closeActiveSwipe()
+                        updateHeroMinimized(forScrollOffset: offset)
+                    }
+                    // Mail-style global dismissal: any tap inside the library closes an
+                    // open swipe alongside whatever the tapped child does. simultaneous
+                    // means action-button taps still fire (the button's own closeSwipe()
+                    // is redundant with this but harmless), and a tap on a different row
+                    // both closes the swipe and forwards the tap. Excludes the toolbar /
+                    // navigation chrome — those use onChange hooks below.
+                    .simultaneousGesture(
+                        TapGesture().onEnded { closeActiveSwipe() }
+                    )
+                    // Vertical drag (scroll attempt) closes too — covers the case where the
+                    // content fits the viewport and offset never changes, so the preference
+                    // path above can't fire. We only close on predominantly vertical drags
+                    // so a horizontal swipe still reaches IconSwipeRow's own gesture.
+                    .simultaneousGesture(
+                        DragGesture(minimumDistance: 10)
+                            .onChanged { value in
+                                if abs(value.translation.height) > abs(value.translation.width) {
+                                    closeActiveSwipe()
+                                }
+                            }
+                    )
+                    .contentMargins(.horizontal, horizontalMargin, for: .scrollContent)
+                    .safeAreaPadding(.bottom, 12)
+                    .task(id: categoryDragAutoScrollRequest) {
+                        guard let request = categoryDragAutoScrollRequest else { return }
+                        await autoScrollCategories(using: scrollProxy, request: request)
+                    }
+                }
             }
 
             if let expandedCategory = libraryStore.categories.first(where: { $0.id == expandedCategoryID }) {
@@ -411,6 +415,131 @@ struct LibraryView: View {
         guard activeSwipeID != nil else { return }
         withAnimation(librarySwipeSpring) {
             activeSwipeID = nil
+        }
+    }
+
+    private func updateCategoryDragLocation(sessionID: UUID, location: CGPoint) {
+        guard categoryReorderState.activeSessionID == sessionID else { return }
+        let dragLocation = CategoryDragLocation(
+            sessionID: sessionID,
+            location: location
+        )
+        if categoryDragLocation != dragLocation {
+            categoryDragLocation = dragLocation
+        }
+        updateCategoryDragTarget(sessionID: sessionID, location: location)
+    }
+
+    private func updateCategoryDragTarget(sessionID: UUID, location: CGPoint) {
+        guard categoryReorderState.activeSessionID == sessionID else { return }
+        categoryReorderState.updateTarget(
+            categoryID: categoryTarget(at: location),
+            sessionID: sessionID
+        )
+    }
+
+    private func categoryTarget(at location: CGPoint) -> UUID? {
+        let liveCategoryIDs = Set(libraryStore.categories.map(\.id))
+        let candidates = categoryShelfFrames.filter { liveCategoryIDs.contains($0.key) }
+
+        if let exact = candidates.first(where: { _, frame in
+            frame.insetBy(dx: -12, dy: -8).contains(location)
+        }) {
+            return exact.key
+        }
+
+        // Category shelves have intentional vertical gaps. Treat a short gap as part
+        // of the closest shelf so the drop target does not flicker while crossing it.
+        return candidates
+            .compactMap { categoryID, frame -> (UUID, CGFloat)? in
+                guard location.x >= frame.minX - 24,
+                      location.x <= frame.maxX + 24 else { return nil }
+                let distance: CGFloat
+                if location.y < frame.minY {
+                    distance = frame.minY - location.y
+                } else if location.y > frame.maxY {
+                    distance = location.y - frame.maxY
+                } else {
+                    distance = 0
+                }
+                guard distance <= 44 else { return nil }
+                return (categoryID, distance)
+            }
+            .min { $0.1 < $1.1 }?
+            .0
+    }
+
+    private func finishCategoryDrag(sessionID: UUID, shouldCommit: Bool) {
+        if categoryDragAutoScrollRequest?.sessionID == sessionID {
+            categoryDragAutoScrollRequest = nil
+        }
+        if categoryDragLocation?.sessionID == sessionID {
+            categoryDragLocation = nil
+        }
+
+        guard shouldCommit else {
+            categoryReorderState.finish(sessionID: sessionID)
+            return
+        }
+        guard let move = categoryReorderState.complete(sessionID: sessionID) else {
+            return
+        }
+        _ = libraryStore.moveCategory(
+            id: move.sourceCategoryID,
+            toPositionOf: move.targetCategoryID
+        )
+    }
+
+    private func updateCategoryDragAutoScroll(
+        sessionID: UUID,
+        direction: CategoryDragAutoScrollDirection?
+    ) {
+        if let direction {
+            guard categoryReorderState.activeSessionID == sessionID else { return }
+            categoryDragAutoScrollRequest = CategoryDragAutoScrollRequest(
+                sessionID: sessionID,
+                direction: direction
+            )
+        } else if categoryDragAutoScrollRequest?.sessionID == sessionID {
+            categoryDragAutoScrollRequest = nil
+        }
+    }
+
+    private func autoScrollCategories(
+        using proxy: ScrollViewProxy,
+        request: CategoryDragAutoScrollRequest
+    ) async {
+        let categoryIDs = libraryStore.categories.map(\.id)
+        guard !categoryIDs.isEmpty,
+              categoryReorderState.activeSessionID == request.sessionID,
+              let referenceID = categoryReorderState.targetCategoryID
+                ?? categoryReorderState.sourceCategoryID,
+              var index = categoryIDs.firstIndex(of: referenceID) else {
+            return
+        }
+
+        while !Task.isCancelled,
+              categoryDragAutoScrollRequest == request,
+              categoryReorderState.activeSessionID == request.sessionID {
+            let nextIndex = request.direction == .down ? index + 1 : index - 1
+            guard categoryIDs.indices.contains(nextIndex) else { return }
+            index = nextIndex
+
+            if accessibilityReduceMotion {
+                proxy.scrollTo(
+                    categoryIDs[index],
+                    anchor: request.direction == .down ? .bottom : .top
+                )
+            } else {
+                withAnimation(.linear(duration: 0.18)) {
+                    proxy.scrollTo(
+                        categoryIDs[index],
+                        anchor: request.direction == .down ? .bottom : .top
+                    )
+                }
+            }
+
+            try? await Task.sleep(for: .milliseconds(240))
         }
     }
 
@@ -627,7 +756,7 @@ struct LibraryView: View {
                 EmptyCategoryCard()
             } else {
                 let categoryOrder = libraryStore.categories.map(\.id)
-                VStack(alignment: .leading, spacing: 22) {
+                LazyVStack(alignment: .leading, spacing: 22) {
                     ForEach(libraryStore.categories) { category in
                         StackedCategoryShelf(
                             category: category,
@@ -635,17 +764,14 @@ struct LibraryView: View {
                             namespace: stackNamespace,
                             isExpanded: expandedCategoryID == category.id,
                             activeSwipeID: $activeSwipeID,
-                            draggedCategoryID: $draggedCategoryID,
+                            categoryReorderState: $categoryReorderState,
                             onCategoryDragBegan: {
                                 closeActiveSwipe()
                                 categoryDragFeedback &+= 1
                             },
-                            onReorderCategory: { sourceID, targetID in
-                                libraryStore.moveCategory(
-                                    id: sourceID,
-                                    toPositionOf: targetID
-                                )
-                            },
+                            onCategoryDragMoved: updateCategoryDragLocation,
+                            onCategoryDragEdgeChanged: updateCategoryDragAutoScroll,
+                            onCategoryDragEnded: finishCategoryDrag,
                             onMoveCategoryBy: { offset in
                                 libraryStore.moveCategory(id: category.id, by: offset)
                             },
@@ -658,7 +784,18 @@ struct LibraryView: View {
                             onMoveCategory: presentCategoryEditor,
                             onDownload: downloadBook,
                             onClearDownloadData: clearDownloadedData,
-                            onDelete: deleteFromCategories
+                                onDelete: deleteFromCategories
+                        )
+                        .id(category.id)
+                    }
+                }
+                .onPreferenceChange(CategoryShelfFramePreferenceKey.self) { frames in
+                    guard categoryShelfFrames != frames else { return }
+                    categoryShelfFrames = frames
+                    if let categoryDragLocation {
+                        updateCategoryDragTarget(
+                            sessionID: categoryDragLocation.sessionID,
+                            location: categoryDragLocation.location
                         )
                     }
                 }
@@ -1996,87 +2133,6 @@ private struct DownloadStatusBadge: View {
     }
 }
 
-private enum CategoryDropIndicatorEdge: Equatable {
-    case top
-    case bottom
-}
-
-private struct CategoryDropIndicator: View {
-    @Environment(\.appTheme) private var theme
-    let edge: CategoryDropIndicatorEdge?
-
-    @ViewBuilder
-    var body: some View {
-        if let edge {
-            VStack(spacing: 0) {
-                if edge == .bottom { Spacer(minLength: 0) }
-
-                Capsule()
-                    .fill(theme.accent)
-                    .frame(height: 3)
-                    .padding(.horizontal, 6)
-                    .shadow(color: theme.accent.opacity(0.28), radius: 3)
-
-                if edge == .top { Spacer(minLength: 0) }
-            }
-            .offset(y: edge == .top ? -11 : 11)
-            .transition(.opacity.combined(with: .scale(scale: 0.96)))
-        }
-    }
-}
-
-private struct CategoryDragPreview: View {
-    @Environment(\.appTheme) private var theme
-    @EnvironmentObject private var downloadManager: BookDownloadManager
-    let category: LibraryCategory
-    let visibleNovels: [Novel]
-    let width: CGFloat
-
-    private let cardHeight: CGFloat = 88
-    private let peekOffset: CGFloat = 22
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                Text(category.name)
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(theme.primaryText)
-                    .lineLimit(1)
-
-                Spacer(minLength: 8)
-
-                Text("\(category.novels.count) 本")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(theme.secondaryText)
-            }
-            .frame(minHeight: 34)
-
-            if visibleNovels.isEmpty {
-                EmptyCategoryRow()
-            } else {
-                VStack(spacing: -(cardHeight - peekOffset)) {
-                    ForEach(Array(visibleNovels.enumerated()), id: \.element.id) { index, novel in
-                        StackBookCard(novel: novel)
-                            .frame(height: cardHeight)
-                            .scaleEffect(1 - CGFloat(index) * 0.005, anchor: .top)
-                            .zIndex(Double(visibleNovels.count - index))
-                    }
-                }
-            }
-        }
-        .padding(12)
-        .frame(width: min(max(width, 320), 430))
-        .background(theme.cardBackground.opacity(0.98))
-        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(theme.accent.opacity(0.24), lineWidth: 1)
-        )
-        .shadow(color: .black.opacity(0.2), radius: 18, x: 0, y: 10)
-        .allowsHitTesting(false)
-    }
-}
-
 private struct CategoryShelfWidthPreferenceKey: PreferenceKey {
     static var defaultValue: CGFloat = 0
 
@@ -2086,381 +2142,37 @@ private struct CategoryShelfWidthPreferenceKey: PreferenceKey {
     }
 }
 
-/// Passively observes the finger that initiated a category drag. Keeping this
-/// recognizer in `.possible` means it never competes with UIKit's private drag
-/// recognizers; it only gives us a guaranteed release/cancel signal.
-private final class CategoryDragReleaseObserver: UIGestureRecognizer, UIGestureRecognizerDelegate {
-    var onTouchBegan: (() -> Void)?
-    var onRelease: (() -> Void)?
+private struct CategoryShelfFramePreferenceKey: PreferenceKey {
+    static var defaultValue: [UUID: CGRect] = [:]
 
-    init(
-        onTouchBegan: @escaping () -> Void,
-        onRelease: @escaping () -> Void
+    static func reduce(
+        value: inout [UUID: CGRect],
+        nextValue: () -> [UUID: CGRect]
     ) {
-        self.onTouchBegan = onTouchBegan
-        self.onRelease = onRelease
-        super.init(target: nil, action: nil)
-        cancelsTouchesInView = false
-        delaysTouchesBegan = false
-        delaysTouchesEnded = false
-        delegate = self
-    }
-
-    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
-        onTouchBegan?()
-        state = .began
-    }
-
-    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) {
-        state = .changed
-    }
-
-    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) {
-        onRelease?()
-        state = .ended
-    }
-
-    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) {
-        // UIDragInteraction cancels sibling recognizers when it takes ownership
-        // of the touch. That is the start of a real drag, not a finger release;
-        // hiding the hosted preview here leaves UIKit's empty white container.
-        // The drag delegate's end/cancel callbacks handle genuine termination.
-        state = .cancelled
-    }
-
-    override func canPrevent(_ preventedGestureRecognizer: UIGestureRecognizer) -> Bool {
-        false
-    }
-
-    override func canBePrevented(by preventingGestureRecognizer: UIGestureRecognizer) -> Bool {
-        false
-    }
-
-    func gestureRecognizer(
-        _ gestureRecognizer: UIGestureRecognizer,
-        shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
-    ) -> Bool {
-        true
+        value.merge(nextValue()) { _, latest in latest }
     }
 }
 
-/// UIKit exposes both the exact lift preview and a reliable session-ended callback.
-/// Keeping the interaction on a transparent header-sized view avoids SwiftUI's
-/// automatic title-only lift card while preserving the title as the sole drag handle.
-private struct CategoryDragHandle<Preview: View>: UIViewRepresentable {
-    let identifier: String
-    let onDragBegan: () -> Void
-    let onTouchReleased: () -> Void
-    let onDragEnded: () -> Void
-    let preview: () -> Preview
-
-    init(
-        identifier: String,
-        onDragBegan: @escaping () -> Void,
-        onTouchReleased: @escaping () -> Void,
-        onDragEnded: @escaping () -> Void,
-        @ViewBuilder preview: @escaping () -> Preview
-    ) {
-        self.identifier = identifier
-        self.onDragBegan = onDragBegan
-        self.onTouchReleased = onTouchReleased
-        self.onDragEnded = onDragEnded
-        self.preview = preview
-    }
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator(
-            identifier: identifier,
-            onDragBegan: onDragBegan,
-            onTouchReleased: onTouchReleased,
-            onDragEnded: onDragEnded,
-            preview: preview
-        )
-    }
-
-    func makeUIView(context: Context) -> UIView {
-        let view = UIView()
-        view.backgroundColor = .clear
-        view.isAccessibilityElement = false
-        view.addGestureRecognizer(
-            CategoryDragReleaseObserver(
-                onTouchBegan: { [weak coordinator = context.coordinator] in
-                    coordinator?.touchDidBegin()
-                },
-                onRelease: { [weak coordinator = context.coordinator] in
-                    coordinator?.touchDidEnd()
-                }
-            )
-        )
-        view.addInteraction(UIDragInteraction(delegate: context.coordinator))
-        return view
-    }
-
-    func updateUIView(_ uiView: UIView, context: Context) {
-        context.coordinator.update(
-            identifier: identifier,
-            onDragBegan: onDragBegan,
-            onTouchReleased: onTouchReleased,
-            onDragEnded: onDragEnded,
-            preview: preview
-        )
-    }
-
-    final class Coordinator: NSObject, UIDragInteractionDelegate {
-        private var identifier: String
-        private var onDragBegan: () -> Void
-        private var onTouchReleased: () -> Void
-        private var onDragEnded: () -> Void
-        private var makePreview: () -> AnyView
-        private var previewController: UIHostingController<AnyView>?
-        private var isTouchDown = false
-
-        init(
-            identifier: String,
-            onDragBegan: @escaping () -> Void,
-            onTouchReleased: @escaping () -> Void,
-            onDragEnded: @escaping () -> Void,
-            preview: @escaping () -> Preview
-        ) {
-            self.identifier = identifier
-            self.onDragBegan = onDragBegan
-            self.onTouchReleased = onTouchReleased
-            self.onDragEnded = onDragEnded
-            self.makePreview = { AnyView(preview()) }
-        }
-
-        func update(
-            identifier: String,
-            onDragBegan: @escaping () -> Void,
-            onTouchReleased: @escaping () -> Void,
-            onDragEnded: @escaping () -> Void,
-            preview: @escaping () -> Preview
-        ) {
-            self.identifier = identifier
-            self.onDragBegan = onDragBegan
-            self.onTouchReleased = onTouchReleased
-            self.onDragEnded = onDragEnded
-            self.makePreview = { AnyView(preview()) }
-        }
-
-        func dragInteraction(
-            _ interaction: UIDragInteraction,
-            itemsForBeginning session: UIDragSession
-        ) -> [UIDragItem] {
-            // A short lift can finish before UIKit asks for its items. Never let
-            // that late callback restore selection after the finger is already up.
-            guard isTouchDown else { return [] }
-            onDragBegan()
-            preparePreview()
-
-            let provider = NSItemProvider()
-            let data = Data(identifier.utf8)
-            provider.registerDataRepresentation(
-                forTypeIdentifier: UTType.plainText.identifier,
-                visibility: .ownProcess
-            ) { completion in
-                completion(data, nil)
-                return nil
-            }
-
-            let item = UIDragItem(itemProvider: provider)
-            item.localObject = identifier
-            item.previewProvider = { [weak self] in
-                guard let previewView = self?.previewController?.view else { return nil }
-                return UIDragPreview(
-                    view: previewView,
-                    parameters: Self.previewParameters(for: previewView)
-                )
-            }
-            return [item]
-        }
-
-        func dragInteraction(
-            _ interaction: UIDragInteraction,
-            previewForLifting item: UIDragItem,
-            session: UIDragSession
-        ) -> UITargetedDragPreview? {
-            guard let sourceView = interaction.view,
-                  let previewView = previewController?.view else {
-                return nil
-            }
-
-            let target = UIDragPreviewTarget(
-                container: sourceView,
-                center: CGPoint(
-                    x: sourceView.bounds.midX,
-                    // Keep the full shelf preview aligned with the title row
-                    // instead of centering its tall body around the finger.
-                    y: sourceView.bounds.minY + previewView.bounds.height / 2
-                )
-            )
-            return UITargetedDragPreview(
-                view: previewView,
-                parameters: Self.previewParameters(for: previewView),
-                target: target
-            )
-        }
-
-        func dragInteraction(
-            _ interaction: UIDragInteraction,
-            session: UIDragSession,
-            willEndWith operation: UIDropOperation
-        ) {
-            // Clear the source highlight as soon as the finger is released. Waiting
-            // for `didEndWith` leaves it selected throughout the cancel animation.
-            finishDragImmediately()
-        }
-
-        func dragInteraction(
-            _ interaction: UIDragInteraction,
-            previewForCancelling item: UIDragItem,
-            withDefault defaultPreview: UITargetedDragPreview
-        ) -> UITargetedDragPreview? {
-            // Releasing immediately after the lift begins follows UIKit's cancel
-            // path and may not reach `willEndWith` before the return animation.
-            // Reset here so the shelf cannot remain visually selected meanwhile.
-            finishDragImmediately()
-            // Avoid UIKit moving the tall preview back over the source shelf,
-            // which looks like a half-selected frame after the real touch ended.
-            return nil
-        }
-
-        func dragInteraction(
-            _ interaction: UIDragInteraction,
-            item: UIDragItem,
-            willAnimateCancelWith animator: UIDragAnimating
-        ) {
-            // Covers cancellation before a visible preview has fully formed.
-            finishDragImmediately()
-        }
-
-        func dragInteraction(
-            _ interaction: UIDragInteraction,
-            session: UIDragSession,
-            didEndWith operation: UIDropOperation
-        ) {
-            finishDragImmediately()
-            onDragEnded()
-            previewController = nil
-        }
-
-        func dragInteraction(
-            _ interaction: UIDragInteraction,
-            sessionAllowsMoveOperation session: UIDragSession
-        ) -> Bool {
-            true
-        }
-
-        func dragInteraction(
-            _ interaction: UIDragInteraction,
-            sessionIsRestrictedToDraggingApplication session: UIDragSession
-        ) -> Bool {
-            true
-        }
-
-        func dragInteraction(
-            _ interaction: UIDragInteraction,
-            prefersFullSizePreviewsFor session: UIDragSession
-        ) -> Bool {
-            true
-        }
-
-        func touchDidBegin() {
-            isTouchDown = true
-        }
-
-        func touchDidEnd() {
-            finishDragImmediately()
-        }
-
-        private func preparePreview() {
-            let controller = UIHostingController(rootView: makePreview())
-            // The drag window has its own safe-area insets. If the hosting
-            // controller adopts them after UIKit reparents the preview, SwiftUI
-            // pushes the shelf content down and leaves a blank white band above it.
-            controller.safeAreaRegions = []
-            controller.view.backgroundColor = .clear
-            controller.view.isOpaque = false
-            controller.view.insetsLayoutMarginsFromSafeArea = false
-            let size = controller.sizeThatFits(
-                in: CGSize(width: 460, height: 600)
-            )
-            controller.view.bounds = CGRect(origin: .zero, size: size)
-            controller.view.layoutIfNeeded()
-            previewController = controller
-        }
-
-        private static func previewParameters(for previewView: UIView) -> UIDragPreviewParameters {
-            let parameters = UIDragPreviewParameters()
-            // Both the lift transition and the settled drag preview need these
-            // parameters. Otherwise UIKit restores its default rectangular white
-            // background after the lift, which shows through the rounded corners.
-            parameters.backgroundColor = .clear
-            parameters.visiblePath = UIBezierPath(
-                roundedRect: previewView.bounds,
-                cornerRadius: 18
-            )
-            return parameters
-        }
-
-        private func finishDragImmediately() {
-            isTouchDown = false
-            // The custom preview is backed by this hosted view on current UIKit
-            // versions. Hiding it on the actual touch-up prevents a stale snapshot
-            // from lingering while UIKit finishes its cancellation bookkeeping.
-            previewController?.view.layer.removeAllAnimations()
-            previewController?.view.alpha = 0
-            onTouchReleased()
-        }
-    }
-}
-
-private struct CategoryReorderDropDelegate: DropDelegate {
-    let targetCategoryID: UUID
-    @Binding var draggedCategoryID: UUID?
-    @Binding var isTargeted: Bool
-    let onReorderCategory: (UUID, UUID) -> Bool
-
-    func validateDrop(info: DropInfo) -> Bool {
-        draggedCategoryID != nil && info.hasItemsConforming(to: [UTType.plainText])
-    }
-
-    func dropEntered(info: DropInfo) {
-        isTargeted = draggedCategoryID != nil && draggedCategoryID != targetCategoryID
-    }
-
-    func dropExited(info: DropInfo) {
-        isTargeted = false
-    }
-
-    func dropUpdated(info: DropInfo) -> DropProposal? {
-        // Categorization is an in-place reorder, not a copy. Explicit move semantics
-        // also removes the system's misleading green "+" badge from the drag preview.
-        DropProposal(operation: .move)
-    }
-
-    func performDrop(info: DropInfo) -> Bool {
-        guard let sourceID = draggedCategoryID else { return false }
-        defer {
-            isTargeted = false
-            draggedCategoryID = nil
-        }
-        if sourceID == targetCategoryID { return true }
-        return onReorderCategory(sourceID, targetCategoryID)
-    }
+private struct CategoryDragLocation: Equatable {
+    let sessionID: UUID
+    let location: CGPoint
 }
 
 private struct StackedCategoryShelf: View {
     @Environment(\.appTheme) private var theme
     @EnvironmentObject private var downloadManager: BookDownloadManager
+    @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
+    @AppStorage("reader.usesTraditionalChinese") private var usesTraditionalChinese = false
     let category: LibraryCategory
     let categoryOrder: [UUID]
     let namespace: Namespace.ID
     let isExpanded: Bool
     @Binding var activeSwipeID: UUID?
-    @Binding var draggedCategoryID: UUID?
+    @Binding var categoryReorderState: CategoryReorderState
     let onCategoryDragBegan: () -> Void
-    let onReorderCategory: (UUID, UUID) -> Bool
+    let onCategoryDragMoved: (UUID, CGPoint) -> Void
+    let onCategoryDragEdgeChanged: (UUID, CategoryDragAutoScrollDirection?) -> Void
+    let onCategoryDragEnded: (UUID, Bool) -> Void
     let onMoveCategoryBy: (Int) -> Bool
     let onTopTap: (Novel) -> Void
     let onExpand: () -> Void
@@ -2469,26 +2181,22 @@ private struct StackedCategoryShelf: View {
     let onClearDownloadData: (Novel) -> Void
     let onDelete: (Novel) -> Void
 
-    @State private var isCategoryDropTargeted = false
     @State private var categoryShelfWidth: CGFloat = 340
-    @State private var isCategoryHighlighted = false
+    /// The lift highlight belongs to this shelf, not to the library-wide reorder
+    /// model. Clearing it locally lets SwiftUI repaint the touched shelf on finger-up
+    /// before the shared model performs a potentially larger category reorder. The
+    /// session ID prevents teardown from an older gesture clearing a newer highlight.
+    @State private var highlightedDragSessionID: UUID?
 
-    private let cardHeight: CGFloat = 88
-    private let peekOffset: CGFloat = 22
-    private let maxVisible = 3
-
-    private var sortedNovels: [Novel] {
-        category.novels.sorted { lhs, rhs in
-            let l = lhs.librarySortRank
-            let r = rhs.librarySortRank
-            if l != r { return l > r }
-            return lhs.readMinutes > rhs.readMinutes
-        }
+    private var visibleNovels: [Novel] {
+        category.novels.libraryPreviewNovels(
+            limit: CategoryShelfMetrics.maximumVisibleBooks
+        )
     }
 
     private var dropIndicatorEdge: CategoryDropIndicatorEdge? {
-        guard isCategoryDropTargeted,
-              let sourceID = draggedCategoryID,
+        guard categoryReorderState.targetCategoryID == category.id,
+              let sourceID = categoryReorderState.sourceCategoryID,
               sourceID != category.id,
               let sourceIndex = categoryOrder.firstIndex(of: sourceID),
               let targetIndex = categoryOrder.firstIndex(of: category.id) else {
@@ -2498,7 +2206,8 @@ private struct StackedCategoryShelf: View {
     }
 
     var body: some View {
-        let visible = Array(sortedNovels.prefix(maxVisible))
+        let visible = visibleNovels
+        let isCategoryHighlighted = highlightedDragSessionID != nil
 
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
@@ -2522,33 +2231,53 @@ private struct StackedCategoryShelf: View {
             .contentShape(Rectangle())
             .overlay {
                 let categoryID = category.id
-                CategoryDragHandle(
-                    identifier: categoryID.uuidString,
-                    onDragBegan: {
-                        draggedCategoryID = categoryID
-                        isCategoryHighlighted = true
+                CategoryDragInteractionView(
+                    identifier: categoryID,
+                    onTouchBegan: { session in
+                        categoryReorderState.touchBegan(session: session)
+                    },
+                    onDragBegan: { session in
+                        categoryReorderState.dragBegan(session: session)
+                        guard categoryReorderState.activeSessionID == session.id,
+                              categoryReorderState.sourceCategoryID == categoryID else {
+                            return
+                        }
+                        highlightedDragSessionID = session.id
                         onCategoryDragBegan()
                     },
-                    onTouchReleased: {
-                        isCategoryHighlighted = false
-                    },
-                    onDragEnded: {
-                        if draggedCategoryID == categoryID {
-                            draggedCategoryID = nil
+                    onDragMoved: onCategoryDragMoved,
+                    onDragEdgeChanged: onCategoryDragEdgeChanged,
+                    onTouchReleased: { sessionID in
+                        if highlightedDragSessionID == sessionID {
+                            highlightedDragSessionID = nil
                         }
+                    },
+                    onDragEnded: { sessionID, shouldCommit in
+                        if highlightedDragSessionID == sessionID {
+                            highlightedDragSessionID = nil
+                        }
+                        onCategoryDragEnded(sessionID, shouldCommit)
                     }
                 ) {
                     CategoryDragPreview(
-                        category: category,
-                        visibleNovels: visible,
+                        model: CategoryDragPreviewModel(
+                            category: category,
+                            visibleNovels: visible,
+                            usesTraditionalChinese: usesTraditionalChinese
+                        ),
                         width: categoryShelfWidth
                     )
-                    .environmentObject(downloadManager)
+                    .environment(\.appTheme, theme)
                 }
                 .accessibilityHidden(true)
             }
             .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("library.category.\(category.id.uuidString)")
             .accessibilityLabel("\(category.name)，\(category.novels.count) 本")
+            .accessibilityValue(
+                "第\((categoryOrder.firstIndex(of: category.id) ?? 0) + 1)个，"
+                    + (isCategoryHighlighted ? "拖动中" : "未拖动")
+            )
             .accessibilityHint("长按并拖动可调整分类顺序")
             .accessibilityAction(named: "上移") {
                 _ = onMoveCategoryBy(-1)
@@ -2567,7 +2296,12 @@ private struct StackedCategoryShelf: View {
                 // press).
                 let frontID = visible.first?.id
                 let isSwipeActive = frontID != nil && activeSwipeID == frontID
-                VStack(spacing: -(cardHeight - peekOffset)) {
+                VStack(
+                    spacing: -(
+                        CategoryShelfMetrics.cardHeight
+                            - CategoryShelfMetrics.peekOffset
+                    )
+                ) {
                     ForEach(Array(visible.enumerated()), id: \.element.id) { index, novel in
                         if index == 0 {
                             let actions = bookDownloadActions(for: novel, manager: downloadManager)
@@ -2576,7 +2310,7 @@ private struct StackedCategoryShelf: View {
                                 activeSwipeID: $activeSwipeID,
                                 label: {
                                     StackBookCard(novel: novel)
-                                        .frame(height: cardHeight)
+                                        .frame(height: CategoryShelfMetrics.cardHeight)
                                         .matchedGeometryEffect(id: novel.id, in: namespace, isSource: !isExpanded)
                                 },
                                 onTap: { onTopTap(novel) },
@@ -2585,18 +2319,18 @@ private struct StackedCategoryShelf: View {
                                 onClearDownloadData: actions.onClearDownloadData == nil ? nil : { onClearDownloadData(novel) },
                                 onDelete: { onDelete(novel) }
                             )
-                            .zIndex(Double(maxVisible))
+                            .zIndex(Double(CategoryShelfMetrics.maximumVisibleBooks))
                             .opacity(isExpanded ? 0 : 1)
                             .allowsHitTesting(!isExpanded)
                         } else {
                             StackBookCard(novel: novel)
-                                .frame(height: cardHeight)
+                                .frame(height: CategoryShelfMetrics.cardHeight)
                                 .matchedGeometryEffect(id: novel.id, in: namespace, isSource: !isExpanded)
                                 // Keep peek cards close to full width so the visible sliver
                                 // remains an easy tap target (was 0.012, which made a 2-card
                                 // stack's lone peek visibly narrower and easy to misclick).
                                 .scaleEffect(1 - CGFloat(index) * 0.005, anchor: .top)
-                                .zIndex(Double(maxVisible - index))
+                                .zIndex(Double(CategoryShelfMetrics.maximumVisibleBooks - index))
                                 // Fade peek cards while a swipe is open so the action
                                 // labels under the front card don't compete visually
                                 // with the next card's title/last-chapter line.
@@ -2617,10 +2351,15 @@ private struct StackedCategoryShelf: View {
         }
         .background {
             GeometryReader { proxy in
-                Color.clear.preference(
-                    key: CategoryShelfWidthPreferenceKey.self,
-                    value: proxy.size.width
-                )
+                Color.clear
+                    .preference(
+                        key: CategoryShelfWidthPreferenceKey.self,
+                        value: proxy.size.width
+                    )
+                    .preference(
+                        key: CategoryShelfFramePreferenceKey.self,
+                        value: [category.id: proxy.frame(in: .global)]
+                    )
             }
         }
         .onPreferenceChange(CategoryShelfWidthPreferenceKey.self) { width in
@@ -2644,22 +2383,20 @@ private struct StackedCategoryShelf: View {
             }
             .allowsHitTesting(false)
         }
-        .scaleEffect(isCategoryHighlighted ? 1.008 : 1)
+        .scaleEffect(
+            accessibilityReduceMotion ? 1 : (isCategoryHighlighted ? 1.008 : 1)
+        )
         .animation(
-            isCategoryHighlighted
-                ? .easeInOut(duration: 0.16)
-                : .easeOut(duration: 0.14),
+            accessibilityReduceMotion
+                ? nil
+                : (isCategoryHighlighted
+                    ? .easeInOut(duration: 0.16)
+                    : .easeOut(duration: 0.14)),
             value: isCategoryHighlighted
         )
-        .animation(.easeInOut(duration: 0.16), value: dropIndicatorEdge)
-        .onDrop(
-            of: [UTType.plainText.identifier],
-            delegate: CategoryReorderDropDelegate(
-                targetCategoryID: category.id,
-                draggedCategoryID: $draggedCategoryID,
-                isTargeted: $isCategoryDropTargeted,
-                onReorderCategory: onReorderCategory
-            )
+        .animation(
+            accessibilityReduceMotion ? nil : .easeInOut(duration: 0.16),
+            value: dropIndicatorEdge
         )
     }
 
@@ -2789,12 +2526,7 @@ private struct ExpandedCategoryOverlay: View {
     let onClearDownloadData: (Novel) -> Void
 
     private var sortedNovels: [Novel] {
-        category.novels.sorted { lhs, rhs in
-            let l = lhs.librarySortRank
-            let r = rhs.librarySortRank
-            if l != r { return l > r }
-            return lhs.readMinutes > rhs.readMinutes
-        }
+        category.novels.sorted { $0.isOrderedBeforeInLibrary($1) }
     }
 
     var body: some View {
@@ -3087,12 +2819,7 @@ private struct CategoryDetailView: View {
 
         switch sortMode {
         case .recent:
-            return filtered.sorted { lhs, rhs in
-                let l = lhs.librarySortRank
-                let r = rhs.librarySortRank
-                if l != r { return l > r }
-                return lhs.readMinutes > rhs.readMinutes
-            }
+            return filtered.sorted { $0.isOrderedBeforeInLibrary($1) }
         case .title:
             return filtered.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
         case .author:

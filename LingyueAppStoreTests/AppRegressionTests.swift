@@ -148,6 +148,263 @@ private struct AnnouncementTestContext {
     }
 }
 
+final class CategoryReorderStateTests: XCTestCase {
+    @MainActor
+    func testDragSnapshotContainsVisiblePixels() throws {
+        let image = try XCTUnwrap(
+            CategoryDragSnapshotRenderer.image(
+                for: RoundedRectangle(cornerRadius: 8)
+                    .fill(Color.red)
+                    .frame(width: 40, height: 30),
+                displayScale: 2
+            )
+        )
+        let cgImage = try XCTUnwrap(image.cgImage)
+        var pixel = [UInt8](repeating: 0, count: 4)
+        let context = try XCTUnwrap(
+            CGContext(
+                data: &pixel,
+                width: 1,
+                height: 1,
+                bitsPerComponent: 8,
+                bytesPerRow: 4,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            )
+        )
+        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: 1, height: 1))
+
+        XCTAssertEqual(image.size, CGSize(width: 40, height: 30))
+        XCTAssertGreaterThan(pixel[3], 0)
+    }
+
+    @MainActor
+    func testFullCategoryDragPreviewRendersTitleAndBookArea() throws {
+        let model = makeDragPreviewModel()
+        let image = try XCTUnwrap(
+            CategoryDragSnapshotRenderer.image(
+                for: CategoryDragPreview(model: model, width: 340),
+                displayScale: 2
+            )
+        )
+
+        XCTAssertEqual(image.size.width, 340, accuracy: 0.5)
+        XCTAssertGreaterThan(image.size.height, CategoryShelfMetrics.cardHeight)
+        XCTAssertNotNil(image.cgImage)
+    }
+
+    @MainActor
+    func testFullCategoryDragPreviewRenderPerformance() {
+        let model = makeDragPreviewModel()
+        let options = XCTMeasureOptions()
+        options.iterationCount = 5
+
+        measure(metrics: [XCTClockMetric()], options: options) {
+            _ = autoreleasepool {
+                CategoryDragSnapshotRenderer.image(
+                    for: CategoryDragPreview(model: model, width: 340),
+                    displayScale: 2
+                )
+            }
+        }
+    }
+
+    func testQuickReleaseBeforeDragReturnsDirectlyToIdle() {
+        let categoryID = UUID()
+        let session = CategoryReorderSession(id: UUID(), categoryID: categoryID)
+        var state = CategoryReorderState()
+
+        state.touchBegan(session: session)
+        XCTAssertEqual(state.phase, .pressing(session))
+        XCTAssertFalse(state.transferIsActive)
+
+        state.touchEnded(sessionID: session.id)
+        XCTAssertEqual(state.phase, .idle)
+        XCTAssertNil(state.sourceCategoryID)
+        XCTAssertNil(state.targetCategoryID)
+    }
+
+    func testReleaseClearsHighlightButRetainsSourceUntilDropCompletes() {
+        let sourceID = UUID()
+        let targetID = UUID()
+        let session = CategoryReorderSession(id: UUID(), categoryID: sourceID)
+        var state = CategoryReorderState()
+
+        state.touchBegan(session: session)
+        state.dragBegan(session: session)
+        state.enteredTarget(categoryID: targetID)
+
+        XCTAssertTrue(state.isSourceHighlighted(sourceID))
+        XCTAssertEqual(state.targetCategoryID, targetID)
+
+        state.touchEnded(sessionID: session.id)
+        XCTAssertEqual(state.phase, .released(session))
+        XCTAssertFalse(state.isSourceHighlighted(sourceID))
+        XCTAssertEqual(state.sourceCategoryID, sourceID)
+        XCTAssertEqual(state.targetCategoryID, targetID)
+
+        state.finish()
+        XCTAssertEqual(state.phase, .idle)
+        XCTAssertNil(state.sourceCategoryID)
+        XCTAssertNil(state.targetCategoryID)
+    }
+
+    func testCancelClearsTargetBeforeNextDrag() {
+        let firstSourceID = UUID()
+        let staleTargetID = UUID()
+        let nextSourceID = UUID()
+        let firstSession = CategoryReorderSession(id: UUID(), categoryID: firstSourceID)
+        let nextSession = CategoryReorderSession(id: UUID(), categoryID: nextSourceID)
+        var state = CategoryReorderState()
+
+        state.touchBegan(session: firstSession)
+        state.dragBegan(session: firstSession)
+        state.enteredTarget(categoryID: staleTargetID)
+        state.touchEnded(sessionID: firstSession.id)
+        state.finish()
+
+        state.touchBegan(session: nextSession)
+        state.dragBegan(session: nextSession)
+        XCTAssertEqual(state.sourceCategoryID, nextSourceID)
+        XCTAssertNil(state.targetCategoryID)
+    }
+
+    func testLateCallbackFromOldDragCannotClearNewDrag() {
+        let oldCategoryID = UUID()
+        let newCategoryID = UUID()
+        let oldSession = CategoryReorderSession(id: UUID(), categoryID: oldCategoryID)
+        let newSession = CategoryReorderSession(id: UUID(), categoryID: newCategoryID)
+        var state = CategoryReorderState()
+
+        state.touchBegan(session: oldSession)
+        state.dragBegan(session: oldSession)
+        state.finish(sessionID: oldSession.id)
+        state.touchBegan(session: newSession)
+        state.dragBegan(session: newSession)
+
+        state.finish(sessionID: oldSession.id)
+        XCTAssertEqual(state.phase, .dragging(newSession))
+        XCTAssertEqual(state.sourceCategoryID, newCategoryID)
+    }
+
+    func testLateCallbackCannotClearNewDragOfTheSameCategory() {
+        let categoryID = UUID()
+        let oldSession = CategoryReorderSession(id: UUID(), categoryID: categoryID)
+        let newSession = CategoryReorderSession(id: UUID(), categoryID: categoryID)
+        var state = CategoryReorderState()
+
+        state.touchBegan(session: oldSession)
+        state.dragBegan(session: oldSession)
+        state.finish(sessionID: oldSession.id)
+        state.touchBegan(session: newSession)
+        state.dragBegan(session: newSession)
+
+        state.touchEnded(sessionID: oldSession.id)
+        state.finish(sessionID: oldSession.id)
+
+        XCTAssertEqual(state.phase, .dragging(newSession))
+        XCTAssertTrue(state.isSourceHighlighted(categoryID))
+    }
+
+    func testGestureCompletionReturnsMoveAndResetsState() {
+        let sourceID = UUID()
+        let targetID = UUID()
+        let session = CategoryReorderSession(id: UUID(), categoryID: sourceID)
+        var state = CategoryReorderState()
+
+        state.touchBegan(session: session)
+        state.dragBegan(session: session)
+        state.updateTarget(categoryID: targetID, sessionID: session.id)
+
+        XCTAssertEqual(
+            state.complete(sessionID: session.id),
+            CategoryReorderMove(
+                sourceCategoryID: sourceID,
+                targetCategoryID: targetID
+            )
+        )
+        XCTAssertEqual(state.phase, .idle)
+        XCTAssertNil(state.targetCategoryID)
+    }
+
+    func testStaleGestureCannotRetargetOrCompleteNewSession() {
+        let categoryID = UUID()
+        let oldSession = CategoryReorderSession(id: UUID(), categoryID: categoryID)
+        let newSession = CategoryReorderSession(id: UUID(), categoryID: categoryID)
+        var state = CategoryReorderState()
+
+        state.touchBegan(session: oldSession)
+        state.dragBegan(session: oldSession)
+        state.finish(sessionID: oldSession.id)
+        state.touchBegan(session: newSession)
+        state.dragBegan(session: newSession)
+
+        state.updateTarget(categoryID: UUID(), sessionID: oldSession.id)
+        XCTAssertNil(state.complete(sessionID: oldSession.id))
+        XCTAssertEqual(state.phase, .dragging(newSession))
+        XCTAssertNil(state.targetCategoryID)
+    }
+
+    private func makeDragPreviewModel() -> CategoryDragPreviewModel {
+        let novels = (0..<3).map { index in
+            Novel(
+                title: "预览书籍\(index + 1)",
+                author: "作者",
+                genre: "测试",
+                summary: "",
+                lastChapter: "第\(index + 1)章",
+                progress: Double(index) * 0.2,
+                readMinutes: index,
+                addedAt: Date(timeIntervalSince1970: TimeInterval(index)),
+                coverPalette: NovelCoverPalette.allCases[index],
+                isFeatured: false
+            )
+        }
+        return CategoryDragPreviewModel(
+            category: LibraryCategory(name: "测试分类", novels: novels),
+            visibleNovels: novels,
+            usesTraditionalChinese: false
+        )
+    }
+}
+
+final class LibraryPreviewSelectionTests: XCTestCase {
+    func testPreviewSelectsOnlyThreeMostRelevantBooksInDisplayOrder() {
+        let older = makeNovel(title: "较早", openedAt: 10, readMinutes: 500)
+        let tiedLower = makeNovel(title: "同日短读", openedAt: 20, readMinutes: 5)
+        let newest = makeNovel(title: "最新", openedAt: 30, readMinutes: 1)
+        let tiedHigher = makeNovel(title: "同日长读", openedAt: 20, readMinutes: 50)
+
+        let result = [older, tiedLower, newest, tiedHigher]
+            .libraryPreviewNovels(limit: 3)
+
+        XCTAssertEqual(result.map(\.title), ["最新", "同日长读", "同日短读"])
+    }
+
+    func testPreviewSelectionHandlesZeroLimit() {
+        XCTAssertTrue([makeNovel(title: "一本", openedAt: 1)].libraryPreviewNovels(limit: 0).isEmpty)
+    }
+
+    private func makeNovel(
+        title: String,
+        openedAt: TimeInterval,
+        readMinutes: Int = 0
+    ) -> Novel {
+        Novel(
+            title: title,
+            author: "测试",
+            genre: "测试",
+            summary: "",
+            lastChapter: "第一章",
+            progress: 0,
+            readMinutes: readMinutes,
+            lastOpenedAt: Date(timeIntervalSince1970: openedAt),
+            coverPalette: .teal,
+            isFeatured: false
+        )
+    }
+}
+
 final class ReadingStatsLedgerTests: XCTestCase {
     func testReadableCharacterCountExcludesWhitespaceAndPunctuation() {
         XCTAssertEqual(

@@ -735,12 +735,27 @@ final class LibraryStore: ObservableObject {
 
 #if DEBUG
         let usesScreenshotFixture = CommandLine.arguments.contains("--screenshot-fixture")
-        let loadedLibrary = usesScreenshotFixture
-            ? LibraryStorageSnapshot(
+        let usesCategoryReorderFixture = CommandLine.arguments.contains(
+            "--category-reorder-fixture"
+        )
+        let usesLongCategoryReorderFixture = CommandLine.arguments.contains(
+            "--category-reorder-long-fixture"
+        )
+        let loadedLibrary = if usesCategoryReorderFixture {
+            LibraryStorageSnapshot(
+                categories: LibraryStore.categoryReorderFixtureCategories(
+                    count: usesLongCategoryReorderFixture ? 8 : 3
+                ),
+                archivedBooks: []
+            )
+        } else if usesScreenshotFixture {
+            LibraryStorageSnapshot(
                 categories: LibraryStore.screenshotFixtureCategories(),
                 archivedBooks: []
             )
-            : LibraryStore.loadLibrary(from: storageURL)
+        } else {
+            LibraryStore.loadLibrary(from: storageURL)
+        }
         let normalizedLibrary = LibraryStore.normalizedLibrary(loadedLibrary)
         self.categories = normalizedLibrary.categories
         self.archivedBooks = normalizedLibrary.archivedBooks
@@ -1512,6 +1527,48 @@ final class LibraryStore: ObservableObject {
     }
 
 #if DEBUG
+    private static func categoryReorderFixtureCategories(count: Int) -> [LibraryCategory] {
+        let categoryIDs = [
+            UUID(uuidString: "11111111-1111-4111-8111-111111111111")!,
+            UUID(uuidString: "22222222-2222-4222-8222-222222222222")!,
+            UUID(uuidString: "33333333-3333-4333-8333-333333333333")!,
+            UUID(uuidString: "44444444-4444-4444-8444-444444444444")!,
+            UUID(uuidString: "55555555-5555-4555-8555-555555555555")!,
+            UUID(uuidString: "66666666-6666-4666-8666-666666666666")!,
+            UUID(uuidString: "77777777-7777-4777-8777-777777777777")!,
+            UUID(uuidString: "88888888-8888-4888-8888-888888888888")!
+        ]
+        let names = [
+            "第一分类", "第二分类", "第三分类", "第四分类",
+            "第五分类", "第六分类", "第七分类", "第八分类"
+        ]
+
+        return zip(categoryIDs, names).prefix(max(0, min(count, categoryIDs.count)))
+            .enumerated().map { index, pair in
+            let (categoryID, name) = pair
+            let novel = Novel(
+                id: UUID(
+                    uuidString: String(
+                        format: "AAAAAAAA-AAAA-4AAA-8AAA-%012d",
+                        index + 1
+                    )
+                )!,
+                title: "拖拽测试书籍\(index + 1)",
+                author: "测试作者",
+                genre: "测试",
+                summary: "",
+                lastChapter: "第一章",
+                progress: Double(index) * 0.1,
+                readMinutes: 0,
+                lastOpenedAt: nil,
+                addedAt: Date(timeIntervalSince1970: TimeInterval(index + 1)),
+                coverPalette: NovelCoverPalette.allCases[index % NovelCoverPalette.allCases.count],
+                isFeatured: false
+            )
+            return LibraryCategory(id: categoryID, name: name, novels: [novel])
+        }
+    }
+
     private static func screenshotFixtureCategories() -> [LibraryCategory] {
         let novel = Novel(
             id: UUID(uuidString: "8F72F58F-3B6A-4E08-960D-70F92D6BB377")!,

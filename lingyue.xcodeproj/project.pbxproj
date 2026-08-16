@@ -53,6 +53,9 @@
 		64AE68302FB6C76D004058EE /* ReaderPrefetchScheduler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01000000000000000000003A /* ReaderPrefetchScheduler.swift */; };
 		64AE68312FB6C76D004058EE /* ReaderSessionState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01000000000000000000003B /* ReaderSessionState.swift */; };
 		64AE68322FB6C76D004058EE /* ArchivedBooksView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01000000000000000000003C /* ArchivedBooksView.swift */; };
+		64AE68332FB6C76D004058EE /* CategoryReorderState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01000000000000000000003D /* CategoryReorderState.swift */; };
+		64AE68342FB6C76D004058EE /* CategoryDragInteractionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01000000000000000000003E /* CategoryDragInteractionView.swift */; };
+		64AE68352FB6C76D004058EE /* CategoryDragPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01000000000000000000003F /* CategoryDragPreview.swift */; };
 		64AE68F02FB6C76D004058EE /* BackupService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000030 /* BackupService.swift */; };
 		64AE68F12FB6C76D004058EE /* BackupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000031 /* BackupView.swift */; };
 		64AE68F22FB6C76D004058EE /* IPAttestationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000032 /* IPAttestationView.swift */; };
@@ -146,6 +149,9 @@
 		01000000000000000000003A /* ReaderPrefetchScheduler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReaderPrefetchScheduler.swift; sourceTree = "<group>"; };
 		01000000000000000000003B /* ReaderSessionState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReaderSessionState.swift; sourceTree = "<group>"; };
 		01000000000000000000003C /* ArchivedBooksView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArchivedBooksView.swift; sourceTree = "<group>"; };
+		01000000000000000000003D /* CategoryReorderState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CategoryReorderState.swift; sourceTree = "<group>"; };
+		01000000000000000000003E /* CategoryDragInteractionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CategoryDragInteractionView.swift; sourceTree = "<group>"; };
+		01000000000000000000003F /* CategoryDragPreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CategoryDragPreview.swift; sourceTree = "<group>"; };
 		010000000000000000000801 /* DMSerifDisplay-Regular.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "DMSerifDisplay-Regular.ttf"; sourceTree = "<group>"; };
 		010000000000000000000802 /* DMSerifDisplay-Italic.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "DMSerifDisplay-Italic.ttf"; sourceTree = "<group>"; };
 		010000000000000000000803 /* DMSerifDisplay-OFL.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "DMSerifDisplay-OFL.txt"; sourceTree = "<group>"; };
@@ -255,6 +261,9 @@
 			children = (
 				010000000000000000000005 /* ReaderStyle.swift */,
 				010000000000000000000006 /* LibraryView.swift */,
+				01000000000000000000003D /* CategoryReorderState.swift */,
+				01000000000000000000003E /* CategoryDragInteractionView.swift */,
+				01000000000000000000003F /* CategoryDragPreview.swift */,
 				01000000000000000000003C /* ArchivedBooksView.swift */,
 				01000000000000000000001B /* ReadingStatsView.swift */,
 				01000000000000000000001C /* ReadingHistoryView.swift */,
@@ -477,6 +486,9 @@
 				64AE67FE2FB6C76D004058EE /* Novel.swift in Sources */,
 				64AE67FF2FB6C76D004058EE /* ReaderStyle.swift in Sources */,
 				64AE68002FB6C76D004058EE /* LibraryView.swift in Sources */,
+				64AE68332FB6C76D004058EE /* CategoryReorderState.swift in Sources */,
+				64AE68342FB6C76D004058EE /* CategoryDragInteractionView.swift in Sources */,
+				64AE68352FB6C76D004058EE /* CategoryDragPreview.swift in Sources */,
 				64AE68322FB6C76D004058EE /* ArchivedBooksView.swift in Sources */,
 				64AE68012FB6C76D004058EE /* ReadingStatsView.swift in Sources */,
 				64AE68022FB6C76D004058EE /* ReadingHistoryView.swift in Sources */,

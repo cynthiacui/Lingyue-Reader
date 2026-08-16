@@ -80,6 +80,42 @@ struct Novel: Identifiable, Hashable, Codable, Sendable {
         case (nil, nil):   return .distantPast
         }
     }
+
+    /// Shared recent-first ordering for every library surface. Keeping this rule on
+    /// the model prevents search, expanded categories, and drag previews from slowly
+    /// drifting into subtly different orders as each screen evolves.
+    func isOrderedBeforeInLibrary(_ other: Novel) -> Bool {
+        if librarySortRank != other.librarySortRank {
+            return librarySortRank > other.librarySortRank
+        }
+        return readMinutes > other.readMinutes
+    }
+}
+
+extension Collection where Element == Novel {
+    /// Returns only the books needed by the collapsed category shelf. The result is
+    /// ordered like a full library sort, but keeping a fixed-size insertion buffer
+    /// makes the work linear in the number of books instead of sorting every book
+    /// whenever drag state causes the shelf to refresh.
+    func libraryPreviewNovels(limit: Int) -> [Novel] {
+        guard limit > 0 else { return [] }
+
+        var result: [Novel] = []
+        result.reserveCapacity(limit)
+
+        for novel in self {
+            let insertionIndex = result.firstIndex { existing in
+                novel.isOrderedBeforeInLibrary(existing)
+            } ?? result.endIndex
+
+            guard insertionIndex < limit else { continue }
+            result.insert(novel, at: insertionIndex)
+            if result.count > limit {
+                result.removeLast()
+            }
+        }
+        return result
+    }
 }
 
 enum NovelCoverPalette: String, Codable, CaseIterable, Sendable {
