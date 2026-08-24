@@ -5,7 +5,7 @@ description: How to build + install + run the Lingyue iOS app on a simulator for
 
 # Lingyue · Simulator Build Verification
 
-You're driving the Lingyue iOS app on a booted simulator to verify a code change. The data the user has accumulated in that simulator (imported books, source rules, reading stats, the `@AppStorage` flag that suppresses the first-launch onboarding overlay) is **valuable** — they've been using this sim as a real test environment. Treat it like their real device.
+You're driving the Lingyue iOS app on a booted simulator to verify a code change. Any data accumulated in that simulator (imported books, source rules, reading stats, the `@AppStorage` flag that suppresses the first-launch onboarding overlay) is **valuable** — treat an established sim like the user's real device.
 
 ## Core rule
 
@@ -13,35 +13,72 @@ You're driving the Lingyue iOS app on a booted simulator to verify a code change
 
 **`xcrun simctl uninstall` deletes the entire app sandbox** — `Library/Application Support/lingyue/*.json`, `Library/Preferences/com.lingyue.reader.plist`, downloaded chapters, web cache, all of it. The next launch comes up looking like a brand-new install: empty library, no source rules, onboarding overlay popping back up. **Don't run uninstall** unless the user explicitly asks for first-launch state.
 
+## Picking the simulator
+
+Do NOT hardcode a device UUID — Xcode runtime upgrades recreate the device list and silently orphan old UUIDs (this has already happened once: the former iPhone 17 Pro sim `AE29EF4E-…` vanished, along with the test data on it). Resolve the target dynamically:
+
+```bash
+# Prefer whatever is already booted
+xcrun simctl list devices booted
+
+# Nothing booted? List candidates and boot one (prefer the newest iOS iPhone)
+xcrun simctl list devices available | grep -i iphone
+xcrun simctl boot <UDID>
+```
+
+As of 2026-08, the working device is iPhone 17 (iOS 26.5) `5F6549FE-2A82-4D03-AB62-98CE0B537E43` — but verify with `simctl list` before relying on it. Don't reset a device (`simctl erase`) — that's even more destructive than uninstall.
+
 ## Canonical workflow
 
 ```bash
+UDID=$(xcrun simctl list devices booted | grep -oE '[0-9A-F-]{36}' | head -1)
+
 # 1. Build
 xcodebuild -project lingyue.xcodeproj \
   -scheme LingyueAppStore \
   -configuration Debug \
   -sdk iphonesimulator \
-  -destination 'platform=iOS Simulator,id=AE29EF4E-C36B-4813-BEB0-884EDB4C3DF6' \
+  -destination "platform=iOS Simulator,id=$UDID" \
   build 2>&1 | tail -3
 
 # 2. Install (in-place — preserves the sandbox)
 APP_PATH="/Users/xuanrrr/Library/Developer/Xcode/DerivedData/lingyue-aqykmwhwcnxxqmednygrmidegbxb/Build/Products/Debug-iphonesimulator/LingyueAppStore.app"
-xcrun simctl install AE29EF4E-C36B-4813-BEB0-884EDB4C3DF6 "$APP_PATH"
+xcrun simctl install "$UDID" "$APP_PATH"
 
 # 3. Launch
-xcrun simctl launch AE29EF4E-C36B-4813-BEB0-884EDB4C3DF6 com.lingyue.reader
+xcrun simctl launch "$UDID" com.lingyue.reader
 
 # 4. Sanity check: is the process alive?
 sleep 3
-xcrun simctl spawn AE29EF4E-C36B-4813-BEB0-884EDB4C3DF6 launchctl list | grep -i lingyue
+xcrun simctl spawn "$UDID" launchctl list | grep -i lingyue
 
 # 5. Screenshot if you want visual confirmation
-xcrun simctl io AE29EF4E-C36B-4813-BEB0-884EDB4C3DF6 screenshot /tmp/lingyue-verify/$(date +%H%M%S).png
+xcrun simctl io "$UDID" screenshot /tmp/lingyue-verify/$(date +%H%M%S).png
 ```
 
 DerivedData path is deterministic for this project: `lingyue-aqykmwhwcnxxqmednygrmidegbxb`. If `xcodebuild` reports a different one for some reason (clean rebuild, Xcode preferences moved), use `find ~/Library/Developer/Xcode/DerivedData -name 'LingyueAppStore.app' -path '*Debug-iphonesimulator*' | head -1`.
 
-The booted-by-default sim is iPhone 17 Pro, UUID `AE29EF4E-C36B-4813-BEB0-884EDB4C3DF6`. If it's not booted, `xcrun simctl boot AE29EF4E-...` or `xcrun simctl list devices booted` to pick another. Don't reset the device (`simctl erase`) — that's even more destructive than uninstall.
+Beware stale incremental state: if the test target suddenly can't see an app-module type that clearly exists, the products-dir `LingyueAppStore.swiftmodule` is probably outdated — `touch` the affected source file (or any app source) and rebuild the app target before blaming the code.
+
+## Seeding a reader test book (no network needed)
+
+To drive the reader end-to-end on a fresh sim without real sources, seed a local multi-chapter book and skip the first-run overlays. Do this BEFORE the app's first launch (or while it's terminated):
+
+```bash
+UDID=<udid>
+CONT=$(xcrun simctl get_app_container "$UDID" com.lingyue.reader data)
+mkdir -p "$CONT/Library/Application Support/lingyue"
+cp <fixture>.json "$CONT/Library/Application Support/lingyue/LibraryStore.json"
+
+# Reader prefs: UIPageViewController paths are exercised by slide / pageCurl
+xcrun simctl spawn "$UDID" defaults write com.lingyue.reader reader.pageTransition -string slide
+xcrun simctl spawn "$UDID" defaults write com.lingyue.reader reader.hasSeenHelpOverlay -bool true
+xcrun simctl spawn "$UDID" defaults write com.lingyue.reader library.hasSeenHelpOverlayV2 -bool true
+```
+
+Fixture shape (`LibraryStorageSnapshot`): `{"version": 1, "categories": [{"id": "<UUID>", "name": "无分类", "novels": [<Novel>]}], "archivedBooks": []}`. A local Novel carries inline chapters — `chapters: [{id, title, content, sourceURLString: null}]` — plus `sourceURLString: "lingyue-local-txt://import/<percent-encoded title>"` so the library card shows 本地TXT. Dates (`addedAt`) are `Double` seconds since reference date. ~40 sentences of Chinese per chapter ≈ 4 pages at default font on an iPhone 17. Number the sentences per chapter (e.g. 第2章第07句) so screenshots identify the exact page.
+
+Diagnostics land in `$CONT/Library/Application Support/lingyue/Diagnostics/current.json` (rotated to `previous.json` on next launch). Writes are throttled — press HOME (background the app) to force a flush before reading the file.
 
 ## When uninstall IS the right call
 

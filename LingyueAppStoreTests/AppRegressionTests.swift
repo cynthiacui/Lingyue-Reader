@@ -1410,6 +1410,47 @@ final class PageCurlPagerCacheTests: XCTestCase {
     }
 }
 
+/// The bookend-commit fallback re-bases from the ordinals embedded in the slot
+/// identity when the landed page is no longer in the current slot window. These
+/// tests pin the identity format that fallback depends on.
+final class ReaderPageIdentityCommitFallbackTests: XCTestCase {
+    func testSlotIdentityRoundTripsChapterAndPage() {
+        let item = ReaderPageItem(
+            chapterIndex: 7,
+            pageIndex: 3,
+            chapterPageCount: 9,
+            chapterTitle: "第八章",
+            content: "正文",
+            renderSignature: "sig|18.0|8.0|0.5|system|false",
+            isPaginated: true
+        )
+        let slotIdentity = "\(item.id)|纸张|362x762|62|34|0|0|20|1|standard"
+
+        let parsed = ReaderPageItem.chapterAndPage(fromSlotIdentity: slotIdentity)
+        XCTAssertEqual(parsed?.chapterIndex, 7)
+        XCTAssertEqual(parsed?.pageIndex, 3)
+    }
+
+    func testNegativeRenderSignatureHashStillParses() {
+        // String.hashValue is per-process seeded and can be negative, giving ids of
+        // the form "1-0--5053685814133393371". The parser must not treat the hash's
+        // leading minus as a delimiter anomaly.
+        let identity = "1-0--5053685814133393371|纸张|362x762|62|34|0|0|20|1|standard"
+
+        let parsed = ReaderPageItem.chapterAndPage(fromSlotIdentity: identity)
+        XCTAssertEqual(parsed?.chapterIndex, 1)
+        XCTAssertEqual(parsed?.pageIndex, 0)
+    }
+
+    func testMalformedIdentitiesReturnNil() {
+        XCTAssertNil(ReaderPageItem.chapterAndPage(fromSlotIdentity: ""))
+        XCTAssertNil(ReaderPageItem.chapterAndPage(fromSlotIdentity: "garbage"))
+        XCTAssertNil(ReaderPageItem.chapterAndPage(fromSlotIdentity: "5|context-only"))
+        XCTAssertNil(ReaderPageItem.chapterAndPage(fromSlotIdentity: "-1-2-3|ctx"))
+        XCTAssertNil(ReaderPageItem.chapterAndPage(fromSlotIdentity: "x-y-z|ctx"))
+    }
+}
+
 @MainActor
 private final class PagerRenderRecorder {
     private(set) var identities: [String] = []

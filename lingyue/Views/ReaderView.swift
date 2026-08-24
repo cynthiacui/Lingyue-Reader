@@ -1285,23 +1285,59 @@ struct ReaderView: View {
             pagerBinding = currentChapterPageIndexBinding
         }
 
-        // Commit a bookend landing by re-basing onto the neighbor chapter. `item.pageIndex`
-        // is exact (the bookend was built from the same cache entry that becomes the body
-        // after re-base), so the shown identity stays put and no spurious transition fires.
-        // A repeat/late callback after the commit sees delta 0 → no-op (idempotent).
+        // Commit a bookend landing by re-basing onto the neighbor chapter. The landed
+        // page's ordinals are exact (the bookend was built from the same cache entry
+        // that becomes the body after re-base), so the shown identity stays put and no
+        // spurious transition fires. A repeat/late callback after the commit sees
+        // delta 0 → no-op (idempotent).
+        //
+        // `itemsByID` is only this render's window: if the slot array changed mid-gesture
+        // and dropped the landed bookend (cache trim, availability flip), looking up the
+        // map would silently drop the commit — the pager keeps showing the neighbor
+        // chapter's page while chapter state stays behind, both swipe directions dead-end,
+        // and progress persists one page back. Fall back to the ordinals encoded in the
+        // identity itself so the landing always commits.
         let onCommit: (String) -> Void = { identity in
-            guard continuous, let item = itemsByID[identity] else { return }
-            let delta = item.chapterIndex - currentChapterIndex
-            guard delta == 1 || delta == -1 else { return }
+            guard continuous else { return }
+            let landed: (chapterIndex: Int, pageIndex: Int)
+            let resolvedVia: String
+            if let item = itemsByID[identity] {
+                landed = (item.chapterIndex, item.pageIndex)
+                resolvedVia = "slot"
+            } else if let parsed = ReaderPageItem.chapterAndPage(fromSlotIdentity: identity) {
+                landed = parsed
+                resolvedVia = "identity"
+            } else {
+                ReaderDiagnostics.shared.log(.chapterJump, "bookend commit dropped — unresolvable", context: [
+                    "landedID": identity,
+                    "from": String(currentChapterIndex)
+                ])
+                return
+            }
+            let delta = landed.chapterIndex - currentChapterIndex
+            guard delta == 1 || delta == -1 else {
+                // delta 0 is the normal body-page landing; anything farther means the
+                // callback raced a bigger navigation and must not re-base over it.
+                if delta != 0 {
+                    ReaderDiagnostics.shared.log(.chapterJump, "bookend commit dropped — non-adjacent", context: [
+                        "landedID": identity,
+                        "from": String(currentChapterIndex),
+                        "to": String(landed.chapterIndex),
+                        "via": resolvedVia
+                    ])
+                }
+                return
+            }
             ReaderDiagnostics.shared.log(.chapterJump, "bookend commit", context: [
                 "landedID": identity,
                 "from": String(currentChapterIndex),
-                "to": String(item.chapterIndex),
-                "dir": delta == 1 ? "fwd" : "rev"
+                "to": String(landed.chapterIndex),
+                "dir": delta == 1 ? "fwd" : "rev",
+                "via": resolvedVia
             ])
             goToChapter(
-                item.chapterIndex,
-                pageIndex: item.pageIndex,
+                landed.chapterIndex,
+                pageIndex: landed.pageIndex,
                 keepsContinuousPagerHost: true
             )
         }
@@ -3410,6 +3446,23 @@ struct ReaderPageItem: Identifiable {
 
     var id: String {
         "\(chapterIndex)-\(pageIndex)-\(renderSignature.hashValue)"
+    }
+
+    /// Recovers the chapter/page ordinals encoded in `id` — and therefore in every pager
+    /// slot identity, which appends "|<render context>" onto `id`. The bookend-commit
+    /// path uses this when the landed identity is no longer in the current slot window.
+    /// The renderSignature hash may itself be negative, so only the two leading
+    /// "-"-separated ordinals are read.
+    static func chapterAndPage(
+        fromSlotIdentity identity: String
+    ) -> (chapterIndex: Int, pageIndex: Int)? {
+        let head = identity.prefix { $0 != "|" }
+        let parts = head.split(separator: "-", maxSplits: 2, omittingEmptySubsequences: false)
+        guard parts.count >= 2,
+              let chapterIndex = Int(parts[0]),
+              let pageIndex = Int(parts[1]),
+              chapterIndex >= 0, pageIndex >= 0 else { return nil }
+        return (chapterIndex, pageIndex)
     }
 
     func readingStatsCharacterCount(companionPage: ReaderPageItem? = nil) -> Int? {
