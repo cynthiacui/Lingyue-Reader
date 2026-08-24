@@ -1265,6 +1265,43 @@ final class PageCurlPagerCacheTests: XCTestCase {
         XCTAssertNotNil(coordinator.pageViewController(pager, viewControllerAfter: current))
     }
 
+    func testChapterRebaseReplacesHostAndExposesSecondPage() throws {
+        let recorder = PagerRenderRecorder()
+        let firstPageID = "1-0-layout"
+        let secondPageID = "1-1-layout"
+        let coordinator = PageCurlPager.Coordinator(
+            makePager(slots: ["0-last-layout", firstPageID], currentIndex: 1, recorder: recorder)
+        )
+        let pager = UIPageViewController(
+            transitionStyle: .scroll,
+            navigationOrientation: .horizontal
+        )
+        pager.view.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        let bookendHost = try XCTUnwrap(coordinator.host(for: firstPageID))
+        coordinator.shownIdentity = firstPageID
+        pager.setViewControllers([bookendHost], direction: .forward, animated: false)
+
+        // The trailing bookend just became page zero of chapter 1. UIKit previously saw
+        // that controller at the end of the old slot window and may have cached no next
+        // controller for it. The rebase must install a new host before page one can turn
+        // to page two reliably.
+        coordinator.parent = makePager(
+            slots: ["0-last-layout", firstPageID, secondPageID],
+            currentIndex: 1,
+            recorder: recorder
+        )
+        XCTAssertTrue(coordinator.refreshCachedRenders())
+        XCTAssertTrue(coordinator.refreshNeighborsIfNeeded(in: pager))
+
+        let refreshedHost = try XCTUnwrap(pager.viewControllers?.first)
+        XCTAssertFalse(refreshedHost === bookendHost)
+        let secondPageHost = try XCTUnwrap(
+            coordinator.pageViewController(pager, viewControllerAfter: refreshedHost)
+        )
+        XCTAssertTrue(secondPageHost === coordinator.host(for: secondPageID))
+        XCTAssertFalse(coordinator.needsNeighborRefresh)
+    }
+
     func testCancelledGestureAutomaticallyAppliesDeferredNeighborRefresh() async throws {
         let recorder = PagerRenderRecorder()
         let slots = ["0-0-layout", "0-1-layout"]

@@ -361,10 +361,17 @@ struct PageCurlPager: UIViewControllerRepresentable {
             }
         }
 
-        /// Re-sets the displayed host to make UIPageViewController ask its data source
-        /// for neighbours again. A slot change may arrive while UIKit has a transition
-        /// in flight, so this is deliberately retryable: the pending bit is cleared only
-        /// after the safe refresh actually happens.
+        /// Replaces the displayed host to make UIPageViewController discard its cached
+        /// neighbours and ask the data source again. Re-setting the exact same controller
+        /// is not a reliable invalidation: after a chapter bookend becomes page zero of the
+        /// new chapter, UIKit can keep the old cached `nil` next page and every forward
+        /// gesture rubber-bands on page zero. A freshly prepared, visually identical host
+        /// gives UIKit an unambiguous new paging state without animating or changing the
+        /// reader's position.
+        ///
+        /// A slot change may arrive while UIKit has a transition in flight, so this is
+        /// deliberately retryable: the pending bit is cleared only after the safe refresh
+        /// actually happens.
         @discardableResult
         func refreshNeighborsIfNeeded(in pvc: UIPageViewController) -> Bool {
             guard needsNeighborRefresh,
@@ -373,15 +380,21 @@ struct PageCurlPager: UIViewControllerRepresentable {
                   !gestureInFlight,
                   !isHandlingTransitionCallback,
                   let desiredID = identity(at: parent.currentIndex),
-                  desiredID == shownIdentity,
-                  let host = host(for: shownIdentity) else {
+                  desiredID == shownIdentity else {
                 return false
             }
+
+            // Keep the old controller alive through `setViewControllers`; UIKit still owns
+            // it as the displayed child. Removing only our cache entry ensures `host(for:)`
+            // builds a new controller from the latest render closure and pagination window.
+            removeCachedHost(shownIdentity)
+            guard let host = preparedHost(for: shownIdentity, in: pvc) else { return false }
 
             needsNeighborRefresh = false
             ReaderDiagnostics.shared.log(.info, "pager neighbor refresh", context: [
                 "shownID": shownIdentity,
-                "slots": String(parent.slotIdentities.count)
+                "slots": String(parent.slotIdentities.count),
+                "replacedHost": "1"
             ])
             pvc.setViewControllers([host], direction: .forward, animated: false)
             prepareVisibleNeighborhood(in: pvc)
