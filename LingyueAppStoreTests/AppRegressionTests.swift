@@ -1901,3 +1901,176 @@ final class LibraryLifecycleIntegrationTests: XCTestCase {
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
     }
 }
+
+/// Regression: the in-app browser's rule-based detection fired on HTTP
+/// error pages. Reproduced on 大尾笔趣阁 (www.daweixs.com) — the mirror
+/// answered a book URL with nginx's stock 502 page, the URL still matched
+/// the rule's host+path detection, and the prompt armed as
+/// 「从 大尾笔趣阁 导入《502 Bad Gateway》」 using the error page's <title>.
+/// `HTTPErrorPageScreen` now rejects such snapshots before any source's
+/// `detectBook` runs, and the browser forwards the main-frame HTTP status
+/// into the snapshot so non-2xx responses are refused even when the error
+/// body looks like a normal page.
+final class HTTPErrorPageScreenRegressionTests: XCTestCase {
+
+    /// The exact page shape from the reproduced outage.
+    func testNginx502PageIsScreened() {
+        let html = """
+        <html>
+        <head><title>502 Bad Gateway</title></head>
+        <body>
+        <center><h1>502 Bad Gateway</h1></center>
+        <hr><center>nginx</center>
+        </body>
+        </html>
+        """
+        XCTAssertTrue(HTTPErrorPageScreen.isObviousErrorPage(snapshot(html: html)))
+    }
+
+    func testCommonErrorTitleVariantsAreScreened() {
+        let titles = [
+            "404 Not Found",
+            "403 Forbidden",
+            "500 Internal Server Error",
+            "503 Service Temporarily Unavailable",
+            "504 Gateway Time-out",
+            "HTTP Status 404 – Not Found",
+            "www.daweixs.com | 502: Bad gateway",
+            "Welcome to nginx!"
+        ]
+        for title in titles {
+            let html = "<html><head><title>\(title)</title></head><body>正在维护</body></html>"
+            XCTAssertTrue(
+                HTTPErrorPageScreen.isObviousErrorPage(snapshot(html: html)),
+                "expected screening for title: \(title)"
+            )
+        }
+    }
+
+    /// Some error pages ship without a <title>; the banner <h1> must
+    /// still be enough.
+    func testErrorHeadingScreensWhenTitleIsMissing() {
+        let html = "<html><body><center><h1>502 Bad Gateway</h1></center><hr><center>openresty</center></body></html>"
+        XCTAssertTrue(HTTPErrorPageScreen.isObviousErrorPage(snapshot(html: html)))
+    }
+
+    /// The browser now records the main-frame response status. A non-2xx
+    /// status must screen the page even when its body looks bookish, and
+    /// a 200 must never screen a healthy page.
+    func testStatusCodeScreensIndependentlyOfContent() {
+        XCTAssertTrue(HTTPErrorPageScreen.isObviousErrorPage(snapshot(html: bookDetailHTML, statusCode: 502)))
+        XCTAssertFalse(HTTPErrorPageScreen.isObviousErrorPage(snapshot(html: bookDetailHTML, statusCode: 200)))
+    }
+
+    func testRealBookDetailPageIsNotScreened() {
+        XCTAssertFalse(HTTPErrorPageScreen.isObviousErrorPage(snapshot(html: bookDetailHTML)))
+    }
+
+    /// Titles that merely *look* status-shaped must never be screened —
+    /// the patterns anchor on Latin status lines.
+    func testNumericAndChineseTitlesAreNotScreened() {
+        let titles = [
+            "第502章 大结局",
+            "502教室最新章节_大尾笔趣阁",
+            "404不存在的国度",
+            "错误的爱情"
+        ]
+        for title in titles {
+            let html = "<html><head><title>\(title)</title></head><body>\(String(repeating: "<p>正文段落</p>", count: 60))</body></html>"
+            XCTAssertFalse(
+                HTTPErrorPageScreen.isObviousErrorPage(snapshot(html: html)),
+                "false positive for title: \(title)"
+            )
+        }
+    }
+
+    /// End-to-end through `PageDetector`: even a source whose detection
+    /// claims every page must not surface a hit for an error snapshot,
+    /// while the healthy render of the same URL still detects.
+    func testPageDetectorRefusesErrorPageEvenWhenASourceClaimsIt() async {
+        let source = AlwaysMatchingBookSource()
+        let detector = PageDetector(registry: SingleSourceRegistry(source: source))
+
+        let errorHTML = "<html><head><title>502 Bad Gateway</title></head><body><center><h1>502 Bad Gateway</h1></center><hr><center>nginx</center></body></html>"
+        let armed = await detector.detect(in: snapshot(html: errorHTML))
+        XCTAssertNil(armed, "import prompt must not arm on an HTTP error page")
+
+        let statusOnly = await detector.detect(in: snapshot(html: bookDetailHTML, statusCode: 502))
+        XCTAssertNil(statusOnly, "a non-2xx main-frame status must veto detection")
+
+        let healthy = await detector.detect(in: snapshot(html: bookDetailHTML))
+        XCTAssertEqual(healthy?.sourceID, source.id, "healthy render of the same URL must still detect")
+    }
+
+    // MARK: - Fixtures
+
+    private var bookDetailHTML: String {
+        """
+        <html>
+        <head><title>凡人修仙传最新章节_忘语_大尾笔趣阁</title></head>
+        <body>
+        <div class="book-info"><h1>凡人修仙传</h1><p>作者：忘语</p></div>
+        <div id="list">
+        <dl>
+        <dd><a href="/book/93650/1.html">第一章 山村小子</a></dd>
+        <dd><a href="/book/93650/2.html">第二章 七玄门</a></dd>
+        <dd><a href="/book/93650/3.html">第三章 墨大夫</a></dd>
+        </dl>
+        </div>
+        </body>
+        </html>
+        """
+    }
+
+    private func snapshot(html: String, statusCode: Int? = nil) -> WebPageSnapshot {
+        WebPageSnapshot(
+            html: html,
+            finalURL: URL(string: "https://www.daweixs.com/book/93650/")!,
+            responseHeaders: [:],
+            statusCode: statusCode
+        )
+    }
+}
+
+/// Claims every snapshot — stands in for a URL-pattern rule whose host and
+/// path still match while the server is erroring.
+private struct AlwaysMatchingBookSource: BookSource {
+    let id = "rule:test-always-match"
+    let displayName = "测试源"
+    let capabilities = SourceCapabilities(
+        supportsSearch: false,
+        showInSearchBar: false,
+        supportsBrowserImport: true,
+        requiresWebRender: false
+    )
+
+    func detectBook(in page: WebPageSnapshot) async throws -> BookDetection? {
+        BookDetection(confidence: 0.9, detailURL: page.finalURL, title: nil, sourceID: id)
+    }
+
+    func search(_ query: String) async throws -> [BookSearchResult] {
+        throw BookSourceError.searchUnsupported
+    }
+    func fetchDetail(url: URL) async throws -> BookDetail {
+        throw BookSourceError.unsupportedURL(url)
+    }
+    func fetchCatalog(url: URL) async throws -> [ChapterLink] {
+        throw BookSourceError.unsupportedURL(url)
+    }
+    func fetchChapter(url: URL) async throws -> ChapterContent {
+        throw BookSourceError.unsupportedURL(url)
+    }
+}
+
+// Module-qualified: `@testable import LingyueAppStore` exposes the app's
+// internal `enum BookSourceRegistry` (the seeded-rules namespace), which
+// collides with LingyueCore's protocol of the same name.
+private struct SingleSourceRegistry: LingyueCore.BookSourceRegistry {
+    let source: any BookSource
+
+    func enabledSources() async throws -> [any BookSource] { [source] }
+    func searchableSources() async throws -> [any BookSource] { [] }
+    func source(withID id: String) async throws -> (any BookSource)? {
+        source.id == id ? source : nil
+    }
+}

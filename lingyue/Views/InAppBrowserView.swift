@@ -210,9 +210,9 @@ struct InAppBrowserView: View {
         )
     }
 
-    private func inspectPageForBook(url: URL, pageTitle: String?, html: String) {
+    private func inspectPageForBook(url: URL, pageTitle: String?, html: String, statusCode: Int?) {
 #if DEBUG
-        debugLog("[Browser] inspect \(url.absoluteString) — htmlBytes=\(html.count) detected=\(detectedBook != nil) ignored=\(ignoredBookURLs.contains(url.absoluteString))")
+        debugLog("[Browser] inspect \(url.absoluteString) — htmlBytes=\(html.count) status=\(statusCode.map(String.init) ?? "nil") detected=\(detectedBook != nil) ignored=\(ignoredBookURLs.contains(url.absoluteString))")
 #endif
         guard replacementCandidate == nil,
               categoryPrompt == nil,
@@ -235,7 +235,7 @@ struct InAppBrowserView: View {
                 html: html,
                 finalURL: url,
                 responseHeaders: [:],
-                statusCode: nil
+                statusCode: statusCode
             ))
             // The App Store target relies entirely on user-authored rules —
             // there is no heuristic catalog fallback. The helper always returns
@@ -826,7 +826,7 @@ struct InAppBrowserView: View {
 private struct InAppWebView: UIViewRepresentable {
     let url: URL
     @ObservedObject var state: InAppBrowserState
-    let onPageLoaded: (URL, String?, String) -> Void
+    let onPageLoaded: (URL, String?, String, Int?) -> Void
 
     func makeCoordinator() -> Coordinator {
         Coordinator(state: state, onPageLoaded: onPageLoaded)
@@ -874,10 +874,17 @@ private struct InAppWebView: UIViewRepresentable {
 
     final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
         private let state: InAppBrowserState
-        private let onPageLoaded: (URL, String?, String) -> Void
+        private let onPageLoaded: (URL, String?, String, Int?) -> Void
         private var observations: [NSKeyValueObservation] = []
+        // Main-frame HTTP status by fragment-stripped URL, insertion order
+        // kept for eviction. The rule-detection snapshot is built from a JS
+        // DOM dump seconds after the response arrived, so the status has to
+        // be carried across that gap. Only touched on the main thread (all
+        // WKNavigationDelegate callbacks and JS completions land there).
+        private var mainFrameStatusKeys: [String] = []
+        private var mainFrameStatusByURL: [String: Int] = [:]
 
-        init(state: InAppBrowserState, onPageLoaded: @escaping (URL, String?, String) -> Void) {
+        init(state: InAppBrowserState, onPageLoaded: @escaping (URL, String?, String, Int?) -> Void) {
             self.state = state
             self.onPageLoaded = onPageLoaded
         }
@@ -959,6 +966,46 @@ private struct InAppWebView: UIViewRepresentable {
             webView.load(URLRequest(url: upgraded))
         }
 
+        // Record the main-frame response status so detection can refuse
+        // error pages (nginx 502/503, Cloudflare 5xx) whose URL still
+        // matches a source's book-detail pattern — the page `<title>` is
+        // the error banner, which used to arm 「导入《502 Bad Gateway》」.
+        func webView(
+            _ webView: WKWebView,
+            decidePolicyFor navigationResponse: WKNavigationResponse,
+            decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void
+        ) {
+            if navigationResponse.isForMainFrame,
+               let response = navigationResponse.response as? HTTPURLResponse,
+               let url = response.url {
+                recordMainFrameStatus(response.statusCode, for: url)
+            }
+            decisionHandler(.allow)
+        }
+
+        private func recordMainFrameStatus(_ statusCode: Int, for url: URL) {
+            let key = Self.statusKey(for: url)
+            if mainFrameStatusByURL.updateValue(statusCode, forKey: key) == nil {
+                mainFrameStatusKeys.append(key)
+                while mainFrameStatusKeys.count > 16 {
+                    mainFrameStatusByURL.removeValue(forKey: mainFrameStatusKeys.removeFirst())
+                }
+            }
+        }
+
+        private func mainFrameStatus(for url: URL) -> Int? {
+            mainFrameStatusByURL[Self.statusKey(for: url)]
+        }
+
+        // SPA mirrors keep the route in the URL fragment; the HTTP
+        // response URL never carries one. Key fragment-stripped so
+        // `webView.url` at inspect time matches the recorded response.
+        private static func statusKey(for url: URL) -> String {
+            var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+            components?.fragment = nil
+            return components?.url?.absoluteString ?? url.absoluteString
+        }
+
         private func refresh(from webView: WKWebView) {
             DispatchQueue.main.async { [state] in
                 state.refresh(from: webView)
@@ -985,12 +1032,13 @@ private struct InAppWebView: UIViewRepresentable {
 
         private func inspectLoadedPageNow(_ webView: WKWebView) {
             guard let url = webView.url else { return }
+            let statusCode = mainFrameStatus(for: url)
 
             webView.evaluateJavaScript("document.documentElement.outerHTML") { [weak self, weak webView] result, _ in
                 guard let self, let webView else { return }
                 let html = result as? String ?? ""
                 DispatchQueue.main.async {
-                    self.onPageLoaded(url, webView.title, html)
+                    self.onPageLoaded(url, webView.title, html, statusCode)
                 }
             }
         }

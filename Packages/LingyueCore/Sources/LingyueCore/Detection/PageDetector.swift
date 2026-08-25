@@ -50,6 +50,19 @@ public actor PageDetector {
     /// rule with a broken `detectBook` must not blind the browser to
     /// every other source on the page.
     public func detect(in snapshot: WebPageSnapshot) async -> DetectionResult? {
+        // An HTTP error page keeps the book's URL, so host+path rules
+        // still claim it and the only title on the page is the error
+        // banner — a mirror outage would arm 「导入《502 Bad Gateway》」.
+        // Screen before the fan-out and before the cache: the eventual
+        // healthy render of the same URL hashes to a different key, so
+        // there's no reason to spend cache slots on error snapshots.
+        guard !HTTPErrorPageScreen.isObviousErrorPage(snapshot) else {
+            #if DEBUG
+            print("[PageDetector] skipped error page \(snapshot.finalURL.absoluteString) status=\(snapshot.statusCode.map(String.init) ?? "nil")")
+            #endif
+            return nil
+        }
+
         let key = cacheKey(for: snapshot)
         if let cached = cache[key] {
             touch(key)
