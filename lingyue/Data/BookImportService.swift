@@ -213,10 +213,18 @@ final class BookImportService: Sendable {
                 sourceURLString: $0.url.absoluteString
             )
         }
-        let title = detail.title.isEmpty ? (detection.detection.title ?? detection.sourceName) : detail.title
+        // Rule-scraped titles can carry the same site decorations as heuristic ones
+        // (`书名_作者名【完结】`) — persist the parts separated so the Library stores
+        // the bare book name and the author lands in its own field.
+        let rawTitle = detail.title.isEmpty ? (detection.detection.title ?? detection.sourceName) : detail.title
+        let parsedTitle = BookTitleParser.parse(cleanText(rawTitle), knownAuthor: detail.author)
+        let title = parsedTitle.title.isEmpty ? rawTitle : parsedTitle.title
+        let author = [detail.author, parsedTitle.author]
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .first { !$0.isEmpty } ?? "未知作者"
         return Novel(
             title: title,
-            author: detail.author?.isEmpty == false ? detail.author! : "未知作者",
+            author: author,
             genre: detail.tags.first ?? "",
             summary: detail.description ?? "",
             lastChapter: "",
@@ -331,15 +339,18 @@ final class BookImportService: Sendable {
             throw WebBookImportError.unsupportedEncoding
         }
 
+        // Downloaded TXT files are routinely named `书名_作者名【完结】.txt` — store the
+        // parts separated instead of surfacing the whole filename as the title.
         let rawTitle = url.deletingPathExtension().lastPathComponent
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        let title = rawTitle.isEmpty ? "未命名" : rawTitle
+        let parsedTitle = BookTitleParser.parse(rawTitle)
+        let title = parsedTitle.title.isEmpty ? "未命名" : parsedTitle.title
 
         let chapters = splitPlainTextIntoChapters(text, fallbackTitle: title)
 
         return Novel(
             title: title,
-            author: "未知作者",
+            author: parsedTitle.author ?? "未知作者",
             genre: LibraryStore.uncategorizedName,
             summary: "",
             lastChapter: chapters.first?.title ?? "",
@@ -538,7 +549,7 @@ final class BookImportService: Sendable {
     }
 
     private func parseMetadata(html: String, url: URL, fallbackTitle: String?) -> BookMetadata {
-        let title = cleanBookTitle(
+        let scrapedTitle = cleanText(
             metaContent(named: "og:novel:book_name", in: html)
                 ?? metaContent(named: "book_name", in: html)
                 ?? firstMatch(#"articlename\s*:\s*['"]([^'"]+)['"]"#, in: html)
@@ -552,7 +563,7 @@ final class BookImportService: Sendable {
                 ?? ""
         )
 
-        let author = cleanText(
+        let scrapedAuthor = cleanText(
             metaContent(named: "og:novel:author", in: html)
                 ?? metaContent(named: "author", in: html)
                 ?? firstMatch(#"author\s*:\s*['"]([^'"]+)['"]"#, in: html)
@@ -561,6 +572,16 @@ final class BookImportService: Sendable {
                 ?? firstMatch(#"作者[：:]\s*([^<\n\r]{1,40})"#, in: html)
                 ?? ""
         )
+
+        // Store the parts separated: the bare book name becomes the title, and an
+        // author embedded in a decorated page title (`书名_作者名【完结】`) backfills
+        // the author field when the page exposed no dedicated author element.
+        let parsedTitle = BookTitleParser.parse(
+            stripSiteBrandSuffixes(scrapedTitle),
+            knownAuthor: scrapedAuthor
+        )
+        let title = parsedTitle.title
+        let author = scrapedAuthor.isEmpty ? (parsedTitle.author ?? "") : scrapedAuthor
 
         let summary = cleanText(
             metaContent(named: "og:description", in: html)
@@ -1384,39 +1405,19 @@ final class BookImportService: Sendable {
         return text
     }
 
-    private func cleanBookTitle(_ rawTitle: String) -> String {
-        var title = cleanText(rawTitle)
+    /// Site-brand tails glued onto page titles by specific sources. The generic
+    /// decoration handling (status tags, reading suffixes, `_作者名` tails) lives in
+    /// `BookTitleParser`; only the BrandGuard-specific fragments stay here.
+    private func stripSiteBrandSuffixes(_ title: String) -> String {
+        var title = title
         let suffixes = [
-            "最新章节", "最新章節", "全文阅读", "全文閱讀", "免费阅读", "免費閱讀",
-            "在线阅读", "在線閱讀", "章节目录", "章節目錄", "无弹窗", "無彈窗",
-            "小说网", "小說網", "小说", "小說",
             "- \(BrandGuard.b09)", "_\(BrandGuard.b15)", "- \(BrandGuard.b15)",
             BrandGuard.b23, BrandGuard.b24
         ]
         for suffix in suffixes {
             title = title.replacingOccurrences(of: suffix, with: "")
         }
-        // Strip 【…】 only when its contents are a known site-added metadata tag (status,
-        // format, editorial note). Bracketed prefixes that name a fanfic universe or
-        // crossover — e.g. 【综犬夜叉】之机械姬她没有心, 【综漫】, 【HP】 — are part of the
-        // real title and must survive. The earlier blanket strip removed those too.
-        let bracketMetadataPhrases = [
-            "完本", "完結", "完结", "已完", "已完結", "已完结", "已完成",
-            "連載", "连载", "連載中", "连载中", "斷更", "断更", "全本", "完",
-            "TXT", "txt", "Txt", "VIP", "vip", "Vip",
-            "限免", "免费", "免費", "有声", "有聲",
-            "官方", "官方版", "转载", "轉載", "重发", "重發", "重置",
-            "推荐", "推薦", "精校", "校对", "校對", "原创", "原創",
-            "最新章节", "最新章節", "最新", "新书", "新書",
-            "已审核", "已審核", "更新", "已更", "完整版"
-        ].joined(separator: "|")
-        return title
-            .replacingOccurrences(of: "【\\s*(?:\(bracketMetadataPhrases))\\s*】", with: "", options: .regularExpression)
-            // Tidy up empty brackets left behind after the suffix strip removed
-            // their contents (e.g. 【最新章节】 → 【】 → "").
-            .replacingOccurrences(of: #"【\s*】"#, with: "", options: .regularExpression)
-            .replacingOccurrences(of: #"\s*[-_｜|]\s*$"#, with: "", options: .regularExpression)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return title.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func authoritativeBookID(in html: String, url: URL) -> String? {
@@ -1861,8 +1862,13 @@ final class BookImportService: Sendable {
 
         let filenameTitle = url.deletingPathExtension().lastPathComponent
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        let title = nonEmpty(package.title) ?? nonEmpty(filenameTitle) ?? "未命名"
-        let author = nonEmpty(package.author) ?? "未知作者"
+        // OPF titles are usually clean, but the filename fallback carries the same
+        // `书名_作者名【完结】` decorations as any downloaded file — store the parts
+        // separated either way.
+        let rawTitle = nonEmpty(package.title) ?? nonEmpty(filenameTitle) ?? "未命名"
+        let parsedTitle = BookTitleParser.parse(rawTitle, knownAuthor: package.author)
+        let title = parsedTitle.title.isEmpty ? rawTitle : parsedTitle.title
+        let author = nonEmpty(package.author) ?? parsedTitle.author ?? "未知作者"
 
         return Novel(
             title: title,
@@ -1913,13 +1919,17 @@ final class BookImportService: Sendable {
         let documentTitle = extractHTMLDocumentTitle(in: html)
         let filenameTitle = url.deletingPathExtension().lastPathComponent
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        let title = nonEmpty(documentTitle) ?? nonEmpty(filenameTitle) ?? "未命名"
+        // Saved web pages keep their site-decorated <title> (`书名最新章节_笔趣阁`);
+        // filenames carry `书名_作者名【完结】` — store the parts separated.
+        let rawTitle = nonEmpty(documentTitle) ?? nonEmpty(filenameTitle) ?? "未命名"
+        let parsedTitle = BookTitleParser.parse(rawTitle)
+        let title = parsedTitle.title.isEmpty ? rawTitle : parsedTitle.title
 
         let chapters = splitPlainTextIntoChapters(plainText, fallbackTitle: title)
 
         return Novel(
             title: title,
-            author: "未知作者",
+            author: parsedTitle.author ?? "未知作者",
             genre: LibraryStore.uncategorizedName,
             summary: "",
             lastChapter: chapters.first?.title ?? "",

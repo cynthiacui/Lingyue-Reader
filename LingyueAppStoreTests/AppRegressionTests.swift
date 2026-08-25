@@ -1902,6 +1902,274 @@ final class LibraryLifecycleIntegrationTests: XCTestCase {
     }
 }
 
+final class BookTitleParserTests: XCTestCase {
+    func testSeparatesAuthorAndStatusTagFromScrapedTitle() {
+        let parsed = BookTitleParser.parse("凡人修仙传_忘语【完结】")
+        XCTAssertEqual(parsed.title, "凡人修仙传")
+        XCTAssertEqual(parsed.author, "忘语")
+    }
+
+    func testKnownAuthorSuffixIsStrippedAcrossSeparators() {
+        for raw in ["诡秘之主_爱潜水的乌贼", "诡秘之主 - 爱潜水的乌贼", "诡秘之主（爱潜水的乌贼）", "诡秘之主爱潜水的乌贼著"] {
+            let parsed = BookTitleParser.parse(raw, knownAuthor: "爱潜水的乌贼")
+            XCTAssertEqual(parsed.title, "诡秘之主", "failed for \(raw)")
+            XCTAssertEqual(parsed.author, "爱潜水的乌贼", "failed for \(raw)")
+        }
+    }
+
+    func testLongPenNameIsRecognizedWithoutKnownAuthor() {
+        let parsed = BookTitleParser.parse("大王饶命_会说话的肘子")
+        XCTAssertEqual(parsed.title, "大王饶命")
+        XCTAssertEqual(parsed.author, "会说话的肘子")
+    }
+
+    func testSiteBrandTailIsDroppedWithoutAuthorAttribution() {
+        let parsed = BookTitleParser.parse("凡人修仙传_笔趣阁")
+        XCTAssertEqual(parsed.title, "凡人修仙传")
+        XCTAssertNil(parsed.author)
+    }
+
+    func testJunkTailAndAuthorBothStripInOnePass() {
+        let parsed = BookTitleParser.parse("凡人修仙传小说_忘语最新章节_某某小说网")
+        XCTAssertEqual(parsed.title, "凡人修仙传")
+        XCTAssertEqual(parsed.author, "忘语")
+    }
+
+    func testReadingSuffixesStripWithoutSeparators() {
+        XCTAssertEqual(BookTitleParser.parse("诡秘之主最新章节列表").title, "诡秘之主")
+        XCTAssertEqual(BookTitleParser.parse("诡秘之主全文免费阅读").title, "诡秘之主")
+    }
+
+    func testExplicitAuthorMarkerSplits() {
+        let parsed = BookTitleParser.parse("赤心巡天 作者：情何以甚")
+        XCTAssertEqual(parsed.title, "赤心巡天")
+        XCTAssertEqual(parsed.author, "情何以甚")
+    }
+
+    func testLeadingQuotedTitleAdoptedWhenTailIsAuthor() {
+        let parsed = BookTitleParser.parse("《赤心巡天》情何以甚")
+        XCTAssertEqual(parsed.title, "赤心巡天")
+        XCTAssertEqual(parsed.author, "情何以甚")
+    }
+
+    func testLeadingQuotedTitleKeptWholeWhenTailCouldBePartOfName() {
+        let parsed = BookTitleParser.parse("《斗罗大陆》II绝世唐门")
+        XCTAssertEqual(parsed.title, "《斗罗大陆》II绝世唐门")
+        XCTAssertNil(parsed.author)
+    }
+
+    func testFanficUniverseBracketsSurvive() {
+        let parsed = BookTitleParser.parse("【综漫】之机械姬她没有心")
+        XCTAssertEqual(parsed.title, "【综漫】之机械姬她没有心")
+        XCTAssertNil(parsed.author)
+    }
+
+    func testParenthesizedSubtitleSurvivesWithoutKnownAuthor() {
+        let parsed = BookTitleParser.parse("鬼吹灯(精绝古城)")
+        XCTAssertEqual(parsed.title, "鬼吹灯(精绝古城)")
+        XCTAssertNil(parsed.author)
+    }
+
+    func testParenthesizedStatusTagIsMetadata() {
+        XCTAssertEqual(BookTitleParser.parse("凡人修仙传(完结)").title, "凡人修仙传")
+        XCTAssertEqual(BookTitleParser.parse("凡人修仙传（全本）").title, "凡人修仙传")
+    }
+
+    func testGluedSequelNameStaysIntact() {
+        let parsed = BookTitleParser.parse("斗罗大陆IV终极斗罗")
+        XCTAssertEqual(parsed.title, "斗罗大陆IV终极斗罗")
+        XCTAssertNil(parsed.author)
+    }
+
+    func testAllDecorationInputFallsBackToOriginal() {
+        let parsed = BookTitleParser.parse("最新章节")
+        XCTAssertEqual(parsed.title, "最新章节")
+        XCTAssertNil(parsed.author)
+    }
+
+    func testEmptyInputStaysEmpty() {
+        XCTAssertEqual(BookTitleParser.parse("  "), ParsedBookTitle(title: "", author: nil))
+    }
+
+    func testCleanTitleWithoutDecorationsIsUntouched() {
+        let parsed = BookTitleParser.parse("凡人修仙传", knownAuthor: "忘语")
+        XCTAssertEqual(parsed.title, "凡人修仙传")
+        XCTAssertNil(parsed.author)
+    }
+}
+
+@MainActor
+final class LibraryTitleMatchingTests: XCTestCase {
+    /// Switching sources imports the book from a *different* URL, so the
+    /// replace-vs-duplicate decision falls to the title comparison. A record
+    /// saved before title parsing landed carries a decorated title; the fresh
+    /// import carries the bare name. They must match, or the switch inserts a
+    /// duplicate instead of replacing the record.
+    func testSwitchSourceReplacesLegacyDecoratedTitleRecord() {
+        let store = LibraryStore(storageDirectory: temporaryDirectory())
+        let legacy = makeNovel(
+            title: "第二人格_骑着鬼火扫大街【完结】",
+            sourceURLString: "https://old.example.com/book/1/"
+        )
+        store.categories = [LibraryCategory(name: "无分类", novels: [legacy])]
+
+        XCTAssertTrue(
+            store.containsBook(
+                sourceURLString: "https://new.example.com/novel/9/",
+                title: "第二人格"
+            ),
+            "clean import title should match the legacy decorated record"
+        )
+
+        let replacement = makeNovel(
+            title: "第二人格",
+            sourceURLString: "https://new.example.com/novel/9/"
+        )
+        XCTAssertTrue(store.addImportedNovel(replacement, categoryName: "无分类"))
+
+        let allTitles = store.allNovels.map(\.title)
+        XCTAssertEqual(allTitles, ["第二人格"], "the legacy record should be replaced, not duplicated")
+    }
+
+    func testDistinctBooksSharingAPrefixAreNotMerged() {
+        let store = LibraryStore(storageDirectory: temporaryDirectory())
+        let base = makeNovel(
+            title: "第二人格",
+            sourceURLString: "https://a.example.com/book/1/"
+        )
+        store.categories = [LibraryCategory(name: "无分类", novels: [base])]
+
+        let different = makeNovel(
+            title: "拥有第二人格",
+            sourceURLString: "https://b.example.com/book/2/"
+        )
+        XCTAssertTrue(store.addImportedNovel(different, categoryName: "无分类"))
+        XCTAssertEqual(
+            Set(store.allNovels.map(\.title)),
+            ["第二人格", "拥有第二人格"],
+            "different books must never be merged by the title normalizer"
+        )
+    }
+
+    private func makeNovel(title: String, sourceURLString: String) -> Novel {
+        Novel(
+            title: title,
+            author: "测试",
+            genre: "测试",
+            summary: "",
+            lastChapter: "第一章",
+            progress: 0,
+            readMinutes: 0,
+            coverPalette: .teal,
+            isFeatured: false,
+            sourceURLString: sourceURLString,
+            chapters: [NovelChapter(title: "第一章", content: "测试正文")]
+        )
+    }
+
+    private func temporaryDirectory() -> URL {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent("LingyueAppTests", isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    }
+}
+
+final class BookImportTitleSeparationTests: XCTestCase {
+    /// The browser detect flow must store the parts separated: a decorated page
+    /// title (`书名_作者名【完结】`) with no dedicated author element becomes a
+    /// candidate with the bare name as title and the embedded author extracted.
+    func testDetectBookSeparatesDecoratedPageTitle() throws {
+        let html = """
+        <html><head>
+        <meta property="og:novel:book_name" content="第二人格_骑着鬼火扫大街【完结】" />
+        <script src="/ajax_novels/chapterlist/1.html"></script>
+        </head><body>
+        <div class="intro">突然产生的第二人格。</div>
+        </body></html>
+        """
+        let url = try XCTUnwrap(URL(string: "https://example.com/book/1/"))
+
+        let candidate = try XCTUnwrap(
+            BookImportService.shared.detectBook(html: html, url: url, pageTitle: nil)
+        )
+        XCTAssertEqual(candidate.title, "第二人格")
+        XCTAssertEqual(candidate.author, "骑着鬼火扫大街")
+    }
+
+    /// A scraped author element wins over the title-embedded heuristic, and the
+    /// decorated title still reduces to the bare name.
+    func testDetectBookPrefersScrapedAuthorOverTitleTail() throws {
+        let html = """
+        <html><head>
+        <meta property="og:novel:book_name" content="第二人格_骑着鬼火扫大街【完结】" />
+        <meta property="og:novel:author" content="骑着鬼火扫大街" />
+        <script src="/ajax_novels/chapterlist/1.html"></script>
+        </head><body></body></html>
+        """
+        let url = try XCTUnwrap(URL(string: "https://example.com/book/1/"))
+
+        let candidate = try XCTUnwrap(
+            BookImportService.shared.detectBook(html: html, url: url, pageTitle: nil)
+        )
+        XCTAssertEqual(candidate.title, "第二人格")
+        XCTAssertEqual(candidate.author, "骑着鬼火扫大街")
+    }
+
+    /// Downloaded TXT files named `书名_作者名【完结】.txt` import with the parts
+    /// separated instead of surfacing the whole filename as the title.
+    func testPlainTextImportSeparatesDecoratedFilename() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("LingyueAppTests", isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let fileURL = directory.appendingPathComponent("第二人格_骑着鬼火扫大街【完结】.txt")
+        let body = "第一章 觉醒\n这是第一章的正文。\n第二章 巡夜\n这是第二章的正文。"
+        try body.write(to: fileURL, atomically: true, encoding: .utf8)
+
+        let novel = try BookImportService.shared.importBook(fromPlainTextFile: fileURL)
+        XCTAssertEqual(novel.title, "第二人格")
+        XCTAssertEqual(novel.author, "骑着鬼火扫大街")
+        XCTAssertEqual(novel.chapters.count, 2)
+        XCTAssertEqual(
+            novel.sourceURLString,
+            BookSourceRegistry.localPlainTextSourceURLString(forTitle: "第二人格"),
+            "the local-import sentinel URL must be derived from the parsed title"
+        )
+    }
+}
+
+final class BookTitleParserCompoundTagTests: XCTestCase {
+    /// Exact case reported from a live source: a compound status bracket after the
+    /// author tail. The compound tag must strip so the author tail becomes
+    /// recognizable again.
+    func testCompoundBracketTagAfterAuthorTail() {
+        let parsed = BookTitleParser.parse("穿成反派前妻的第二人格_你的荣光【完结+番外】")
+        XCTAssertEqual(parsed.title, "穿成反派前妻的第二人格")
+        XCTAssertEqual(parsed.author, "你的荣光")
+    }
+
+    func testCompoundBracketVariants() {
+        XCTAssertEqual(BookTitleParser.parse("书名一二【完结＋番外】").title, "书名一二")
+        XCTAssertEqual(BookTitleParser.parse("书名一二(已完结/精校)").title, "书名一二")
+        XCTAssertEqual(BookTitleParser.parse("书名一二【完结 番外】").title, "书名一二")
+    }
+
+    func testBareCompoundStatusTailIsJunk() {
+        let parsed = BookTitleParser.parse("书名一二_完结+番外")
+        XCTAssertEqual(parsed.title, "书名一二")
+        XCTAssertNil(parsed.author)
+    }
+
+    /// A compound bracket containing a non-metadata piece is part of the name
+    /// space we must not guess about — keep it whole.
+    func testCompoundBracketWithUnknownPieceSurvives() {
+        let parsed = BookTitleParser.parse("【综漫+完结】某某某传")
+        XCTAssertEqual(parsed.title, "【综漫+完结】某某某传")
+    }
+}
+
 /// Regression: the in-app browser's rule-based detection fired on HTTP
 /// error pages. Reproduced on 大尾笔趣阁 (www.daweixs.com) — the mirror
 /// answered a book URL with nginx's stock 502 page, the URL still matched

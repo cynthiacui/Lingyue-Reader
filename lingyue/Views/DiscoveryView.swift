@@ -626,6 +626,11 @@ actor DiscoverySearchService {
             let trimmed = novelTitle.trimmingCharacters(in: .whitespacesAndNewlines)
             let cleanedTitle = DiscoveryTextCleaner.cleanTitle(trimmed)
             let targetKey = DiscoveryTextCleaner.normalizedTitleKey(cleanedTitle)
+            // Query with the bare book name: books saved before title parsing landed
+            // can carry decorated titles (`书名_作者名【完结】`) that sources would
+            // return zero hits for, even though the book exists on them.
+            let parsedTitle = BookTitleParser.parse(cleanedTitle).title
+            let query = parsedTitle.isEmpty ? trimmed : parsedTitle
 
             guard !targetKey.isEmpty else {
                 continuation.finish()
@@ -634,7 +639,7 @@ actor DiscoverySearchService {
 
             let task = Task { [self] in
                 for await grouped in self.searchStream(
-                    query: trimmed,
+                    query: query,
                     sources: DiscoverySourceCatalog.searchableSources
                 ) {
                     if Task.isCancelled { break }
@@ -1109,20 +1114,20 @@ actor DiscoverySearchService {
         guard !cleanedTitle.isEmpty else { return nil }
         guard !DiscoveryTextCleaner.isSearchEngineSuggestionTitle(cleanedTitle) else { return nil }
 
-        // Strip a `_authorName` suffix (or other plausibly-author tail) from the display
-        // title so identical books from different sources collapse into one row at the
-        // grouping step — see `groupAndSort`. Done before storing on the hit so both
-        // grouping and rendering see the same cleaned title.
-        let strippedTitle = DiscoveryTextCleaner.stripAuthorFromTitle(cleanedTitle, author: author)
+        // Separate the scraped title (`书名_作者名【完结】`…) into book name + author so
+        // identical books from different sources collapse into one row at the grouping
+        // step — see `groupAndSort` — and the tile shows a clean name. A source that
+        // embeds the author only in the title still gets author attribution this way.
+        let parsed = BookTitleParser.parse(cleanedTitle, knownAuthor: author)
+        let strippedTitle = parsed.title.isEmpty ? cleanedTitle : parsed.title
+        let trimmedAuthor = author.trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedAuthor = trimmedAuthor.isEmpty ? (parsed.author ?? "") : trimmedAuthor
 
-        // Direct source parsers read the source's own result title field.
-        // Keep it whole so bracketed tags like [诡秘之主同人] are not mistaken
-        // for the entire novel title.
         return DiscoveryRawSearchHit(
             source: source,
             title: strippedTitle,
             novelTitle: strippedTitle,
-            author: author,
+            author: resolvedAuthor,
             summary: summary,
             url: url,
             rank: rank
@@ -1175,11 +1180,18 @@ actor DiscoverySearchService {
             return nil
         }
 
+        // Same title/author separation as `makeDirectSourceHit`, so hits from this
+        // legacy path group and render identically to registry-routed ones.
+        let parsed = BookTitleParser.parse(
+            cleanedNovelTitle.isEmpty ? cleanedTitle : cleanedNovelTitle
+        )
         return DiscoveryRawSearchHit(
             source: source,
             title: cleanedTitle,
-            novelTitle: cleanedNovelTitle.isEmpty ? cleanedTitle : cleanedNovelTitle,
-            author: "",
+            novelTitle: parsed.title.isEmpty
+                ? (cleanedNovelTitle.isEmpty ? cleanedTitle : cleanedNovelTitle)
+                : parsed.title,
+            author: parsed.author ?? "",
             summary: summary,
             url: url,
             rank: rank
@@ -1393,46 +1405,6 @@ private enum DiscoveryTextCleaner {
         clean(text)
     }
 
-    /// Strip a `_<author>` (or other plausibly-author) tail off a scraped book title so
-    /// e.g. `凡人修仙传_忘语` and `凡人修仙传` from different sources collapse into one
-    /// row at the grouping step. Two passes:
-    ///   1. If the parser handed us a real `author` and the title ends with that exact
-    ///      author after `_`, `|`, `｜`, `-`, ` `, or ` - `, strip it. Always safe.
-    ///   2. Heuristic fallback: when the title contains an underscore separator and the
-    ///      tail looks like a Chinese name (2–4 Hanzi, no spaces/punctuation), strip it.
-    ///      Underscore-separated tails on novel titles are almost exclusively author
-    ///      names in this corpus, so the false-positive risk is low.
-    static func stripAuthorFromTitle(_ title: String, author: String) -> String {
-        var working = title
-        let trimmedAuthor = author.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        if !trimmedAuthor.isEmpty {
-            for separator in ["_", "|", "｜", " - ", "-", " "] {
-                let suffix = "\(separator)\(trimmedAuthor)"
-                if working.hasSuffix(suffix) {
-                    working = String(working.dropLast(suffix.count))
-                    break
-                }
-            }
-        }
-
-        // Underscore-suffix heuristic. Only run when no other separator is present so we
-        // don't accidentally chew off a meaningful subtitle like `三国演义 - 罗贯中正版`.
-        if let underscoreRange = working.range(of: "_", options: .backwards) {
-            let tail = String(working[underscoreRange.upperBound...])
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            let looksLikeAuthor = tail.range(
-                of: #"^[一-鿿]{2,4}$"#,
-                options: .regularExpression
-            ) != nil
-            if looksLikeAuthor {
-                working = String(working[..<underscoreRange.lowerBound])
-            }
-        }
-
-        return working.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
     static func extractNovelTitle(fromTitle title: String, summary: String, query: String, sourceName: String) -> String {
         let titleText = clean(title)
         let summaryText = clean(summary)
@@ -1563,7 +1535,10 @@ private enum DiscoveryTextCleaner {
     }
 
     static func normalizedTitleKey(_ title: String) -> String {
-        var cleaned = title
+        // Reduce to the bare book name first so decorated variants of the same book
+        // ("书名", "书名_作者名", "书名【完结】") all land on one grouping key. This also
+        // lets library titles saved before the parser existed match today's clean hits.
+        var cleaned = BookTitleParser.parse(title).title
         let removableParts = [
             "全文阅读", "免费阅读", "最新章节", "在线阅读", "无弹窗", BrandGuard.b03, "小说网", "小说"
         ]

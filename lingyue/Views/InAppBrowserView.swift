@@ -266,9 +266,15 @@ struct InAppBrowserView: View {
                         .nilIfEmpty
                     let heuristicTitle = heuristic?.title.nilIfEmpty
                     let strongTitle = ruleTitle ?? heuristicTitle
-                    let displayTitle = strongTitle
+                    let rawDisplayTitle = strongTitle
                         ?? pageTitle?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
                         ?? ruleResult.sourceName
+                    // Detection hands us the source's own decorated string
+                    // (`书名_作者名【完结+番外】`); the prompt and every overlay
+                    // downstream should show the bare book name, matching what
+                    // the import will actually persist.
+                    let parsedDisplayTitle = BookTitleParser.parse(rawDisplayTitle).title
+                    let displayTitle = parsedDisplayTitle.isEmpty ? rawDisplayTitle : parsedDisplayTitle
                     let titleIsStrong = (strongTitle != nil)
 
                     // Same URL re-scan: refine title and/or stash a better

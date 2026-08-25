@@ -1281,7 +1281,11 @@ final class LibraryStore: ObservableObject {
     }
 
     private func normalized(_ text: String) -> String {
-        simplifiedChinese(text)
+        // Reduce to the bare book name before comparing, so a record saved with a
+        // decorated title before title parsing landed ("第二人格_作者名【完结】") still
+        // matches today's clean imports ("第二人格"). Without this, switching sources
+        // on such a book would insert a duplicate instead of replacing the record.
+        simplifiedChinese(BookTitleParser.parse(text).title)
             .replacingOccurrences(of: #"[^\p{L}\p{N}]"#, with: "", options: .regularExpression)
             .lowercased()
             .trimmingCharacters(in: .whitespacesAndNewlines)

@@ -10,6 +10,7 @@
 		64AE67FC2FB6C76D004058EE /* LingyueApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000001 /* LingyueApp.swift */; };
 		64AE67FD2FB6C76D004058EE /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000002 /* ContentView.swift */; };
 		64AE67FE2FB6C76D004058EE /* Novel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000003 /* Novel.swift */; };
+		64AE68FE2FB6C76D004058EE /* BookTitleParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000901 /* BookTitleParser.swift */; };
 		64AE67FF2FB6C76D004058EE /* ReaderStyle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000005 /* ReaderStyle.swift */; };
 		64AE68002FB6C76D004058EE /* LibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000006 /* LibraryView.swift */; };
 		64AE68012FB6C76D004058EE /* ReadingStatsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01000000000000000000001B /* ReadingStatsView.swift */; };
@@ -96,6 +97,7 @@
 		010000000000000000000001 /* LingyueApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LingyueApp.swift; sourceTree = "<group>"; };
 		010000000000000000000002 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		010000000000000000000003 /* Novel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Novel.swift; sourceTree = "<group>"; };
+		010000000000000000000901 /* BookTitleParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookTitleParser.swift; sourceTree = "<group>"; };
 		010000000000000000000005 /* ReaderStyle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReaderStyle.swift; sourceTree = "<group>"; };
 		010000000000000000000006 /* LibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryView.swift; sourceTree = "<group>"; };
 		010000000000000000000007 /* DiscoveryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiscoveryView.swift; sourceTree = "<group>"; };
@@ -229,6 +231,7 @@
 			isa = PBXGroup;
 			children = (
 				010000000000000000000003 /* Novel.swift */,
+				010000000000000000000901 /* BookTitleParser.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -484,6 +487,7 @@
 				64AE67FC2FB6C76D004058EE /* LingyueApp.swift in Sources */,
 				64AE67FD2FB6C76D004058EE /* ContentView.swift in Sources */,
 				64AE67FE2FB6C76D004058EE /* Novel.swift in Sources */,
+				64AE68FE2FB6C76D004058EE /* BookTitleParser.swift in Sources */,
 				64AE67FF2FB6C76D004058EE /* ReaderStyle.swift in Sources */,
 				64AE68002FB6C76D004058EE /* LibraryView.swift in Sources */,
 				64AE68332FB6C76D004058EE /* CategoryReorderState.swift in Sources */,
