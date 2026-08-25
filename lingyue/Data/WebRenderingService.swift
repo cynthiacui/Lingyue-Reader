@@ -2,6 +2,18 @@ import Foundation
 import UIKit
 import WebKit
 
+/// One user-agent string for every WebKit surface in the app. Cloudflare binds
+/// its challenge-clearance cookie to the exact UA, so the visible browser (where
+/// challenges get solved) and the headless renderer (which reuses the cookie via
+/// the shared default WKWebsiteDataStore) must present the same identity — a
+/// mismatch silently re-challenges every headless render.
+enum BrowserUserAgent {
+    static let mobileSafari =
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) "
+        + "AppleWebKit/605.1.15 (KHTML, like Gecko) "
+        + "Version/17.5 Mobile/15E148 Safari/604.1"
+}
+
 @MainActor
 final class WebRenderingService: NSObject {
     static let shared = WebRenderingService()
@@ -18,7 +30,7 @@ final class WebRenderingService: NSObject {
             frame: CGRect(x: 0, y: 0, width: 414, height: 896),
             configuration: configuration
         )
-        webView.customUserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1"
+        webView.customUserAgent = BrowserUserAgent.mobileSafari
         super.init()
         webView.navigationDelegate = self
     }

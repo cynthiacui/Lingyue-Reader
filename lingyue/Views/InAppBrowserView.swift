@@ -971,10 +971,10 @@ private struct InAppWebView: UIViewRepresentable {
         return webView
     }
 
-    private static let mobileSafariUserAgent =
-        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) "
-        + "AppleWebKit/605.1.15 (KHTML, like Gecko) "
-        + "Version/17.5 Mobile/15E148 Safari/604.1"
+    // Must stay identical to the headless renderer's UA (shared constant) —
+    // Cloudflare clearance cookies are UA-bound, and the renderer reuses the
+    // clearance this browser earns. See BrowserUserAgent.
+    private static let mobileSafariUserAgent = BrowserUserAgent.mobileSafari
 
     func updateUIView(_ webView: WKWebView, context: Context) {
         if webView.url == nil, !webView.isLoading {
