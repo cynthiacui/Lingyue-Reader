@@ -1090,6 +1090,7 @@ private struct CenteredOverlay<Content: View>: View {
 
             content
                 .padding(.horizontal, 24)
+                .transition(ModalStyle.cardTransition)
         }
     }
 }

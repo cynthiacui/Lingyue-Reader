@@ -3,9 +3,29 @@ import SwiftUI
 enum ModalStyle {
     static let presentationAnimation: Animation = .spring(response: 0.42, dampingFraction: 0.84)
 
+    /// Composite transition call sites attach to a whole overlay (scrim + card).
+    /// A plain fade with its own fast curves: the scrim must never scale — a
+    /// scaled full-screen dim pulls its edges into view mid-flight. The card's
+    /// pop lives in `cardTransition`, which the containers apply to the card
+    /// layer alone; both run when the overlay branch is inserted or removed.
     static let transition: AnyTransition = .asymmetric(
-        insertion: .scale(scale: 0.95).combined(with: .opacity),
-        removal: .scale(scale: 0.96).combined(with: .opacity)
+        insertion: .opacity.animation(.easeOut(duration: 0.22)),
+        removal: .opacity.animation(.easeOut(duration: 0.18))
+    )
+
+    /// Card layer: springs in with a touch of overshoot; exits quickly and
+    /// without bounce, sinking slightly as it fades so dismissal reads as the
+    /// card settling away rather than the spring played backwards. The exit
+    /// finishes just before the scrim's fade so the dim never outlines an
+    /// already-empty screen.
+    static let cardTransition: AnyTransition = .asymmetric(
+        insertion: .scale(scale: 0.86)
+            .combined(with: .opacity)
+            .animation(.spring(response: 0.38, dampingFraction: 0.72)),
+        removal: .scale(scale: 0.93)
+            .combined(with: .offset(y: 8))
+            .combined(with: .opacity)
+            .animation(.easeIn(duration: 0.16))
     )
 }
 
@@ -36,6 +56,7 @@ struct ModalContainer<Content: View>: View {
 
             content
                 .padding(.horizontal, 24)
+                .transition(ModalStyle.cardTransition)
         }
         .accessibilityAddTraits(.isModal)
     }
