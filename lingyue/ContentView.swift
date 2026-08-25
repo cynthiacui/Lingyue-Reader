@@ -53,7 +53,7 @@ enum AppUpdateAnnouncement: String, Identifiable, Equatable {
             return [
                 AppUpdateAnnouncementBullet(
                     icon: "hand.tap",
-                    text: "长按书籍，或左滑后点“分类”，即可选择归档"
+                    text: "长按书籍，或左滑后点“分类书籍”，即可选择归档"
                 ),
                 AppUpdateAnnouncementBullet(
                     icon: "book.closed",

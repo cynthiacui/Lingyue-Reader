@@ -110,8 +110,8 @@ private let libraryHelpItems: [LibraryHelpItem] = [
     LibraryHelpItem(icon: "arrow.down.circle", title: "下载管理", detail: "右上角查看下载进度，暂停或重试"),
     LibraryHelpItem(icon: "magnifyingglass", title: "搜索书架", detail: "下拉呼出搜索栏，跨分类按书名或作者查找"),
     LibraryHelpItem(icon: "square.grid.2x2", title: "分类整理", detail: "长按分类标题可拖动排序；长按书籍可移动到其他分类"),
-    LibraryHelpItem(icon: "archivebox", title: "归档书籍", detail: "长按书籍，或左滑点“分类”后选择归档；书籍和阅读记录都会保留"),
-    LibraryHelpItem(icon: "hand.tap", title: "左滑操作", detail: "在书籍上左滑可整理书籍、清理已下载内容或删除")
+    LibraryHelpItem(icon: "archivebox", title: "归档书籍", detail: "长按书籍，或左滑点“分类书籍”后选择归档；书籍和阅读记录都会保留"),
+    LibraryHelpItem(icon: "hand.tap", title: "左滑操作", detail: "在书籍上左滑可选择“分类书籍”、清理已下载内容或删除")
 ]
 
 struct LibraryView: View {
@@ -677,7 +677,7 @@ struct LibraryView: View {
                 Button {
                     presentCategoryEditor(for: novel)
                 } label: {
-                    Label("整理书籍", systemImage: "folder")
+                    Label("分类书籍", systemImage: "folder")
                 }
 
                 if let onDownload = actions.onDownload {
@@ -1220,7 +1220,7 @@ private struct BookPressableNavigationRow<Label: View>: View {
                     Button {
                         onLongPress()
                     } label: {
-                        SwiftUI.Label("整理书籍", systemImage: "folder")
+                        SwiftUI.Label("分类书籍", systemImage: "folder")
                     }
 
                     if let onDownload {
@@ -1432,7 +1432,7 @@ private struct IconSwipeRow<Label: View>: View {
                     if let onMoveToCategory {
                         actionButton(
                             icon: "folder.fill",
-                            label: "分类",
+                            label: "分类书籍",
                             background: theme.secondaryText.opacity(0.85)
                         ) {
                             closeSwipe()
@@ -1501,7 +1501,7 @@ private struct IconSwipeRow<Label: View>: View {
                         Button {
                             onMoveToCategory()
                         } label: {
-                            SwiftUI.Label("整理书籍", systemImage: "folder")
+                            SwiftUI.Label("分类书籍", systemImage: "folder")
                         }
                     }
                     if let onDownload {
@@ -1656,7 +1656,7 @@ struct CategoryEditOverlay: View {
         CenteredOverlay {
             VStack(alignment: .leading, spacing: 14) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("整理书籍")
+                    Text("分类书籍")
                         .font(.system(size: 18, weight: .semibold))
                         .foregroundStyle(theme.primaryText)
 
@@ -2407,7 +2407,7 @@ private struct StackedCategoryShelf: View {
         Button {
             onMoveCategory(novel)
         } label: {
-            Label("整理书籍", systemImage: "folder")
+            Label("分类书籍", systemImage: "folder")
         }
 
         if actions.onDownload != nil {

@@ -184,7 +184,7 @@ struct ArchivedBooksView: View {
                 .font(.system(size: 15, weight: .medium))
                 .foregroundStyle(theme.secondaryText)
             if searchText.isEmpty {
-                Text("在书架中长按一本书，选择“整理书籍”即可归档")
+                Text("在书架中长按一本书，选择“分类书籍”即可归档")
                     .font(.system(size: 12))
                     .foregroundStyle(theme.secondaryText.opacity(0.85))
                     .multilineTextAlignment(.center)
