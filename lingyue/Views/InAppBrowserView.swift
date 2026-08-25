@@ -2,6 +2,27 @@ import SwiftUI
 import WebKit
 import LingyueCore
 
+/// A detection popup the user parked with 暂不 instead of discarding. Held per
+/// page URL so the bottom pill can re-present the exact prompt it replaced.
+private enum MinimizedImportCandidate {
+    case heuristic(WebBookCandidate)
+    case rule(RuleImportCandidate)
+
+    var displayTitle: String {
+        switch self {
+        case .heuristic(let candidate): return candidate.title
+        case .rule(let candidate): return candidate.displayTitle
+        }
+    }
+
+    var pageURLString: String {
+        switch self {
+        case .heuristic(let candidate): return candidate.sourceURL.absoluteString
+        case .rule(let candidate): return candidate.pageURL.absoluteString
+        }
+    }
+}
+
 struct InAppBrowserView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.appTheme) private var theme
@@ -25,6 +46,17 @@ struct InAppBrowserView: View {
     @State private var ruleDetectedBook: RuleImportCandidate?
     @State private var ruleReplacementCandidate: RuleImportCandidate?
     @State private var ruleCategoryPrompt: RuleCategoryPromptState?
+
+    // Detection popups the user dismissed with 暂不, parked as a bottom pill
+    // instead of being discarded for the rest of the page visit. Keyed by page
+    // URL: navigating away hides the pill, coming back (same URL) restores it,
+    // and tapping it re-presents the import prompt.
+    @State private var minimizedImports: [String: MinimizedImportCandidate] = [:]
+
+    private var currentMinimizedImport: MinimizedImportCandidate? {
+        guard let currentURLString = browserState.currentURL?.absoluteString else { return nil }
+        return minimizedImports[currentURLString]
+    }
 
     private var hasBlockingOverlay: Bool {
         detectedBook != nil
@@ -59,6 +91,12 @@ struct InAppBrowserView: View {
                             .frame(height: 2)
                     }
                 }
+            }
+
+            if let minimized = currentMinimizedImport, !hasBlockingOverlay {
+                minimizedImportPill(minimized)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .zIndex(2)
             }
 
             if let importStatus {
@@ -120,6 +158,7 @@ struct InAppBrowserView: View {
         .animation(ModalStyle.presentationAnimation, value: ruleCategoryPrompt?.id)
         .animation(ModalStyle.presentationAnimation, value: importStatus)
         .animation(ModalStyle.presentationAnimation, value: importResult?.id)
+        .animation(ModalStyle.presentationAnimation, value: minimizedImports.keys.sorted())
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(true)
@@ -155,10 +194,62 @@ struct InAppBrowserView: View {
         }
     }
 
+    /// Docked capsule for a parked import prompt. Lives inside the bottom safe
+    /// area so it floats above the tab bar; tapping re-presents the popup. Only
+    /// the capsule itself is hit-testable — the rest of the page stays usable.
+    private func minimizedImportPill(_ minimized: MinimizedImportCandidate) -> some View {
+        VStack {
+            Spacer()
+            Button {
+                restoreMinimizedImport(minimized)
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "plus.circle.fill")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(theme.accent)
+
+                    Text("导入《\(minimized.displayTitle)》")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(theme.primaryText)
+                        .lineLimit(1)
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .background(Capsule().fill(theme.cardBackground))
+                .overlay(Capsule().stroke(theme.accent.opacity(0.25), lineWidth: 1))
+                .shadow(color: theme.cardShadow, radius: 8, x: 0, y: 3)
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal, 24)
+            .padding(.bottom, 10)
+        }
+        .accessibilityLabel("重新打开导入提示")
+    }
+
+    private func restoreMinimizedImport(_ minimized: MinimizedImportCandidate) {
+        withAnimation(ModalStyle.presentationAnimation) {
+            minimizedImports.removeValue(forKey: minimized.pageURLString)
+            switch minimized {
+            case .heuristic(let candidate):
+                detectedBook = candidate
+            case .rule(let candidate):
+                ruleDetectedBook = candidate
+            }
+        }
+    }
+
+    /// Park a dismissed prompt as the page's bottom pill. The page URL also
+    /// goes into `ignoredBookURLs` at the call sites, so the delayed re-scans
+    /// never auto-reopen the popup — the pill is the only way back in.
+    private func minimizeImport(_ minimized: MinimizedImportCandidate) {
+        minimizedImports[minimized.pageURLString] = minimized
+    }
+
     private func importPromptOverlay(candidate: WebBookCandidate) -> some View {
         let dismiss = {
             withAnimation(ModalStyle.presentationAnimation) {
                 ignoredBookURLs.insert(candidate.sourceURL.absoluteString)
+                minimizeImport(.heuristic(candidate))
                 detectedBook = nil
             }
         }
@@ -188,6 +279,7 @@ struct InAppBrowserView: View {
         let dismiss = {
             withAnimation(ModalStyle.presentationAnimation) {
                 ignoredBookURLs.insert(candidate.sourceURL.absoluteString)
+                minimizeImport(.heuristic(candidate))
                 replacementCandidate = nil
             }
         }
@@ -455,6 +547,9 @@ struct InAppBrowserView: View {
                 )
             } catch {
                 importStatus = nil
+                // Park the candidate again so retrying after a transient
+                // failure is one tap on the pill, not a full page reload.
+                minimizeImport(.heuristic(candidate))
                 importResult = BrowserImportResult(
                     type: .error,
                     title: "导入失败",
@@ -472,6 +567,7 @@ struct InAppBrowserView: View {
         let dismiss = {
             withAnimation(ModalStyle.presentationAnimation) {
                 ignoredBookURLs.insert(candidate.pageURL.absoluteString)
+                minimizeImport(.rule(candidate))
                 ruleDetectedBook = nil
             }
         }
@@ -497,6 +593,7 @@ struct InAppBrowserView: View {
         let dismiss = {
             withAnimation(ModalStyle.presentationAnimation) {
                 ignoredBookURLs.insert(candidate.pageURL.absoluteString)
+                minimizeImport(.rule(candidate))
                 ruleReplacementCandidate = nil
             }
         }
@@ -522,6 +619,7 @@ struct InAppBrowserView: View {
     private func ruleCategoryPromptOverlay(prompt: RuleCategoryPromptState) -> some View {
         BrandedPopupContainer(alignment: .bottom, dismissOnScrim: true) {
             withAnimation(ModalStyle.presentationAnimation) {
+                minimizeImport(.rule(prompt.candidate))
                 ruleCategoryPrompt = nil
             }
         } content: {
@@ -530,6 +628,7 @@ struct InAppBrowserView: View {
                 existingCategoryNames: libraryStore.categories.map(\.name),
                 onCancel: {
                     withAnimation(ModalStyle.presentationAnimation) {
+                        minimizeImport(.rule(prompt.candidate))
                         ruleCategoryPrompt = nil
                     }
                 },
@@ -632,6 +731,9 @@ struct InAppBrowserView: View {
                 )
             } catch {
                 importStatus = nil
+                // Same retry affordance as the heuristic path: a failed rule
+                // import parks the candidate as the page's pill again.
+                minimizeImport(.rule(candidate))
                 importResult = BrowserImportResult(
                     type: .error,
                     title: "导入失败",
@@ -757,6 +859,7 @@ struct InAppBrowserView: View {
     private func categoryPromptOverlay(prompt: CategoryPromptState) -> some View {
         BrandedPopupContainer(alignment: .bottom, dismissOnScrim: true) {
             withAnimation(ModalStyle.presentationAnimation) {
+                minimizeImport(.heuristic(prompt.candidate))
                 categoryPrompt = nil
             }
         } content: {
@@ -765,6 +868,7 @@ struct InAppBrowserView: View {
                 existingCategoryNames: libraryStore.categories.map(\.name),
                 onCancel: {
                     withAnimation(ModalStyle.presentationAnimation) {
+                        minimizeImport(.heuristic(prompt.candidate))
                         categoryPrompt = nil
                     }
                 },
