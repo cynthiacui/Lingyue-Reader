@@ -1133,7 +1133,7 @@
       "id": "00000000-0000-0000-0000-000000005401",
       "schemaVersion": 1,
       "name": "同人小说网",
-      "homepage": "https://trxs.org/",
+      "homepage": "https://trxs.cc/",
       "capabilities": {
         "supportsSearch": true,
         "showInSearchBar": true,
@@ -1162,20 +1162,26 @@
       },
       "search": {
         "method": "post",
-        "urlTemplate": "https://trxs.org/e/search/index.php",
+        "urlTemplate": "https://trxs.cc/e/search/index.php",
         "bodyTemplate": "show=title&classid=0&keyboard={query}",
         "queryEncoding": "gb18030",
         "resultsSelector": "div.books > div.bk",
         "titleField": {
-          "selector": "h3 a",
+          "selector": "h3",
           "transforms": [
+            {
+              "regexReplace": {
+                "pattern": "[（(]\\d+-\\d+[）)]$",
+                "replacement": ""
+              }
+            },
             {
               "trim": {}
             }
           ]
         },
         "detailURLField": {
-          "selector": "h3 a",
+          "selector": "a",
           "attribute": "href",
           "transforms": [
             {
@@ -1188,7 +1194,7 @@
           "transforms": [
             {
               "regexCapture": {
-                "pattern": "作者：\\s*(\\S+)"
+                "pattern": "作者[:：]\\s*(\\S+)"
               }
             },
             {
@@ -1306,15 +1312,15 @@
         "supportsSearch": true,
         "showInSearchBar": true,
         "supportsBrowserImport": true,
-        "requiresWebRender": false,
+        "requiresWebRender": true,
         "maxConcurrentRequests": 3,
         "requestIntervalMillis": 0
       },
       "enginePerStep": {
-        "search": "http",
-        "detail": "http",
-        "catalog": "http",
-        "chapter": "http"
+        "search": "web",
+        "detail": "web",
+        "catalog": "web",
+        "chapter": "web"
       },
       "encoding": "auto",
       "defaultHeaders": {},
@@ -1327,9 +1333,8 @@
         "confirmSelector": "h1, div.book-info"
       },
       "search": {
-        "method": "post",
-        "urlTemplate": "https://www.xbanxia.cc/modules/article/search_t.php",
-        "bodyTemplate": "Submit=&searchkey={query}",
+        "method": "get",
+        "urlTemplate": "https://www.xbanxia.cc/modules/article/search_t.php?searchkey={query}&Submit=",
         "resultsSelector": "li.pop-book2",
         "titleField": {
           "selector": "h2.pop-tit",
