@@ -101,6 +101,32 @@ enum ReadingTextMetrics {
     }
 }
 
+/// Reading statistics credit a session to the day the reader *feels* it belongs to:
+/// a chapter finished at 1 AM is the evening's reading, not the next morning's. The
+/// reading day therefore runs 4 AM → 4 AM — timestamps are shifted back four hours
+/// before any calendar bucketing, so the 今日 card, heatmap, month calendar, streaks,
+/// and month/year rollups all share the boundary. Daily-summary `day` values remain
+/// plain `startOfDay` keys labeling the reading day they describe.
+enum ReadingDayBoundary {
+    static let startHour = 4
+
+    /// The shifted instant used for all calendar math on activity timestamps.
+    static func anchor(_ date: Date) -> Date {
+        date.addingTimeInterval(-TimeInterval(startHour * 3_600))
+    }
+
+    /// The reading-day key (a plain calendar-day start) an activity timestamp belongs to.
+    static func day(containing date: Date, calendar: Calendar) -> Date {
+        calendar.startOfDay(for: anchor(date))
+    }
+
+    /// An instant inside the labeled reading day, for code paths that funnel day keys
+    /// and raw timestamps through the same bucketing.
+    static func timestamp(forDayKey day: Date) -> Date {
+        day.addingTimeInterval(TimeInterval(startHour * 3_600))
+    }
+}
+
 private struct ReadingStatsCursor: Hashable, Codable, Sendable {
     let bookID: UUID
     var lastObservedAt: Date
@@ -120,7 +146,13 @@ struct ReadingStatsLedger: Hashable, Codable, Sendable {
 
     static let maximumDetailedEventCount = 3_000
     static let detailedHistoryDays = 100
-    private static let currentCharacterCountingVersion = 1
+    /// Version 1 repaired whole-chapter outliers only inside completed chapter runs,
+    /// so the trailing run — the chapter still being read, whose events make up the
+    /// "today" figure — kept its inflated event and got stamped as migrated anyway.
+    /// Version 1 never shipped to the App Store; only dev installs carry the stamp.
+    /// Version 2 re-runs the extended repair over them. Safe to re-run: correctly
+    /// recorded and already-repaired events sit under the outlier ceiling untouched.
+    private static let currentCharacterCountingVersion = 2
 
     private enum CodingKeys: String, CodingKey {
         case books
@@ -169,10 +201,14 @@ struct ReadingStatsLedger: Hashable, Codable, Sendable {
     /// Repairs detailed events written by the original counter. During a chapter change,
     /// ReaderView briefly exposed an unpaginated placeholder whose text was the *entire next
     /// chapter*. That whole chapter was recorded once, then its real pages were recorded
-    /// again. For a completed contiguous chapter run, the bad first event is identifiable:
-    /// it is a large outlier and equals the unread first page plus all following page events.
-    /// Replacing it with that remainder restores the page total without guessing a blanket
-    /// percentage. Ambiguous runs are deliberately left untouched.
+    /// again. The bad event is identifiable on size alone: a real rendered page physically
+    /// cannot hold several times the book's median page, so any run-leading outlier is a
+    /// placeholder. For a completed contiguous chapter run the outlier equals the unread
+    /// first page plus all following page events, so replacing it with that remainder
+    /// restores the page total exactly. For a run the reader never finished — including
+    /// the trailing chapter the user is still inside, whose events dominate the "today"
+    /// figure — no remainder can be inferred, so the outlier is credited as one median
+    /// page: the page that was actually on screen.
     @discardableResult
     mutating func repairLegacyCharacterCounts() -> Bool {
         guard characterCountingVersion < Self.currentCharacterCountingVersion else {
@@ -195,7 +231,10 @@ struct ReadingStatsLedger: Hashable, Codable, Sendable {
             // Whole-chapter placeholders are normally several times larger than a rendered
             // page. The median remains representative because there is at most one such
             // placeholder per chapter run, while a chapter normally has several pages.
-            let typicalPageCount = positiveCounts[positiveCounts.count / 2]
+            // Lower-middle median: with an even count the upper-middle element can *be*
+            // the placeholder (one real page plus one whole-chapter event), which would
+            // lift the ceiling above every outlier and silently block the repair.
+            let typicalPageCount = positiveCounts[(positiveCounts.count - 1) / 2]
             let plausiblePageCeiling = max(typicalPageCount * 2, typicalPageCount + 800)
             let bookIsFinished = books.first(where: { $0.id == bookID })?.currentProgress ?? 0 >= 0.999
 
@@ -208,7 +247,6 @@ struct ReadingStatsLedger: Hashable, Codable, Sendable {
                     runEnd += 1
                 }
 
-                let beginsAfterAnotherChapter = runStart > 0
                 let hasFollowingChapter = runEnd < indices.count
                 let completedForward = hasFollowingChapter
                     ? events[indices[runEnd]].progress > events[indices[runStart]].progress
@@ -216,26 +254,31 @@ struct ReadingStatsLedger: Hashable, Codable, Sendable {
                 let candidateIndex = indices[runStart]
                 let candidateCount = events[candidateIndex].characterCount
 
-                if beginsAfterAnotherChapter,
-                   completedForward,
-                   runEnd - runStart > 1,
-                   candidateCount > plausiblePageCeiling {
+                if candidateCount > plausiblePageCeiling {
                     let followingCount = indices[(runStart + 1)..<runEnd].reduce(0) {
                         $0 + max(events[$1].characterCount, 0)
                     }
-                    let inferredFirstPageCount = candidateCount - followingCount
-                    // A small amount of backtracking can make the following pages add up
-                    // to the entire chapter. In that still-unambiguous case, fall back to
-                    // the book's median rendered-page size instead of preserving the known
-                    // whole-chapter value. If following activity exceeds the chapter total,
-                    // the run is genuinely ambiguous and remains untouched.
-                    let repairedCount: Int? = if inferredFirstPageCount > 0,
-                                                inferredFirstPageCount <= plausiblePageCeiling {
-                        inferredFirstPageCount
-                    } else if candidateCount >= followingCount {
-                        typicalPageCount
+                    let repairedCount: Int?
+                    if completedForward, runEnd - runStart > 1 {
+                        let inferredFirstPageCount = candidateCount - followingCount
+                        // A small amount of backtracking can make the following pages add up
+                        // to the entire chapter. In that still-unambiguous case, fall back to
+                        // the book's median rendered-page size instead of preserving the known
+                        // whole-chapter value. If following activity exceeds the chapter total,
+                        // the run is genuinely ambiguous and remains untouched.
+                        repairedCount = if inferredFirstPageCount > 0,
+                                           inferredFirstPageCount <= plausiblePageCeiling {
+                            inferredFirstPageCount
+                        } else if candidateCount >= followingCount {
+                            typicalPageCount
+                        } else {
+                            nil
+                        }
                     } else {
-                        nil
+                        // Incomplete run: the chapter the reader is still inside, or a lone
+                        // boundary-crossing event. The following pages don't cover the whole
+                        // chapter, so no remainder can be inferred — credit one median page.
+                        repairedCount = typicalPageCount
                     }
                     if let repairedCount {
                         let event = events[candidateIndex]
@@ -292,14 +335,15 @@ struct ReadingStatsLedger: Hashable, Codable, Sendable {
     /// until you skip an earlier day. Single source of truth for the streak badge
     /// shown on both the 我 hero card and the 统计 tab.
     func currentStreak(reference: Date = Date(), calendar: Calendar = .current) -> Int {
-        let today = calendar.startOfDay(for: reference)
+        let today = ReadingDayBoundary.day(containing: reference, calendar: calendar)
         var perDayDuration: [Date: TimeInterval] = [:]
         for summary in dailySummaries {
+            // Summary days are already reading-day keys — normalize, don't re-shift.
             let day = calendar.startOfDay(for: summary.day)
             perDayDuration[day, default: 0] += summary.durationSeconds
         }
         for event in events {
-            let day = calendar.startOfDay(for: event.timestamp)
+            let day = ReadingDayBoundary.day(containing: event.timestamp, calendar: calendar)
             perDayDuration[day, default: 0] += event.durationSeconds
         }
         var streak = 0
@@ -320,7 +364,8 @@ struct ReadingStatsLedger: Hashable, Codable, Sendable {
     }
 
     /// Iterates both compacted and detailed activity without allocating a merged array.
-    /// Daily summaries use their calendar-day start as the timestamp.
+    /// Daily summaries are reported at 4 AM of the reading day they label, so callers
+    /// that bucket timestamps through `ReadingDayBoundary` land them back on that day.
     func forEachActivity(
         _ body: (
             _ bookID: UUID,
@@ -335,7 +380,7 @@ struct ReadingStatsLedger: Hashable, Codable, Sendable {
             body(
                 summary.bookID,
                 summary.bookTitle,
-                summary.day,
+                ReadingDayBoundary.timestamp(forDayKey: summary.day),
                 summary.durationSeconds,
                 summary.pageTurns,
                 summary.characterCount
@@ -448,7 +493,7 @@ struct ReadingStatsLedger: Hashable, Codable, Sendable {
         }
 
         for event in events where eventIDsToCompact.contains(event.id) {
-            let day = calendar.startOfDay(for: event.timestamp)
+            let day = ReadingDayBoundary.day(containing: event.timestamp, calendar: calendar)
             let key = SummaryKey(day: day, bookID: event.bookID)
             if var existing = summaries[key] {
                 existing.bookTitle = event.bookTitle

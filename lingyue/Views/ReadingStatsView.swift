@@ -652,7 +652,8 @@ struct ReadingStatsView: View {
     @State private var displayedCalendarMonth: Date = {
         var calendar = Calendar.current
         calendar.firstWeekday = 2
-        return calendar.dateInterval(of: .month, for: Date())?.start ?? Date()
+        let anchoredNow = ReadingDayBoundary.anchor(Date())
+        return calendar.dateInterval(of: .month, for: anchoredNow)?.start ?? anchoredNow
     }()
     @AppStorage("stats.dailyGoalMinutes") private var dailyGoalMinutes: Int = 0
     // Mirrors the reader's 简/繁 preference so book titles render in the user's chosen
@@ -705,29 +706,33 @@ struct ReadingStatsView: View {
 
     private func makeRenderData() -> StatsRenderData {
         let overview = makeOverview()
-        let now = Date()
-        let periodInterval = selectedRange.interval(containing: now, calendar: calendar)
-        let topBooksInterval = selectedTopBooksRange.interval(containing: now, calendar: calendar)
+        // All day/month/year bucketing happens in reading-day time (4 AM boundary):
+        // both "now" and every activity timestamp are anchored before calendar math,
+        // so a session at 1 AM lands on the previous evening's day everywhere.
+        let anchoredNow = ReadingDayBoundary.anchor(Date())
+        let periodInterval = selectedRange.interval(containing: anchoredNow, calendar: calendar)
+        let topBooksInterval = selectedTopBooksRange.interval(containing: anchoredNow, calendar: calendar)
         var buckets: [Date: DailyEventTotals] = [:]
         var periodTotals = PeriodEventTotals()
         var topBookTotals: [UUID: BookReadingAggregate] = [:]
 
         libraryStore.readingStats.forEachActivity {
             bookID, bookTitle, timestamp, durationSeconds, pageTurns, characterCount in
-            let day = calendar.startOfDay(for: timestamp)
+            let anchoredTimestamp = ReadingDayBoundary.anchor(timestamp)
+            let day = calendar.startOfDay(for: anchoredTimestamp)
             var daily = buckets[day] ?? DailyEventTotals()
             daily.durationSeconds += durationSeconds
             daily.pageTurns += pageTurns
             daily.characterCount += characterCount
             buckets[day] = daily
 
-            if periodInterval.contains(timestamp) {
+            if periodInterval.contains(anchoredTimestamp) {
                 periodTotals.durationSeconds += durationSeconds
                 periodTotals.pageTurns += pageTurns
                 periodTotals.characterCount += characterCount
             }
 
-            if topBooksInterval.contains(timestamp) {
+            if topBooksInterval.contains(anchoredTimestamp) {
                 let current = topBookTotals[bookID]
                 topBookTotals[bookID] = BookReadingAggregate(
                     id: bookID,
@@ -754,7 +759,9 @@ struct ReadingStatsView: View {
     }
 
     private var currentMonthStart: Date {
-        calendar.dateInterval(of: .month, for: Date())?.start ?? calendar.startOfDay(for: Date())
+        let anchoredNow = ReadingDayBoundary.anchor(Date())
+        return calendar.dateInterval(of: .month, for: anchoredNow)?.start
+            ?? calendar.startOfDay(for: anchoredNow)
     }
 
     private var visibleCalendarMonths: [Date] {
@@ -854,8 +861,9 @@ struct ReadingStatsView: View {
     }
 
     private func waitForNextDay() async {
+        // The reading day flips at 4 AM, not midnight — refresh the cards then.
         var components = DateComponents()
-        components.hour = 0
+        components.hour = ReadingDayBoundary.startHour
         components.minute = 0
         components.second = 1
         let now = Date()
@@ -907,7 +915,7 @@ struct ReadingStatsView: View {
     ) -> some View {
         let streak = currentStreak(in: buckets)
         let minutes = max(Int(overview.totalDuration / 60), 0)
-        let today = calendar.startOfDay(for: Date())
+        let today = ReadingDayBoundary.day(containing: Date(), calendar: calendar)
         let todaySeconds = buckets[today]?.durationSeconds ?? 0
         let todayMinutes = max(Int(todaySeconds / 60), 0)
         let hasGoal = dailyGoalMinutes > 0
@@ -1285,7 +1293,7 @@ struct ReadingStatsView: View {
 
     private func heatmapCard(buckets: [Date: DailyEventTotals]) -> some View {
         let summaries = weeklyHeatmapSummaries(buckets: buckets)
-        let today = calendar.startOfDay(for: Date())
+        let today = ReadingDayBoundary.day(containing: Date(), calendar: calendar)
         let maxDuration = max(summaries.map(\.durationSeconds).max() ?? 1, 1)
         let selectedSummary = selectedHeatmapDay.flatMap { selectedDay in
             summaries.first { calendar.isDate($0.day, inSameDayAs: selectedDay) }
@@ -1568,7 +1576,7 @@ struct ReadingStatsView: View {
     }
 
     private func weeklyHeatmapSummaries(buckets: [Date: DailyEventTotals]) -> [DailyReadingSummary] {
-        let today = calendar.startOfDay(for: Date())
+        let today = ReadingDayBoundary.day(containing: Date(), calendar: calendar)
         let currentWeekStart = calendar.dateInterval(of: .weekOfYear, for: today)?.start ?? today
         let firstColumnStart = calendar.date(byAdding: .day, value: -11 * 7, to: currentWeekStart) ?? today
         var summaries: [DailyReadingSummary] = []
@@ -1598,7 +1606,7 @@ struct ReadingStatsView: View {
     }
 
     private func currentStreak(in buckets: [Date: DailyEventTotals]) -> Int {
-        let today = calendar.startOfDay(for: Date())
+        let today = ReadingDayBoundary.day(containing: Date(), calendar: calendar)
         var streak = 0
         var cursor = today
         var safety = 0
@@ -2131,7 +2139,7 @@ private struct CalendarDayCell: View {
 
     var body: some View {
         let hasRead = summary.durationSeconds > 0
-        let isToday = calendar.isDateInToday(summary.day)
+        let isToday = summary.day == ReadingDayBoundary.day(containing: Date(), calendar: calendar)
 
         VStack(spacing: 3) {
             Text("\(calendar.component(.day, from: summary.day))")

@@ -193,7 +193,7 @@ struct MeView: View {
     private var heroMetrics: HeroMetrics {
         let stats = libraryStore.readingStats
         let calendar = Calendar.current
-        let today = calendar.startOfDay(for: Date())
+        let today = ReadingDayBoundary.day(containing: Date(), calendar: calendar)
         let cutoff = calendar.date(byAdding: .day, value: -6, to: today) ?? today
         let weeklySeconds = stats.totalDuration(since: cutoff)
 

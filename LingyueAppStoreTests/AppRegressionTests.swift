@@ -527,6 +527,108 @@ final class ReadingStatsLedgerTests: XCTestCase {
         XCTAssertFalse(ledger.repairLegacyCharacterCounts())
     }
 
+    /// A session at 1 AM belongs to the previous evening's reading day (4 AM
+    /// boundary): it must extend that day's streak rather than start a new day, and
+    /// a following afternoon session lands on the actual new day.
+    func testPostMidnightSessionCountsTowardThePreviousReadingDay() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "Asia/Shanghai")!
+        func date(_ day: Int, _ hour: Int, _ minute: Int = 0) -> Date {
+            calendar.date(from: DateComponents(year: 2026, month: 8, day: day, hour: hour, minute: minute))!
+        }
+        let novel = makeNovel()
+        var ledger = ReadingStatsLedger(events: [
+            makeEvent(novel: novel, timestamp: date(25, 21), count: 400, chapter: "第一章", progress: 0.1, duration: 300),
+            makeEvent(novel: novel, timestamp: date(26, 1), count: 400, chapter: "第一章", progress: 0.2, duration: 300)
+        ])
+
+        // At 2 AM on the 26th the reading day is still the 25th: one active day.
+        XCTAssertEqual(ledger.currentStreak(reference: date(26, 2), calendar: calendar), 1)
+        // At noon on the 26th nothing has been read on the new day yet; the streak
+        // from the 25th survives on grace.
+        XCTAssertEqual(ledger.currentStreak(reference: date(26, 12), calendar: calendar), 1)
+
+        ledger.events.append(
+            makeEvent(novel: novel, timestamp: date(26, 13), count: 400, chapter: "第一章", progress: 0.3, duration: 300)
+        )
+        XCTAssertEqual(ledger.currentStreak(reference: date(26, 14), calendar: calendar), 2)
+    }
+
+    /// The "opened the app, turned a few pages, stats claim tens of thousands of
+    /// characters" report: the legacy counter recorded the whole next chapter when a
+    /// page turn crossed a chapter boundary. That inflated event usually sits in the
+    /// *trailing* run — the chapter the user is still reading — where no following
+    /// chapter exists to validate a remainder inference. It must still be repaired,
+    /// down to one median page.
+    func testTrailingRunWholeChapterOutlierIsRepairedToOneTypicalPage() throws {
+        let novel = makeNovel(progress: 0.3)
+        let start = Date(timeIntervalSince1970: 1_800_000_000)
+        let inflatedEventID = UUID()
+        let events: [ReadingStatsEvent] = [
+            makeEvent(novel: novel, timestamp: start, count: 420, chapter: "第一章", progress: 0.1),
+            makeEvent(novel: novel, timestamp: start.addingTimeInterval(1), count: 430, chapter: "第一章", progress: 0.15),
+            makeEvent(id: inflatedEventID, novel: novel, timestamp: start.addingTimeInterval(2), count: 15_000, chapter: "第二章", progress: 0.2),
+            makeEvent(novel: novel, timestamp: start.addingTimeInterval(3), count: 410, chapter: "第二章", progress: 0.25),
+            makeEvent(novel: novel, timestamp: start.addingTimeInterval(4), count: 425, chapter: "第二章", progress: 0.3)
+        ]
+        var ledger = try makeLegacyLedger(novel: novel, events: events, lastTick: 4)
+
+        XCTAssertTrue(ledger.repairLegacyCharacterCounts())
+        // Median rendered page across [410, 420, 425, 430, 15000] is 425.
+        XCTAssertEqual(
+            ledger.events.first(where: { $0.id == inflatedEventID })?.characterCount,
+            425
+        )
+        XCTAssertEqual(ledger.books.first?.characterCount, 420 + 430 + 425 + 410 + 425)
+    }
+
+    /// A dev install that already ran the version-1 migration got stamped as migrated
+    /// while its trailing-run outlier survived (version 1 only repaired completed
+    /// runs). Version 2 must pick these ledgers up again.
+    func testVersionOneStampedLedgerIsRepairedAgainByVersionTwo() throws {
+        let novel = makeNovel(progress: 0.3)
+        let start = Date(timeIntervalSince1970: 1_800_000_000)
+        let inflatedEventID = UUID()
+        let events: [ReadingStatsEvent] = [
+            makeEvent(novel: novel, timestamp: start, count: 420, chapter: "第一章", progress: 0.1),
+            makeEvent(novel: novel, timestamp: start.addingTimeInterval(1), count: 430, chapter: "第一章", progress: 0.15),
+            makeEvent(id: inflatedEventID, novel: novel, timestamp: start.addingTimeInterval(2), count: 15_000, chapter: "第二章", progress: 0.2),
+            makeEvent(novel: novel, timestamp: start.addingTimeInterval(3), count: 410, chapter: "第二章", progress: 0.25)
+        ]
+        var ledger = try makeLegacyLedger(novel: novel, events: events, lastTick: 3, version: 1)
+
+        XCTAssertTrue(ledger.repairLegacyCharacterCounts())
+        // Median rendered page across [410, 420, 430, 15000] (lower-middle) is 420.
+        XCTAssertEqual(
+            ledger.events.first(where: { $0.id == inflatedEventID })?.characterCount,
+            420
+        )
+        XCTAssertFalse(ledger.repairLegacyCharacterCounts())
+    }
+
+    /// A boundary crossing followed by closing the book leaves a lone whole-chapter
+    /// event as an entire run — possibly the book's first retained event when older
+    /// activity was compacted away. Outlier size alone identifies it.
+    func testLoneBoundaryCrossingOutlierIsRepairedWithoutSurroundingRuns() throws {
+        let novel = makeNovel(progress: 0.2)
+        let start = Date(timeIntervalSince1970: 1_800_000_000)
+        let inflatedEventID = UUID()
+        let events: [ReadingStatsEvent] = [
+            makeEvent(id: inflatedEventID, novel: novel, timestamp: start, count: 12_000, chapter: "第五章", progress: 0.2),
+            makeEvent(novel: novel, timestamp: start.addingTimeInterval(1), count: 380, chapter: "第六章", progress: 0.25)
+        ]
+        var ledger = try makeLegacyLedger(novel: novel, events: events, lastTick: 1)
+
+        XCTAssertTrue(ledger.repairLegacyCharacterCounts())
+        // Even-count ledgers must take the lower-middle median; the upper-middle here
+        // is the 12,000-character placeholder itself, which would block the repair.
+        XCTAssertEqual(
+            ledger.events.first(where: { $0.id == inflatedEventID })?.characterCount,
+            380
+        )
+        XCTAssertEqual(ledger.books.first?.characterCount, 380 + 380)
+    }
+
     func testCompletedBookMigrationRestoresItsActualPageTotal() throws {
         let novel = makeNovel(progress: 1)
         let start = Date(timeIntervalSince1970: 1_800_000_000)
@@ -722,20 +824,59 @@ final class ReadingStatsLedgerTests: XCTestCase {
         )
     }
 
+    /// Builds a ledger as an older build would have persisted it. With `version: nil`
+    /// the key is absent from the JSON (pre-migration builds, decodes as 0); with a
+    /// number it simulates a ledger already stamped by that migration version.
+    private func makeLegacyLedger(
+        novel: Novel,
+        events: [ReadingStatsEvent],
+        lastTick: TimeInterval,
+        version: Int? = nil
+    ) throws -> ReadingStatsLedger {
+        let start = events.first?.timestamp ?? Date(timeIntervalSince1970: 1_800_000_000)
+        let book = ReadingStatsBook(
+            id: novel.id,
+            title: novel.title,
+            author: novel.author,
+            coverPalette: novel.coverPalette,
+            coverImageURLString: nil,
+            sourceURLString: nil,
+            firstReadAt: start,
+            lastReadAt: start.addingTimeInterval(lastTick),
+            deletedAt: nil,
+            currentProgress: novel.progress,
+            totalDurationSeconds: lastTick,
+            pageTurns: events.count,
+            characterCount: events.reduce(0) { $0 + $1.characterCount }
+        )
+        let encoded = try JSONEncoder().encode(ReadingStatsLedger(books: [book], events: events))
+        var legacyObject = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+        )
+        if let version {
+            legacyObject["characterCountingVersion"] = version
+        } else {
+            legacyObject.removeValue(forKey: "characterCountingVersion")
+        }
+        let legacyData = try JSONSerialization.data(withJSONObject: legacyObject)
+        return try JSONDecoder().decode(ReadingStatsLedger.self, from: legacyData)
+    }
+
     private func makeEvent(
         id: UUID = UUID(),
         novel: Novel,
         timestamp: Date,
         count: Int,
         chapter: String,
-        progress: Double
+        progress: Double,
+        duration: TimeInterval = 10
     ) -> ReadingStatsEvent {
         ReadingStatsEvent(
             id: id,
             bookID: novel.id,
             bookTitle: novel.title,
             timestamp: timestamp,
-            durationSeconds: 10,
+            durationSeconds: duration,
             pageTurns: 1,
             characterCount: count,
             chapterTitle: chapter,
