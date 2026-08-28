@@ -123,6 +123,16 @@ struct LibraryView: View {
     @EnvironmentObject private var downloadManager: BookDownloadManager
     @EnvironmentObject private var overlayManager: OverlayManager
     @EnvironmentObject private var updateAnnouncements: AppUpdateAnnouncementStore
+    /// Lets the empty state's primary action switch tabs instead of telling
+    /// the user to go find 发现 themselves.
+    @EnvironmentObject private var tabSelection: TabSelectionStore
+
+    /// Empty-state artwork scales with Dynamic Type so the icon doesn't shrink
+    /// into insignificance next to accessibility-sized copy.
+    @ScaledMetric(relativeTo: .title2) private var emptyIconDiameter: CGFloat = 124
+    @ScaledMetric(relativeTo: .title2) private var emptyIconGlyph: CGFloat = 52
+
+    private var cappedIconDiameter: CGFloat { min(emptyIconDiameter, 160) }
 
     @State private var newCategoryName = ""
     @State private var newBookCategoryName = ""
@@ -200,10 +210,16 @@ struct LibraryView: View {
         ZStack {
             ThemeBackgroundView()
 
-            if isLibraryEmpty {
-                emptyStateView
-            } else if isSearching {
+            // Search is checked first: with the old ordering, an empty
+            // library kept rendering the onboarding empty state underneath a
+            // focused search field, so the user read "去「发现」搜索并导入小说"
+            // while typing a query. Reachable whenever the library empties
+            // mid-search (deleting the last book from search results), even
+            // though the search bar itself is now withheld while empty.
+            if isSearching {
                 searchResultsList
+            } else if isLibraryEmpty {
+                emptyStateView
             } else {
                 ScrollViewReader { scrollProxy in
                     ScrollView {
@@ -357,11 +373,15 @@ struct LibraryView: View {
                 .accessibilityLabel("从文件导入")
             }
 
-            ToolbarItem(placement: .topBarTrailing) {
-                LibraryDownloadToolbarButton(
-                    isPresented: $isShowingDownloads,
-                    novels: libraryStore.allNovels
-                )
+            // Nothing to manage until a book exists — the glyph used to sit
+            // there on a brand-new install and open an empty downloads screen.
+            if !libraryStore.allNovels.isEmpty {
+                ToolbarItem(placement: .topBarTrailing) {
+                    LibraryDownloadToolbarButton(
+                        isPresented: $isShowingDownloads,
+                        novels: libraryStore.allNovels
+                    )
+                }
             }
         }
         .animation(.spring(response: 0.42, dampingFraction: 0.82), value: expandedCategoryID)
@@ -375,11 +395,13 @@ struct LibraryView: View {
         .toolbar(hasActiveOverlay ? .hidden : .visible, for: .tabBar)
         .navigationTitle("书架")
         .navigationBarTitleDisplayMode(.inline)
-        .searchable(
-            text: $searchText,
-            placement: .navigationBarDrawer(displayMode: .automatic),
-            prompt: "搜索书名或作者"
-        )
+        // Withheld while the shelf is empty: it occupied the most prominent
+        // slot on the screen to search nothing, and at accessibility text
+        // sizes the system field grew into the largest element on a page whose
+        // whole job is to explain how to get a first book. The `if` swaps view
+        // identity, which costs nothing here — `body` already swaps its whole
+        // subtree at this same isLibraryEmpty boundary.
+        .modifier(LibrarySearchBar(isEnabled: !isLibraryEmpty, text: $searchText))
         .onChange(of: searchText) { _, _ in closeActiveSwipe() }
         .task {
             await downloadManager.refreshStates(for: libraryStore.allNovels)
@@ -549,50 +571,100 @@ struct LibraryView: View {
         }
     }
 
+    /// First screen a new user sees, so its primary action is the one that
+    /// actually resolves the emptiness: jump to 发现. It used to offer only
+    /// 新建分类 — the action its own copy called secondary ("也可以…") — which
+    /// left the primary path buttonless and asked the user to organise an
+    /// empty shelf. 从文件导入 gets a real button too: it's otherwise only an
+    /// unlabelled toolbar glyph, invisible to someone holding a TXT file.
+    ///
+    /// Scrollable and `@ScaledMetric`-sized because at accessibility text
+    /// sizes a fixed-height centred stack clips instead of growing.
     private var emptyStateView: some View {
-        VStack(spacing: 22) {
-            ZStack {
-                Circle()
-                    .fill(theme.accent.opacity(0.10))
-                    .frame(width: 124, height: 124)
+        GeometryReader { proxy in
+            ScrollView {
+                VStack(spacing: 22) {
+                    // Artwork scales with the text, but capped: unclamped,
+                    // `@ScaledMetric` takes 124pt past 300pt at the largest
+                    // accessibility sizes and pushes the actions off-screen.
+                    // Decorative imagery doesn't have to track text all the way.
+                    ZStack {
+                        Circle()
+                            .fill(theme.accent.opacity(0.10))
+                            .frame(width: cappedIconDiameter, height: cappedIconDiameter)
 
-                Image(systemName: "books.vertical")
-                    .font(.system(size: 52, weight: .light))
-                    .foregroundStyle(theme.accent.opacity(0.85))
-            }
+                        Image(systemName: "books.vertical")
+                            .font(.system(size: min(emptyIconGlyph, 68), weight: .light))
+                            .foregroundStyle(theme.accent.opacity(0.85))
+                    }
 
-            VStack(spacing: 10) {
-                Text("书架空空如也")
-                    .font(.system(size: 22, weight: .semibold, design: .rounded))
-                    .foregroundStyle(theme.primaryText)
+                    VStack(spacing: 10) {
+                        Text("书架空空如也")
+                            .font(.system(.title2, design: .rounded).weight(.semibold))
+                            .foregroundStyle(theme.primaryText)
+                            .multilineTextAlignment(.center)
 
-                Text("点击下方「发现」搜索并导入小说\n也可以先创建一个分类整理书籍")
-                    .font(.system(size: 14))
-                    .foregroundStyle(theme.secondaryText)
-                    .multilineTextAlignment(.center)
-                    .lineSpacing(4)
-            }
-            .padding(.horizontal, 40)
+                        Text("去「发现」搜索并导入小说，也可以导入本地 TXT 文件。")
+                            .font(.subheadline)
+                            .foregroundStyle(theme.secondaryText)
+                            .multilineTextAlignment(.center)
+                            .lineSpacing(4)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(.horizontal, 32)
 
-            Button {
-                presentNewCategoryInput()
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "folder.badge.plus")
-                        .font(.system(size: 15, weight: .semibold))
-                    Text("新建分类")
-                        .font(.system(size: 15, weight: .semibold))
+                    VStack(spacing: 14) {
+                        Button {
+                            tabSelection.selectedTab = .discovery
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: "sparkles")
+                                Text("去「发现」找书")
+                            }
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(theme.accent)
+                            .padding(.horizontal, 22)
+                            .padding(.vertical, 12)
+                            .background(Capsule().fill(theme.accent.opacity(0.14)))
+                        }
+                        .buttonStyle(.plain)
+
+                        // Secondary actions stack vertically rather than sharing
+                        // a row — one row overflows once the text scales up.
+                        VStack(spacing: 10) {
+                            Button {
+                                isShowingTxtPicker = true
+                            } label: {
+                                Label("从文件导入", systemImage: "doc.badge.plus")
+                                    .font(.footnote.weight(.medium))
+                                    .foregroundStyle(theme.accent)
+                            }
+                            .buttonStyle(.plain)
+
+                            Button {
+                                presentNewCategoryInput()
+                            } label: {
+                                Label("新建分类", systemImage: "folder.badge.plus")
+                                    .font(.footnote.weight(.medium))
+                                    .foregroundStyle(theme.secondaryText)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                        .padding(.top, 2)
+                    }
+                    .padding(.top, 4)
                 }
-                .foregroundStyle(theme.accent)
-                .padding(.horizontal, 22)
-                .padding(.vertical, 12)
-                .background(Capsule().fill(theme.accent.opacity(0.14)))
+                .padding(.top, 32)
+                // Extra bottom room so the last action clears the floating tab
+                // bar, which overlays scroll content rather than insetting it.
+                .padding(.bottom, 96)
+                // minHeight = viewport, so the block sits centred while it fits
+                // and the ScrollView only scrolls once accessibility-sized text
+                // outgrows the screen.
+                .frame(maxWidth: .infinity, minHeight: proxy.size.height, alignment: .center)
             }
-            .buttonStyle(.plain)
-            .padding(.top, 4)
+            .scrollBounceBehavior(.basedOnSize)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(.bottom, 60)
     }
 
     /// Flat list shown in place of the wallet-stacked layout while a search query is
@@ -3116,4 +3188,25 @@ private struct CategoryManagementView: View {
     LibraryView()
         .environmentObject(LibraryStore())
         .environmentObject(AppUpdateAnnouncementStore())
+}
+
+
+/// Applies `.searchable` only when there is something to search. Kept as a
+/// `ViewModifier` so the conditional lives in one place rather than forking
+/// the whole modifier chain at the call site.
+private struct LibrarySearchBar: ViewModifier {
+    let isEnabled: Bool
+    @Binding var text: String
+
+    func body(content: Content) -> some View {
+        if isEnabled {
+            content.searchable(
+                text: $text,
+                placement: .navigationBarDrawer(displayMode: .automatic),
+                prompt: "搜索书名或作者"
+            )
+        } else {
+            content
+        }
+    }
 }
