@@ -119,6 +119,31 @@ public struct SourceRule: Codable, Sendable, Hashable, Identifiable {
     /// Schema version this binary writes. Bump when a non-backwards-
     /// compatible field is added.
     public static let currentSchemaVersion: Int = 1
+
+    /// True when the rule carries a search step the engine could actually
+    /// run — an HTML `search` block or a `jsonAPI.search` block whose
+    /// essential fields are filled in.
+    ///
+    /// This is the *structural* question ("can this rule produce a search
+    /// hit?"), deliberately distinct from `capabilities.supportsSearch`,
+    /// which additionally reflects whether that step has been verified
+    /// against the live site. A rule where this is false is a browse-only
+    /// source: perfectly usable through the in-app browser's import flow,
+    /// but it can never contribute a search hit, so every surface that
+    /// talks about search should say so rather than implying an
+    /// untested-but-present step.
+    ///
+    /// Presence alone isn't enough. The advanced editor writes
+    /// `urlTemplate` / `resultsSelector` as free text with no validation,
+    /// so a half-finished step would otherwise claim searchability, get
+    /// fanned into every query, and then either throw `ruleIncomplete` or
+    /// — worse, when only `resultsSelector` is blank — match nothing and
+    /// read to the user as "没有找到匹配内容".
+    public var isSearchable: Bool {
+        if let search, search.isRunnable { return true }
+        if let jsonSearch = jsonAPI?.search, jsonSearch.isRunnable { return true }
+        return false
+    }
 }
 
 // MARK: - Field selectors
@@ -267,6 +292,23 @@ public struct SearchStep: Codable, Sendable, Hashable {
         self.snippetField = snippetField
         self.normalizeQuerySeparators = normalizeQuerySeparators
         self.suggest = suggest
+    }
+
+    /// Whether the engine has enough filled-in fields to attempt a search.
+    /// `urlTemplate` decides where the request goes; `resultsSelector`
+    /// decides what counts as a result row. Blank either and the step
+    /// cannot produce a hit — see `SourceRule.isSearchable`.
+    public var isRunnable: Bool {
+        !urlTemplate.isBlank && !resultsSelector.isBlank
+    }
+}
+
+extension String {
+    /// Empty, or nothing but whitespace / newlines. Used by the
+    /// `isRunnable` checks, where a field the user cleared and a field
+    /// holding a stray space are equally unusable.
+    var isBlank: Bool {
+        trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 }
 

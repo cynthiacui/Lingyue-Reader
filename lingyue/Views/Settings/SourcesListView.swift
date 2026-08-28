@@ -767,7 +767,9 @@ struct SourcesListView: View {
     private func statusPill(_ status: RowStatus) -> some View {
         let (label, color): (String, Color) = {
             switch status {
-            case .ready: return ("可用", .green)
+            case .ready: return ("可搜索", .green)
+            // Grey, not orange — browse-only is a category, not a fault.
+            case .browseOnly: return ("仅浏览", theme.secondaryText)
             case .needsCheck: return ("需要检查", .orange)
             case .failed: return ("测试失败", .red)
             case .disabled: return ("已关闭", theme.secondaryText)
@@ -802,10 +804,10 @@ struct SourcesListView: View {
     /// records to be considered usable). User-authored rules read
     /// from `SourceValidationStore` — required blocks are
     /// `.detail + .catalog + .chapter`, matching the browse-only
-    /// minimum from §3.3. Search is optional for the pill: a
-    /// user-authored rule with detail+catalog+chapter passing but
-    /// search untested still reports 可用 because import-from-browser
-    /// works.
+    /// minimum from §3.3. Search is not required to clear that bar, but
+    /// a rule that carries no search step at all reports `.browseOnly`
+    /// rather than 可用, so the row states what the source can actually
+    /// do instead of overpromising.
     static func computeRowStatus(
         rule: SourceRule,
         isEditable: Bool,
@@ -814,14 +816,17 @@ struct SourcesListView: View {
     ) -> RowStatus {
         guard isEnabled else { return .disabled }
         if !isEditable {
-            let hasCapability = rule.capabilities.supportsSearch
+            guard rule.capabilities.supportsSearch
                 || rule.capabilities.supportsBrowserImport
-            return hasCapability ? .ready : .needsCheck
+            else { return .needsCheck }
+            return rule.isSearchable ? .ready : .browseOnly
         }
         let required: [SourceBlock] = [.detail, .catalog, .chapter]
         let effectiveStatuses = required.map { effectiveStatus($0, rule: rule, validation: validation) }
         if effectiveStatuses.contains(.failed) { return .failed }
-        if effectiveStatuses.allSatisfy({ $0 == .passed }) { return .ready }
+        if effectiveStatuses.allSatisfy({ $0 == .passed }) {
+            return rule.isSearchable ? .ready : .browseOnly
+        }
         return .needsCheck
     }
 
@@ -843,6 +848,11 @@ struct SourcesListView: View {
 
 enum RowStatus: Hashable {
     case ready
+    /// Passes the browse bar but carries no search step, so it can never
+    /// contribute a search hit. Its own state rather than a flavour of
+    /// `.ready` — reporting 可用 here is what let users add a source, see it
+    /// look healthy, and then find search silently returning nothing.
+    case browseOnly
     case needsCheck
     case failed
     case disabled

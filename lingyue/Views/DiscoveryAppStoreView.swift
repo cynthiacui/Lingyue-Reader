@@ -12,6 +12,11 @@ import LingyueCore
 ///    Tapping a card opens the source's homepage in `InAppBrowserView`,
 ///    where the existing rule-driven import flow handles auto-detection.
 ///
+/// With zero sources the page has neither of those to show, so it drops
+/// to a single centred `emptyStateView` (see `hasNoSources`) and disables
+/// the search bar — search fans out over the user's own rules, so with
+/// none saved it can only ever return nothing.
+///
 /// The view reads `SourceRule`s from `EditableSourceStore` directly
 /// (rather than going through `BookSourceRegistry`) because we need
 /// each rule's `homepage` URL — `BookSource` deliberately hides that
@@ -50,35 +55,56 @@ struct DiscoveryAppStoreView: View {
         ZStack {
             ThemeBackgroundView()
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    DiscoverySearchBar(
-                        text: $searchText,
-                        focus: $isSearchFieldFocused,
-                        onSubmit: triggerSearch
-                    )
-
-                    if !recentSearches.isEmpty {
-                        DiscoveryRecentSearchesCard(onSelect: selectRecentSearch)
-                            .transition(.opacity.combined(with: .move(edge: .top)))
-                    }
-
-                    websitesSection
-                        // Extra breathing room above the websites section. The outer
-                        // VStack uses `spacing: 18` to keep the search bar and history
-                        // chips tight; this padding adds an additional visual gap
-                        // before the "我添加的书源" header so the two zones read as
-                        // separate sections rather than one continuous list.
-                        .padding(.top, 16)
+            // With no sources there's nothing to browse and nothing to search,
+            // so the page collapses to the disabled bar plus one centred empty
+            // state instead of stacking a dimmed bar, a hint, and an empty
+            // "我添加的书源" section that all say the same thing. Dropping the
+            // ScrollView here is deliberate: it lets the empty state centre in
+            // the leftover height, and pull-to-refresh has nothing to fetch —
+            // adding a source routes through SourcesListView, and popping back
+            // already refreshes via `onAppear`.
+            if hasNoSources {
+                VStack(spacing: 18) {
+                    searchBar
+                    emptyStateView
                 }
+                .padding(.horizontal, horizontalMargin)
                 .padding(.top, 12)
-                .padding(.bottom, 24)
-                .animation(.easeInOut(duration: 0.18), value: recentSearches)
+            } else {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 18) {
+                        searchBar
+
+                        // Sources the user can browse but not search keep the
+                        // normal page — the grid below is still the whole point
+                        // of the tab — and take the history-chip slot for a
+                        // notice, since those chips could only ever return
+                        // nothing here.
+                        if !canSearch {
+                            browseOnlyNotice
+                                .transition(.opacity)
+                        } else if !recentSearches.isEmpty {
+                            DiscoveryRecentSearchesCard(onSelect: selectRecentSearch)
+                                .transition(.opacity.combined(with: .move(edge: .top)))
+                        }
+
+                        websitesSection
+                            // Extra breathing room above the websites section. The outer
+                            // VStack uses `spacing: 18` to keep the search bar and history
+                            // chips tight; this padding adds an additional visual gap
+                            // before the "我添加的书源" header so the two zones read as
+                            // separate sections rather than one continuous list.
+                            .padding(.top, 16)
+                    }
+                    .padding(.top, 12)
+                    .padding(.bottom, 24)
+                    .animation(.easeInOut(duration: 0.18), value: recentSearches)
+                }
+                .contentMargins(.horizontal, horizontalMargin, for: .scrollContent)
+                .safeAreaPadding(.bottom, 12)
+                .scrollDismissesKeyboard(.interactively)
+                .refreshable { await refresh() }
             }
-            .contentMargins(.horizontal, horizontalMargin, for: .scrollContent)
-            .safeAreaPadding(.bottom, 12)
-            .scrollDismissesKeyboard(.interactively)
-            .refreshable { await refresh() }
         }
         .navigationTitle("发现")
         .navigationBarTitleDisplayMode(.large)
@@ -147,7 +173,153 @@ struct DiscoveryAppStoreView: View {
         return (try? JSONDecoder().decode([String].self, from: recentSearchesData)) ?? []
     }
 
+    /// True once we know the load settled cleanly — the precondition for
+    /// trusting `sources` enough to disable anything. Keeping the bar live
+    /// during the initial load avoids flashing a disabled state, and a load
+    /// failure leaves search enabled rather than locking the user out on a
+    /// transient store error.
+    private var didLoadCleanly: Bool {
+        hasLoaded && loadError == nil
+    }
+
+    /// No sources at all: nothing to browse and nothing to search.
+    private var hasNoSources: Bool {
+        didLoadCleanly && sources.isEmpty
+    }
+
+    /// Whether a query could actually produce a hit. `DiscoverySearchService`
+    /// fans the user's own rules into every search but skips any rule with no
+    /// search step (see `loadUserRuleSources`), so counting *sources* would
+    /// overpromise: a user whose only source is browse-only would get an
+    /// enabled bar and the results page's "没有找到匹配内容", which reads as "we
+    /// searched and found nothing" rather than "nothing here can search".
+    private var canSearch: Bool {
+        !didLoadCleanly || sources.contains { $0.isSearchable }
+    }
+
+    private var searchBar: some View {
+        DiscoverySearchBar(
+            text: $searchText,
+            focus: $isSearchFieldFocused,
+            onSubmit: triggerSearch
+        )
+        .disabled(!canSearch)
+    }
+
+    /// Shown when the user has sources but none of them can search. Sits in a
+    /// card rather than as bare text so it reads as a status about the list
+    /// below, and stays grey rather than orange — browse-only sources work
+    /// fine, they just work through the browser.
+    private var browseOnlyNotice: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label("当前书源都不支持搜索", systemImage: "magnifyingglass.circle")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(theme.primaryText)
+
+            Text("下面的书源只能在应用内浏览器里打开并导入。给它们补上搜索入口，或添加一个支持搜索的书源，就能在这里搜索了。")
+                .font(.footnote)
+                .foregroundStyle(theme.secondaryText)
+                .fixedSize(horizontal: false, vertical: true)
+
+            NavigationLink {
+                SourcesListView()
+            } label: {
+                HStack(spacing: 4) {
+                    Text("管理书源")
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 11, weight: .semibold))
+                }
+                .font(.footnote.weight(.medium))
+                .foregroundStyle(theme.accent)
+            }
+            .buttonStyle(.plain)
+            .padding(.top, 2)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .background(theme.cardBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .shadow(color: theme.cardShadow, radius: 6, x: 0, y: 3)
+    }
+
+    /// Sole content of the page when the user has no sources. Mirrors the
+    /// library's `emptyStateView` composition — tinted accent circle, rounded
+    /// title, centred caption, capsule CTA — so both tabs speak the same empty
+    /// language. The 添加书源 button matters most: before this, the only way in
+    /// was the unlabelled globe in the toolbar, which a first-run user has no
+    /// reason to try.
+    private var emptyStateView: some View {
+        VStack(spacing: 22) {
+            ZStack {
+                Circle()
+                    .fill(theme.accent.opacity(0.10))
+                    .frame(width: 124, height: 124)
+
+                Image(systemName: "globe")
+                    .font(.system(size: 52, weight: .light))
+                    .foregroundStyle(theme.accent.opacity(0.85))
+            }
+
+            VStack(spacing: 10) {
+                Text("添加书源后即可搜索")
+                    .font(.system(size: 22, weight: .semibold, design: .rounded))
+                    .foregroundStyle(theme.primaryText)
+                    .multilineTextAlignment(.center)
+
+                Text("书源就是你想读的小说网站。添加之后即可在这里一次搜索全部书源，并把小说导入书架。")
+                    .font(.system(size: 14))
+                    .foregroundStyle(theme.secondaryText)
+                    .multilineTextAlignment(.center)
+                    .lineSpacing(4)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.horizontal, 24)
+
+            VStack(spacing: 14) {
+                NavigationLink {
+                    SourcesListView()
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "plus")
+                            .font(.system(size: 15, weight: .semibold))
+                        Text("添加书源")
+                            .font(.system(size: 15, weight: .semibold))
+                    }
+                    .foregroundStyle(theme.accent)
+                    .padding(.horizontal, 22)
+                    .padding(.vertical, 12)
+                    .background(Capsule().fill(theme.accent.opacity(0.14)))
+                }
+                .buttonStyle(.plain)
+
+                NavigationLink {
+                    SourceGuideView()
+                } label: {
+                    HStack(spacing: 4) {
+                        Text("不知道怎么添加书源？看看使用指南")
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 11, weight: .semibold))
+                    }
+                    .font(.system(size: 13))
+                    .foregroundStyle(theme.accent)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.top, 4)
+        }
+        // Fills the height left under the search bar so the block lands just
+        // above true centre once the bottom inset is taken off.
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(.bottom, 40)
+    }
+
     private func triggerSearch() {
+        // Belt-and-braces: the bar is disabled in this state, but the keyboard's
+        // return key and any future caller shouldn't be able to push an empty
+        // results page either.
+        guard canSearch else { return }
         let trimmed = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         DiscoveryRecentSearches.record(trimmed)
@@ -208,13 +380,14 @@ struct DiscoveryAppStoreView: View {
 
     @ViewBuilder
     private var websitesContent: some View {
+        // No empty branch: `hasNoSources` (loaded, no error, zero sources) is
+        // handled by `emptyStateView` before this section is ever built, so the
+        // only states left here are loading, failed, and populated.
         Group {
             if let loadError {
                 errorCard(loadError)
             } else if !hasLoaded {
                 loadingCard
-            } else if sources.isEmpty {
-                emptyCard
             } else {
                 sourceGrid
             }
@@ -282,23 +455,6 @@ struct DiscoveryAppStoreView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-    }
-
-    private var emptyCard: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Label("还没有添加书源", systemImage: "globe")
-                .font(.headline)
-                .foregroundStyle(theme.primaryText)
-            Text("点击右上角的书源按钮添加你想阅读的网页书源，添加后即可在此处直接打开。")
-                .font(.footnote)
-                .foregroundStyle(theme.secondaryText)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(16)
-        .background(theme.cardBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .shadow(color: theme.cardShadow, radius: 8, x: 0, y: 4)
     }
 
     private var loadingCard: some View {
@@ -401,12 +557,17 @@ private struct SavedSource: Identifiable, Hashable {
     let name: String
     let homepage: URL
     let hostLabel: String
+    /// Mirrors the filter `DiscoverySearchService.loadUserRuleSources` applies
+    /// when fanning rules into a query, so the page's search gating and the
+    /// service's actual reach can't drift apart.
+    let isSearchable: Bool
 
     init(rule: SourceRule) {
         self.id = rule.id
         self.name = rule.name
         self.homepage = rule.homepage
         self.hostLabel = rule.homepage.host(percentEncoded: false) ?? rule.homepage.absoluteString
+        self.isSearchable = rule.isSearchable
     }
 }
 

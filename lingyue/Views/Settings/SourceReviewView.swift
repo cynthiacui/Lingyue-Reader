@@ -24,8 +24,6 @@ import LingyueCore
 /// invalidation).
 struct SourceReviewView: View {
     @Environment(\.sourceStack) private var sourceStack
-    @Environment(\.dismiss) private var dismiss
-    @Environment(\.appTheme) private var theme
 
     /// Nil when the Review screen is opened from `SourcesListView`'s
     /// row tap — i.e. the user is re-inspecting an existing saved rule
@@ -212,14 +210,15 @@ struct SourceReviewView: View {
     }
 
     private var blocksSection: some View {
-        // Hide the 搜索 row when the rule has no search step — browser-
-        // import-only sources don't search, so surfacing 需要检查 there
-        // reads as "broken" when there's nothing to test in the first place.
-        let visibleBlocks = SourceBlock.allCases.filter { block in
-            block != .search || draft.search != nil
-        }
-        return Section {
-            ForEach(visibleBlocks, id: \.self) { block in
+        // Every block gets a row, 搜索 included. This used to hide the 搜索
+        // row when the rule had no search step, on the grounds that 需要检查
+        // reads as "broken" for a browse-only source — true, but hiding it
+        // meant the user saw three green rows and no hint that the source
+        // can never appear in search, then hit "没有找到匹配内容" later with
+        // no way to connect the two. The row now renders a neutral 仅浏览
+        // state instead, so the trade-off disappears: honest and unalarming.
+        Section {
+            ForEach(SourceBlock.allCases, id: \.self) { block in
                 blockRow(block)
             }
         } header: {
@@ -227,6 +226,21 @@ struct SourceReviewView: View {
         } footer: {
             Text("点击「测试」会用真实站点验证该步骤;通过后状态变为「已识别」。如果该步骤的选择器之后被修改,先前的通过记录会自动失效。")
         }
+    }
+
+    /// True when the 搜索 row should render as the neutral browse-only state
+    /// rather than a test outcome — there is nothing runnable to test.
+    private var isBrowseOnly: Bool {
+        !draft.isSearchable
+    }
+
+    /// A browse-only rule got here one of two ways, and they need different
+    /// copy: no search step was ever configured, or one exists with a
+    /// required field left blank (the advanced editor accepts either).
+    /// Calling both "没有搜索入口" would send a user who *did* configure
+    /// search hunting for a step that's already there.
+    private var hasIncompleteSearchStep: Bool {
+        draft.search != nil && isBrowseOnly
     }
 
     private var actionsSection: some View {
@@ -263,8 +277,23 @@ struct SourceReviewView: View {
         } header: {
             Text("保存与启用")
         } footer: {
-            Text("「启用书源」要求至少书籍详情、目录、章节三项均已识别——这是浏览导入的最低条件。搜索若未通过测试,该书源不会出现在搜索栏。")
+            // Spell out which of the two search states this source is in.
+            // The old single sentence said only "搜索若未通过测试" — which never
+            // applied to a rule with no search step at all, leaving the most
+            // confusing case unexplained.
+            Text(enableFooterText)
         }
+    }
+
+    private var enableFooterText: String {
+        let base = "「启用书源」要求至少书籍详情、目录、章节三项均已识别——这是浏览导入的最低条件。"
+        if hasIncompleteSearchStep {
+            return base + "本书源的搜索步骤尚未填完,启用后可以在应用内浏览器里打开并导入,但不会出现在搜索结果中。"
+        }
+        if isBrowseOnly {
+            return base + "本书源没有搜索入口,启用后可以在应用内浏览器里打开并导入,但不会出现在搜索结果中。"
+        }
+        return base + "搜索若未通过测试,该书源不会出现在搜索栏。"
     }
 
     private var deleteSection: some View {
@@ -295,7 +324,46 @@ struct SourceReviewView: View {
         }
     }
 
+    @ViewBuilder
     private func blockRow(_ block: SourceBlock) -> some View {
+        if block == .search, isBrowseOnly {
+            browseOnlySearchRow
+        } else {
+            testableBlockRow(block)
+        }
+    }
+
+    /// The 搜索 row for a source that can't search. Nothing to test and
+    /// nothing broken, so it drops the 测试 / 修复 pair for a single action
+    /// that deep-links to the editor's search section, and explains the
+    /// consequence in place.
+    private var browseOnlySearchRow: some View {
+        HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(SourceBlock.search.label)
+                Text(
+                    hasIncompleteSearchStep
+                        ? "搜索步骤还缺少必填字段，补全后才能用于搜索。目前只能在应用内浏览器里打开并导入。"
+                        : "此站点没有可用的搜索入口，只能在应用内浏览器里打开并导入。"
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer()
+            browseOnlyPill
+            Button(hasIncompleteSearchStep ? "补全搜索" : "添加搜索") {
+                pendingAdvancedEdit = AdvancedEditDestination(
+                    rule: draft,
+                    anchor: SourceBlock.search.scrollAnchor
+                )
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+        }
+    }
+
+    private func testableBlockRow(_ block: SourceBlock) -> some View {
         let status = effectiveStatus(block)
         return HStack(spacing: 8) {
             VStack(alignment: .leading, spacing: 2) {
@@ -335,7 +403,18 @@ struct SourceReviewView: View {
             case .notRun: return ("需要检查", .orange)
             }
         }()
-        return Text(label)
+        return pill(label, color: color)
+    }
+
+    /// Deliberately secondary-grey, not orange: a browse-only source is a
+    /// category, not a fault, and colouring it like a warning is what the
+    /// old hide-the-row workaround was avoiding.
+    private var browseOnlyPill: some View {
+        pill("仅浏览", color: .secondary)
+    }
+
+    private func pill(_ label: String, color: Color) -> some View {
+        Text(label)
             .font(.caption.weight(.medium))
             .padding(.horizontal, 8)
             .padding(.vertical, 3)
@@ -560,13 +639,19 @@ struct SourceReviewView: View {
         let chapterPassed = try await passed(.chapter, analyzer: report.chapter)
         let browseReady = detailPassed && catalogPassed && chapterPassed
 
+        // `isSearchable` rather than `rule.search != nil`: the raw check
+        // ignored `jsonAPI.search` outright, so saving a JSON-API-only rule
+        // through this screen derived `supportsSearch: false` even though it
+        // searches fine — and it counted a search step whose required fields
+        // were left blank. Both now agree with what the rest of the app
+        // reports.
         return SourceCapabilities(
-            supportsSearch: searchPassed && rule.search != nil,
+            supportsSearch: searchPassed && rule.isSearchable,
             // Mirrors `supportsSearch` — the visible search capability
             // and the aggregator-visibility flag are one user-facing
             // concept now. PHASES.md §3.5.2 retires `showInSearchBar`
             // as an authored field entirely.
-            showInSearchBar: searchPassed && rule.search != nil,
+            showInSearchBar: searchPassed && rule.isSearchable,
             supportsBrowserImport: browseReady && !rule.detection.hostPatterns.isEmpty,
             // Carried forward from the rule's prior value (today always
             // false for new drafts). Slice 8 wires this to the real P3

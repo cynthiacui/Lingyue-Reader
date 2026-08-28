@@ -243,7 +243,7 @@ final class SourceVerificationService: ObservableObject {
         // fail. Stopping at the first working book lets the chain produce
         // all four ✓ even when most candidates are dead.
         var candidates: [URL] = []
-        if rule.search != nil || rule.jsonAPI?.search != nil {
+        if rule.isSearchable {
             // Probe with a single common char first, then a 2-char fallback.
             // A few mainland CMS clones reject keywords whose GB18030
             // byte length is < 4 — a single Chinese char is 2 bytes

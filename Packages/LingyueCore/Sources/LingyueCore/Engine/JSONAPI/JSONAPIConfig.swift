@@ -129,6 +129,15 @@ public struct JSONAPIConfig: Codable, Sendable, Hashable {
             self.coverField = coverField
             self.titleTransforms = titleTransforms
         }
+
+        /// Whether the engine has enough filled-in fields to attempt a
+        /// search. It needs somewhere to send the request and a path to
+        /// each item's title; `itemsPath` is deliberately not checked
+        /// because an empty path legitimately means "the JSON root is
+        /// itself the array". See `SourceRule.isSearchable`.
+        public var isRunnable: Bool {
+            endpointTemplates.contains { !$0.isBlank } && !titleField.isBlank
+        }
     }
 
     // MARK: - Catalog

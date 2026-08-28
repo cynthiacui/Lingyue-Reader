@@ -711,7 +711,10 @@ actor DiscoverySearchService {
             // Accept rules that ship either an HTML `search` block or a
             // `jsonAPI.search` block — both are valid fan-out paths. Skip
             // only when neither is configured (e.g., chapter-only mirror).
-            guard rule.search != nil || rule.jsonAPI?.search != nil else { continue }
+            // `isSearchable` is the shared definition the Discovery page's
+            // search gating and the 书源 list's 仅浏览 pill also read, so this
+            // filter and what the UI promises stay in lock-step.
+            guard rule.isSearchable else { continue }
             let enabled = (try? await stack.preferenceStore.isEnabled(rule.id)) ?? true
             guard enabled else { continue }
             sources.append(DiscoverySource(

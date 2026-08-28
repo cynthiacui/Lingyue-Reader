@@ -231,12 +231,40 @@ struct SourceEditorView: View {
                 OptionalFieldSelectorEditor(title: "作者字段", value: searchBinding.authorField)
                 OptionalFieldSelectorEditor(title: "封面字段", value: searchBinding.coverField)
                 OptionalFieldSelectorEditor(title: "简介字段", value: searchBinding.snippetField)
+
+                if let missing = incompleteSearchFieldLabel {
+                    // 「URL 模板」and「结果选择器」are plain free-text fields, so a
+                    // half-finished step is easy to leave behind. Say it here,
+                    // where the empty box is, rather than letting the source
+                    // silently drop to 仅浏览 everywhere else.
+                    Label(
+                        "「\(missing)」还是空的,填好之前本书源不会出现在搜索栏。",
+                        systemImage: "exclamationmark.circle"
+                    )
+                    .font(.footnote)
+                    .foregroundStyle(.orange)
+                }
             }
         } header: {
             Text("搜索")
         } footer: {
             Text("URL / Body 中的 {query} 会按「查询编码」对用户搜索词作 percent-encoding 后替换；GB18030 / GBK 站点常需要 utf8 之外的编码。")
         }
+    }
+
+    /// Label of the first blank field that makes the present search step
+    /// unrunnable, or nil when the step is absent or complete. Mirrors what
+    /// `SearchStep.isRunnable` checks, so the warning appears exactly when
+    /// the rest of the app would report the source as browse-only.
+    private var incompleteSearchFieldLabel: String? {
+        guard let search = draft.search else { return nil }
+        if search.urlTemplate.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return "URL 模板"
+        }
+        if search.resultsSelector.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return "结果选择器"
+        }
+        return nil
     }
 
     private var detailSection: some View {
