@@ -1536,6 +1536,91 @@ final class PageCurlPagerCacheTests: XCTestCase {
         XCTAssertLessThanOrEqual(coordinator.cachedHostCount, 9)
     }
 
+    /// An explicit navigation (chapter button / picker / boundary fallback) bumps the
+    /// pager's navigation epoch instead of tearing the pager down via `.id` — the old
+    /// teardown permanently wedged SwiftUI representable updates mid-session on
+    /// iOS 26. A gesture that STARTED before the jump must not write its landing back:
+    /// the landed page may be a bookend of the new window, and committing it would
+    /// yank the reader across a chapter boundary the jump already decided.
+    func testLandingFromBeforeAnExplicitJumpDoesNotWriteBackOrCommit() throws {
+        let recorder = PagerRenderRecorder()
+        let slots = ["6-0-layout", "6-1-layout", "7-0-bookend"]
+        var boundIndex = 1
+        var committed: [String] = []
+        func pager(epoch: Int) -> PageCurlPager {
+            PageCurlPager(
+                transitionStyle: .scroll,
+                slotIdentities: slots,
+                currentIndex: Binding(get: { boundIndex }, set: { boundIndex = $0 }),
+                backgroundColor: .white,
+                renderPage: recorder.render(identity:),
+                onCommit: { committed.append($0) },
+                navigationEpoch: epoch
+            )
+        }
+        let coordinator = PageCurlPager.Coordinator(pager(epoch: 0))
+        let pvc = UIPageViewController(
+            transitionStyle: .scroll,
+            navigationOrientation: .horizontal
+        )
+        let current = try XCTUnwrap(coordinator.host(for: slots[1]))
+        coordinator.shownIdentity = slots[1]
+        pvc.setViewControllers([current], direction: .forward, animated: false)
+        let target = try XCTUnwrap(coordinator.host(for: slots[2]))
+
+        coordinator.pageViewController(pvc, willTransitionTo: [target])
+        coordinator.parent = pager(epoch: 1)
+        pvc.setViewControllers([target], direction: .forward, animated: false)
+        coordinator.pageViewController(
+            pvc,
+            didFinishAnimating: true,
+            previousViewControllers: [current],
+            transitionCompleted: true
+        )
+
+        XCTAssertEqual(coordinator.shownIdentity, slots[2], "显示状态仍要如实反映 UIKit 停在的页面")
+        XCTAssertEqual(boundIndex, 1, "过期落地不能回写页码")
+        XCTAssertTrue(committed.isEmpty, "过期落地不能触发跨章 commit")
+    }
+
+    func testSameEpochLandingStillSyncsBindingAndCommits() throws {
+        let recorder = PagerRenderRecorder()
+        let slots = ["6-0-layout", "6-1-layout", "7-0-bookend"]
+        var boundIndex = 1
+        var committed: [String] = []
+        let pager = PageCurlPager(
+            transitionStyle: .scroll,
+            slotIdentities: slots,
+            currentIndex: Binding(get: { boundIndex }, set: { boundIndex = $0 }),
+            backgroundColor: .white,
+            renderPage: recorder.render(identity:),
+            onCommit: { committed.append($0) },
+            navigationEpoch: 3
+        )
+        let coordinator = PageCurlPager.Coordinator(pager)
+        let pvc = UIPageViewController(
+            transitionStyle: .scroll,
+            navigationOrientation: .horizontal
+        )
+        let current = try XCTUnwrap(coordinator.host(for: slots[1]))
+        coordinator.shownIdentity = slots[1]
+        pvc.setViewControllers([current], direction: .forward, animated: false)
+        let target = try XCTUnwrap(coordinator.host(for: slots[2]))
+
+        coordinator.pageViewController(pvc, willTransitionTo: [target])
+        pvc.setViewControllers([target], direction: .forward, animated: false)
+        coordinator.pageViewController(
+            pvc,
+            didFinishAnimating: true,
+            previousViewControllers: [current],
+            transitionCompleted: true
+        )
+
+        XCTAssertEqual(coordinator.shownIdentity, slots[2])
+        XCTAssertEqual(boundIndex, 2, "同代落地正常同步页码")
+        XCTAssertEqual(committed, [slots[2]], "同代 bookend 落地正常 commit")
+    }
+
     private func makePager(
         slots: [String],
         currentIndex: Int,

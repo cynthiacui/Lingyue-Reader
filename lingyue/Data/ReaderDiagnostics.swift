@@ -34,8 +34,9 @@ final class ReaderDiagnostics: ObservableObject {
     /// Hard cap on retained events. 300 ≈ 5–10 min of normal reader
     /// activity (pagination + page turns + state snapshots), which more
     /// than covers the "what was happening before the crash" goal while
-    /// keeping the JSON small (< 100KB).
-    private let maxEntries = 300
+    /// keeping the JSON small (< 100KB). Stress harnesses pass
+    /// `--diagnostics-deep` to keep a whole session for offline analysis.
+    private let maxEntries = CommandLine.arguments.contains("--diagnostics-deep") ? 4_000 : 300
 
     private let currentURL: URL
     private let previousURL: URL

@@ -60,6 +60,21 @@ DerivedData path is deterministic for this project: `lingyue-aqykmwhwcnxxqmednyg
 
 Beware stale incremental state: if the test target suddenly can't see an app-module type that clearly exists, the products-dir `LingyueAppStore.swiftmodule` is probably outdated — `touch` the affected source file (or any app source) and rebuild the app target before blaming the code.
 
+## Reader paging stress harness (cross-chapter bugs)
+
+For reader page-turn / chapter-boundary bugs, don't hand-swipe — the repo has a purpose-built harness:
+
+```bash
+xcodebuild test -project lingyue.xcodeproj -scheme LingyueAppStore \
+  -destination "platform=iOS Simulator,id=<UDID>" \
+  -only-testing:LingyueAppStoreUITests/ReaderPagingStressUITests
+```
+
+- `--paging-stress-fixture` (DEBUG launch arg, set by the test) seeds a 150-chapter, 2-pages-per-chapter book. Chapter 1 is inline; chapters 2+ use `lingyue-stress://chapter/<n>` URLs, which `ChapterContentCache` resolves in DEBUG with an artificial 150–700 ms delay (occasional 3× outliers), bypassing all caches. This replays the remote-chapter lifecycle (loading placeholders, pagination-signature flips, bookends appearing mid-read) that pure-local fixtures cannot — the 2026-08 "stuck at a chapter's first page" bug ONLY reproduced with this.
+- The test mixes fast swipes, right-edge taps, and backward jitter (~320 turns, both slide and pageCurl), detects a dead-end via the footer page label, and pauses 17 s before failing so the reader's stuck-gesture watchdog gets one self-heal window.
+- `--diagnostics-deep` (also set by the test) grows the ReaderDiagnostics ring buffer 300 → 4000 entries. Afterwards read `$CONT/…/Diagnostics/current.json`: healthy runs show `pager slots changed` / `pager neighbor refresh` tracking every `bookend commit`; a broken update pipeline shows `pager dataSource nil` streaks with a frozen `updates` counter.
+- Synthetic drags need a real touch-up: use `press(forDuration: 0.03, thenDragTo:withVelocity:.fast, thenHoldForDuration: 0.08)`. Zero-hold fast drags sometimes lose the release and wedge UIKit's interactive page transition (the reader force-cancels such recognizers after 15 s).
+
 ## Seeding a reader test book (no network needed)
 
 To drive the reader end-to-end on a fresh sim without real sources, seed a local multi-chapter book and skip the first-run overlays. Do this BEFORE the app's first launch (or while it's terminated):

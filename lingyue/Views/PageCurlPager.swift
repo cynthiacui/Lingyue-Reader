@@ -66,6 +66,16 @@ struct PageCurlPager: UIViewControllerRepresentable {
     /// a no-op — the binding sync already moved the page index. Defaults to no-op so
     /// the legacy / two-column path can ignore it.
     var onCommit: (String) -> Void = { _ in }
+    /// Monotonic marker the parent bumps for every EXPLICIT navigation (chapter
+    /// buttons, picker, slider, boundary fallback). A transition that STARTED under
+    /// an older epoch must not commit its landing — the explicit jump has already
+    /// decided where the reader goes, and a late gesture write-back would drag the
+    /// user back across a chapter boundary. This replaces the old approach of
+    /// rebuilding the whole pager via `.id` on such jumps: a mid-session identity
+    /// swap has been observed (iOS 26) to permanently stop SwiftUI from delivering
+    /// `updateUIViewController` to every subsequently created pager, which froze the
+    /// slot window and dead-ended page turns at the next chapter boundary.
+    var navigationEpoch: Int = 0
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -89,21 +99,54 @@ struct PageCurlPager: UIViewControllerRepresentable {
             coordinator.prepareVisibleNeighborhood(in: pvc)
         }
         context.coordinator.prepareVisibleNeighborhood(in: pvc)
+        ReaderDiagnostics.shared.log(.info, "pager created", context: [
+            "co": context.coordinator.debugTag,
+            "slots": String(slotIdentities.count),
+            "shownID": context.coordinator.shownIdentity
+        ])
         return pvc
     }
 
     func updateUIViewController(_ pvc: UIPageViewController, context: Context) {
+        context.coordinator.updateCount += 1
         context.coordinator.parent = self
         pvc.view.backgroundColor = backgroundColor
-        context.coordinator.refreshCachedRenders()
+        let slotsChanged = context.coordinator.refreshCachedRenders()
         context.coordinator.prepareVisibleNeighborhood(in: pvc)
 
-        guard let desiredID = context.coordinator.identity(at: currentIndex) else { return }
+        if slotsChanged {
+            ReaderDiagnostics.shared.log(.info, "pager slots changed", context: [
+                "co": context.coordinator.debugTag,
+                "slots": String(slotIdentities.count),
+                "first": slotIdentities.first ?? "-",
+                "last": slotIdentities.last ?? "-",
+                "gestureInFlight": context.coordinator.gestureInFlight ? "1" : "0",
+                "isAnimating": context.coordinator.isAnimating ? "1" : "0"
+            ])
+        }
+
+        guard let desiredID = context.coordinator.identity(at: currentIndex) else {
+            ReaderDiagnostics.shared.log(.info, "pager updateUIVC no-desired", context: [
+                "co": context.coordinator.debugTag,
+                "currentIndex": String(currentIndex),
+                "slots": String(slotIdentities.count),
+                "needsRefresh": context.coordinator.needsNeighborRefresh ? "1" : "0"
+            ])
+            return
+        }
         let shownID = context.coordinator.shownIdentity
         // IDENTITY-equality skip (not index): after a cross-chapter re-base the shown
         // page keeps the same identity even though its index shifted, so we must not
         // re-animate it. This replaces the old `previousIndex != currentIndex` guard.
         if desiredID == shownID {
+            if context.coordinator.needsNeighborRefresh {
+                ReaderDiagnostics.shared.log(.info, "pager updateUIVC skip (refresh pending)", context: [
+                    "co": context.coordinator.debugTag,
+                    "shownID": shownID,
+                    "gestureInFlight": context.coordinator.gestureInFlight ? "1" : "0",
+                    "isAnimating": context.coordinator.isAnimating ? "1" : "0"
+                ])
+            }
             // A target deferred during an earlier transition is obsolete once the
             // binding again agrees with the displayed page. Leaving it queued can
             // make a later, unrelated swipe snap back to this old destination.
@@ -144,6 +187,10 @@ struct PageCurlPager: UIViewControllerRepresentable {
         coordinator.isDismantled = true
         coordinator.cancelTransitionWatchdog()
         (uiViewController as? ReaderPageViewController)?.onViewportLayout = nil
+        ReaderDiagnostics.shared.log(.info, "pager dismantled", context: [
+            "co": coordinator.debugTag,
+            "shownID": coordinator.shownIdentity
+        ])
     }
 
     final class Coordinator: NSObject, UIPageViewControllerDataSource, UIPageViewControllerDelegate {
@@ -157,6 +204,15 @@ struct PageCurlPager: UIViewControllerRepresentable {
         /// truth for transition decisions — survives slot-array re-numbering.
         var shownIdentity: String = ""
         var isDismantled = false
+        /// Short per-coordinator tag for diagnostics, so a log stream can tell whether
+        /// updates and gestures are reaching the same coordinator instance or a stale,
+        /// dismantled one that UIKit kept on screen.
+        lazy var debugTag: String = String(UInt(bitPattern: ObjectIdentifier(self).hashValue) % 10_000)
+        /// Counts updateUIViewController calls. A frozen count while dataSource
+        /// callbacks keep flowing means SwiftUI stopped delivering representable
+        /// updates entirely — the difference between a stale-window bug in this
+        /// file and a dead update pipeline upstream.
+        var updateCount = 0
         // UIPageViewController crashes with "Duplicate states in queue" if a second
         // setViewControllers lands while a previous animated transition is still
         // in flight. `isAnimating` gates programmatic animated calls; the latest
@@ -188,6 +244,11 @@ struct PageCurlPager: UIViewControllerRepresentable {
         // that identity in the cache until the gesture resolves so delegate callbacks
         // can still map the landed controller back to its page.
         var gestureTargetIdentity: String?
+        /// `parent.navigationEpoch` at the moment the in-flight transition started.
+        /// A completed landing whose epoch no longer matches raced an explicit
+        /// navigation; its binding write and bookend commit are voided so the jump's
+        /// destination wins (see `navigationEpoch` on the representable).
+        private var activeTransitionEpoch = 0
         // Hosts cached by stable identity so the live page survives a slot re-base. Keep
         // only a small working set: without an explicit cap, a single extremely long
         // chapter retains one UIHostingController per visited page for the whole session.
@@ -392,6 +453,7 @@ struct PageCurlPager: UIViewControllerRepresentable {
 
             needsNeighborRefresh = false
             ReaderDiagnostics.shared.log(.info, "pager neighbor refresh", context: [
+                "co": debugTag,
                 "shownID": shownIdentity,
                 "slots": String(parent.slotIdentities.count),
                 "replacedHost": "1"
@@ -419,7 +481,11 @@ struct PageCurlPager: UIViewControllerRepresentable {
 
         /// Schedule one coalesced reconciliation pass. A genuine long-held interactive
         /// curl is detected from UIKit's gesture recognizers and simply reschedules;
-        /// a lost callback with no live interaction is recovered automatically.
+        /// a lost callback with no live interaction is recovered automatically. An
+        /// interaction that outlives any plausible finger-hold is force-cancelled —
+        /// a pan stuck in .began/.changed for that long has lost its touch-up
+        /// (interruption, incoming call UI, system gesture conflict), and without a
+        /// cancel every later swipe and programmatic turn stays deferred forever.
         private func scheduleTransitionWatchdog(in pvc: UIPageViewController) {
             cancelTransitionWatchdog()
             guard !isDismantled, isAnimating || gestureInFlight else { return }
@@ -428,6 +494,23 @@ struct PageCurlPager: UIViewControllerRepresentable {
                 guard let self, let pvc, !self.isDismantled else { return }
                 self.transitionWatchdog = nil
                 if self.pagerHasActiveInteraction(pvc) {
+                    let gestureAge = self.gestureStartedAt.map { Date().timeIntervalSince($0) } ?? 0
+                    if gestureAge >= Self.stuckGestureRecoveryThreshold {
+                        ReaderDiagnostics.shared.log(.info, "pager cancelled stuck gesture", context: [
+                            "co": self.debugTag,
+                            "gestureAgeMs": String(Int(gestureAge * 1_000)),
+                            "shownID": self.shownIdentity
+                        ])
+                        // Toggling isEnabled force-cancels the recognizer; UIKit then
+                        // cancels the interactive transition through the normal
+                        // didFinishAnimating(completed: false) path, so the state
+                        // machine unwinds without a synthetic setViewControllers.
+                        for recognizer in Self.interactiveRecognizers(of: pvc)
+                        where recognizer.state == .began || recognizer.state == .changed {
+                            recognizer.isEnabled = false
+                            recognizer.isEnabled = true
+                        }
+                    }
                     self.scheduleTransitionWatchdog(in: pvc)
                     return
                 }
@@ -437,9 +520,23 @@ struct PageCurlPager: UIViewControllerRepresentable {
             DispatchQueue.main.asyncAfter(deadline: .now() + transitionWatchdogDelay, execute: work)
         }
 
+        /// A finger legitimately resting mid-curl reads the next page's peek; beyond
+        /// this age the "interaction" is a recognizer that lost its touch-up.
+        private static let stuckGestureRecoveryThreshold: TimeInterval = 15
+
+        /// pageCurl exposes its recognizers on the controller; scroll keeps the pan
+        /// on the internal scroll view.
+        private static func interactiveRecognizers(of pvc: UIPageViewController) -> [UIGestureRecognizer] {
+            var recognizers = pvc.gestureRecognizers
+            if let scrollView = pvc.view.subviews.compactMap({ $0 as? UIScrollView }).first {
+                recognizers.append(scrollView.panGestureRecognizer)
+            }
+            return recognizers
+        }
+
         private func pagerHasActiveInteraction(_ pvc: UIPageViewController) -> Bool {
             if pvc.transitionCoordinator?.isInteractive == true { return true }
-            return pvc.gestureRecognizers.contains {
+            return Self.interactiveRecognizers(of: pvc).contains {
                 $0.state == .began || $0.state == .changed
             }
         }
@@ -556,6 +653,7 @@ struct PageCurlPager: UIViewControllerRepresentable {
             guard let target = preparedHost(for: identity, in: pvc) else { return }
             let previousID = shownIdentity
             guard previousID != identity else { return }
+            activeTransitionEpoch = parent.navigationEpoch
             let newSlot = slotIndex(of: identity) ?? 0
             let prevSlot = slotIndex(of: previousID) ?? 0
             let direction: UIPageViewController.NavigationDirection =
@@ -654,15 +752,42 @@ struct PageCurlPager: UIViewControllerRepresentable {
         func pageViewController(_ pvc: UIPageViewController,
                                 viewControllerBefore vc: UIViewController) -> UIViewController? {
             guard let id = identity(of: vc), let i = slotIndex(of: id),
-                  let prevID = identity(at: i - 1) else { return nil }
+                  let prevID = identity(at: i - 1) else {
+                logDataSourceNil(direction: "before", queried: vc)
+                return nil
+            }
             return preparedHost(for: prevID, in: pvc)
         }
 
         func pageViewController(_ pvc: UIPageViewController,
                                 viewControllerAfter vc: UIViewController) -> UIViewController? {
             guard let id = identity(of: vc), let i = slotIndex(of: id),
-                  let nextID = identity(at: i + 1) else { return nil }
+                  let nextID = identity(at: i + 1) else {
+                logDataSourceNil(direction: "after", queried: vc)
+                return nil
+            }
             return preparedHost(for: nextID, in: pvc)
+        }
+
+        /// A nil data-source answer is how UIKit decides a swipe should rubber-band.
+        /// At a genuine window edge that's correct; for a page UIKit is displaying whose
+        /// identity is no longer in the slot window it means the pager and the reader
+        /// state have desynced — exactly the field report "翻不过去". Record which case
+        /// fired so a diagnostics export can tell them apart.
+        private func logDataSourceNil(direction: String, queried vc: UIViewController) {
+            let queriedID = identity(of: vc) ?? "?"
+            let slot = slotIndex(of: queriedID).map(String.init) ?? "MISSING"
+            ReaderDiagnostics.shared.log(.info, "pager dataSource nil", context: [
+                "co": debugTag,
+                "dir": direction,
+                "queriedID": queriedID,
+                "slot": slot,
+                "shownID": shownIdentity,
+                "slots": String(parent.slotIdentities.count),
+                "needsRefresh": needsNeighborRefresh ? "1" : "0",
+                "dismantled": isDismantled ? "1" : "0",
+                "updates": String(updateCount)
+            ])
         }
 
         /// Reconcile the host cache with the current slot window. Slot identities include
@@ -719,10 +844,12 @@ struct PageCurlPager: UIViewControllerRepresentable {
                                 willTransitionTo pendingViewControllers: [UIViewController]) {
             gestureInFlight = true
             gestureStartedAt = Date()
+            activeTransitionEpoch = parent.navigationEpoch
             let toID = pendingViewControllers.first.flatMap { identity(of: $0) }
             gestureTargetIdentity = toID
             scheduleTransitionWatchdog(in: pvc)
             ReaderDiagnostics.shared.log(.pageTurnStart, "gesture begin", context: [
+                "co": debugTag,
                 "shownID": shownIdentity,
                 "toID": toID ?? "?"
             ])
@@ -788,20 +915,31 @@ struct PageCurlPager: UIViewControllerRepresentable {
             }
             let fromID = shownIdentity
             shownIdentity = landedID
-            if let slot = slotIndex(of: landedID), parent.currentIndex != slot {
+            // A landing whose transition began before an explicit navigation is stale:
+            // the jump already chose the destination, and this landing's page may now
+            // be a cross-chapter bookend of the NEW window — writing it back or
+            // committing it would drag the reader across a boundary they didn't turn.
+            // shownIdentity is still updated above (UIKit really is displaying this
+            // page); the deferred/desired snap moves the display to the jump target.
+            let staleEpoch = activeTransitionEpoch != parent.navigationEpoch
+            if !staleEpoch, let slot = slotIndex(of: landedID), parent.currentIndex != slot {
                 // Binding sync for body slots; the custom binding on the continuous path
                 // ignores bookend indices, so this never writes an out-of-range page.
                 parent.currentIndex = slot
             }
             ReaderDiagnostics.shared.log(.pageTurnEnd, wasGesture ? "gesture" : "didFinishAnimating", context: [
+                "co": debugTag,
                 "fromID": fromID,
                 "toID": landedID,
-                "slots": String(parent.slotIdentities.count)
+                "slots": String(parent.slotIdentities.count),
+                "staleEpoch": staleEpoch ? "1" : "0"
             ])
             // Commit a cross-chapter bookend landing (re-bases the slot window). For body
             // landings this is a no-op. Called AFTER the binding sync so the page index is
             // already settled for the body case.
-            parent.onCommit(landedID)
+            if !staleEpoch {
+                parent.onCommit(landedID)
+            }
             prepareVisibleNeighborhood(in: pvc)
             retryNeighborRefreshAfterTransition(in: pvc)
             // Apply any pending programmatic target stashed during the transition.

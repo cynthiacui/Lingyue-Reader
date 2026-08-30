@@ -74,6 +74,7 @@
 		64AE68FD2FB6C76D004058EE /* BookCoverStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 010000000000000000000039 /* BookCoverStore.swift */; };
 		A10000000000000000000041 /* AppRegressionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000031 /* AppRegressionTests.swift */; };
 		A10000000000000000000042 /* MeTabSmokeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000032 /* MeTabSmokeTests.swift */; };
+		A100000000000000000000B2 /* ReaderPagingStressUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100000000000000000000B1 /* ReaderPagingStressUITests.swift */; };
 		A10000000000000000000043 /* LingyueCore in Frameworks */ = {isa = PBXBuildFile; productRef = A10000000000000000000081 /* LingyueCore */; };
 /* End PBXBuildFile section */
 
@@ -166,6 +167,7 @@
 		A10000000000000000000012 /* LingyueAppStoreUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = LingyueAppStoreUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		A10000000000000000000031 /* AppRegressionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppRegressionTests.swift; sourceTree = "<group>"; };
 		A10000000000000000000032 /* MeTabSmokeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeTabSmokeTests.swift; sourceTree = "<group>"; };
+		A100000000000000000000B1 /* ReaderPagingStressUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReaderPagingStressUITests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -348,6 +350,7 @@
 			isa = PBXGroup;
 			children = (
 				A10000000000000000000032 /* MeTabSmokeTests.swift */,
+				A100000000000000000000B1 /* ReaderPagingStressUITests.swift */,
 			);
 			path = LingyueAppStoreUITests;
 			sourceTree = "<group>";
@@ -559,6 +562,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				A10000000000000000000042 /* MeTabSmokeTests.swift in Sources */,
+				A100000000000000000000B2 /* ReaderPagingStressUITests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

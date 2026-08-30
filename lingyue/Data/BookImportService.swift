@@ -2189,10 +2189,40 @@ actor ChapterContentCache {
         self.cacheDirectory = Self.cacheDirectoryURL()
     }
 
+#if DEBUG
+    /// Synthetic slow-loading chapters for the reader paging-stress UI test.
+    /// `lingyue-stress://chapter/<n>` URLs resolve after a network-like delay and
+    /// never touch the memory/disk caches, so every test launch replays the full
+    /// remote-chapter lifecycle — loading placeholder, pagination-signature flip,
+    /// re-pagination, bookend swap — the way a real source does in the field.
+    nonisolated fileprivate static func stressChapterNumber(in chapter: NovelChapter) -> Int? {
+        let prefix = "lingyue-stress://chapter/"
+        guard let urlString = chapter.sourceURLString, urlString.hasPrefix(prefix) else { return nil }
+        return Int(urlString.dropFirst(prefix.count))
+    }
+
+    nonisolated private static func makeStressChapter(_ chapter: NovelChapter, number: Int) -> NovelChapter {
+        let sentences = (1...18).map { sentence in
+            String(format: "第%d章第%02d句：山间的风慢慢吹过旧书页，读者一页一页往下翻验证跨章翻页不卡。", number, sentence)
+        }
+        return NovelChapter(
+            id: chapter.id,
+            title: chapter.title,
+            content: sentences.joined(separator: "\n"),
+            sourceURLString: chapter.sourceURLString
+        )
+    }
+#endif
+
     nonisolated static func diskCachedChapter(for chapter: NovelChapter) -> NovelChapter? {
         guard chapter.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return chapter
         }
+
+#if DEBUG
+        // Stress chapters must always take the slow loading path.
+        if stressChapterNumber(in: chapter) != nil { return nil }
+#endif
 
         let key = chapter.sourceURLString ?? chapter.id.uuidString
         let url = cacheDirectoryURL().appendingPathComponent("\(stableHash(key)).json")
@@ -2216,6 +2246,15 @@ actor ChapterContentCache {
         guard chapter.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return chapter
         }
+
+#if DEBUG
+        if let number = Self.stressChapterNumber(in: chapter) {
+            // Mostly-fast responses with occasional slow outliers, like a real source.
+            let delayMs = UInt64.random(in: 150...700) * (Int.random(in: 0..<12) == 0 ? 3 : 1)
+            try? await Task.sleep(nanoseconds: delayMs * 1_000_000)
+            return Self.makeStressChapter(chapter, number: number)
+        }
+#endif
 
         let key = cacheKey(for: chapter)
 
@@ -2279,6 +2318,11 @@ actor ChapterContentCache {
         guard chapter.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return chapter
         }
+
+#if DEBUG
+        // Stress chapters must always take the slow loading path.
+        if Self.stressChapterNumber(in: chapter) != nil { return nil }
+#endif
 
         let key = cacheKey(for: chapter)
         if let cached = memory[key] {

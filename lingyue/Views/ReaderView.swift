@@ -213,6 +213,11 @@ struct ReaderView: View {
         nonmutating set { navigationState.pagerVersion = newValue }
     }
 
+    private var pagerNavigationEpoch: Int {
+        get { navigationState.navigationEpoch }
+        nonmutating set { navigationState.navigationEpoch = newValue }
+    }
+
     private var boundarySwipeStartPageIndex: Int? {
         get { navigationState.boundarySwipeStartPageIndex }
         nonmutating set { navigationState.boundarySwipeStartPageIndex = newValue }
@@ -1346,6 +1351,7 @@ struct ReaderView: View {
             ? "continuous-\(pageTransitionRaw)-\(pagerNavigationVersion)-\(rotationLayoutVersion)"
             : "\(pageTransitionRaw)-\(currentChapterIndex)-\(rotationLayoutVersion)-\(usingTwoColumn ? "2" : "1")"
 
+        let navigationEpoch = pagerNavigationEpoch
         return PageCurlPager(
             transitionStyle: transitionStyle,
             slotIdentities: slotIdentities,
@@ -1374,7 +1380,8 @@ struct ReaderView: View {
                         .background(self.pageBackground)
                 )
             },
-            onCommit: onCommit
+            onCommit: onCommit,
+            navigationEpoch: navigationEpoch
         )
         .ignoresSafeArea()
         .id(idValue)
@@ -1539,6 +1546,7 @@ struct ReaderView: View {
                                 .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
+                        .accessibilityLabel("章节目录")
                     }
 
                     Text(currentPage.chapterTitle)
@@ -2474,6 +2482,17 @@ struct ReaderView: View {
         // navigation. The "land on last page" flag is set inside the same transaction so a
         // partially-applied state (flag set without index, or vice versa) can never leak to
         // another navigation in flight.
+        //
+        // Explicit (non-bookend) jumps bump the navigation EPOCH instead of the pager
+        // `.id` version. The old `.id` rebuild had a fatal side effect on iOS 26: after
+        // a mid-session identity swap, SwiftUI permanently stopped delivering
+        // `updateUIViewController` to every pager created afterwards, so the slot
+        // window froze and the next bookend commit dead-ended page turns at the
+        // chapter boundary (field report: stuck on a chapter's first page as if the
+        // book ended, while the chapter buttons still worked). The epoch keeps the
+        // rebuild's one safety property — an in-flight gesture from before the jump
+        // cannot write its landing back — while the identity-driven pager snaps to
+        // the new chapter through the normal update path.
         var transaction = Transaction()
         transaction.disablesAnimations = true
         withTransaction(transaction) {
@@ -2481,7 +2500,7 @@ struct ReaderView: View {
             currentChapterPageIndex = resolvedPageIndex
             shouldJumpToLastPageAfterPagination = landOnLastPage
             if !keepsContinuousPagerHost {
-                pagerNavigationVersion &+= 1
+                pagerNavigationEpoch &+= 1
             }
         }
         // Stale boundary-swipe state from an interrupted drag in the previous chapter must
@@ -3166,6 +3185,7 @@ struct ReaderView: View {
             shouldJumpToLastPageAfterPagination = false
             boundarySwipeStartPageIndex = nil
             pagerNavigationVersion &+= 1
+            pagerNavigationEpoch &+= 1
             visiblePages.removeAll()
             visiblePageSignature = nil
             didSetInitialPage = true

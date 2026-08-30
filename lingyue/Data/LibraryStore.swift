@@ -786,7 +786,13 @@ final class LibraryStore: ObservableObject {
         let usesLongCategoryReorderFixture = CommandLine.arguments.contains(
             "--category-reorder-long-fixture"
         )
-        let loadedLibrary = if usesCategoryReorderFixture {
+        let usesPagingStressFixture = CommandLine.arguments.contains("--paging-stress-fixture")
+        let loadedLibrary = if usesPagingStressFixture {
+            LibraryStorageSnapshot(
+                categories: LibraryStore.pagingStressFixtureCategories(),
+                archivedBooks: []
+            )
+        } else if usesCategoryReorderFixture {
             LibraryStorageSnapshot(
                 categories: LibraryStore.categoryReorderFixtureCategories(
                     count: usesLongCategoryReorderFixture ? 8 : 3
@@ -1616,6 +1622,55 @@ final class LibraryStore: ObservableObject {
             )
             return LibraryCategory(id: categoryID, name: name, novels: [novel])
         }
+    }
+
+    /// Deterministic many-chapter book for the reader paging stress UI test. Two
+    /// pages per chapter at the default iPhone font settings, so nearly every
+    /// forward swipe alternates between an in-chapter turn and a cross-chapter
+    /// bookend commit — the paths involved in the "stuck on a chapter's first
+    /// page" field reports. Chapter 1 is inline so the reader opens instantly;
+    /// every later chapter loads through the artificial-latency
+    /// `lingyue-stress://` path (see ChapterContentCache) to replay the remote
+    /// lifecycle — loading placeholder, pagination-signature flips, bookends
+    /// appearing mid-read — that real sources produce in the field.
+    private static func pagingStressFixtureCategories() -> [LibraryCategory] {
+        let chapters = (1...150).map { chapterIndex in
+            NovelChapter(
+                id: UUID(uuidString: String(format: "CAFE0000-0000-4000-8000-%012d", chapterIndex))!,
+                title: "第\(chapterIndex)章 跨章章节\(chapterIndex)",
+                content: chapterIndex == 1
+                    ? (1...18).map { sentence in
+                        String(format: "第%d章第%02d句：山间的风慢慢吹过旧书页，读者一页一页往下翻验证跨章翻页不卡。", chapterIndex, sentence)
+                    }.joined(separator: "\n")
+                    : "",
+                sourceURLString: chapterIndex == 1 ? nil : "lingyue-stress://chapter/\(chapterIndex)"
+            )
+        }
+        let novel = Novel(
+            id: UUID(uuidString: "FAB00000-0000-4000-8000-000000000001")!,
+            title: "跨章压测",
+            author: "压测",
+            genre: "测试",
+            summary: "跨章翻页压测，两页一章。",
+            lastChapter: "",
+            progress: 0,
+            readMinutes: 0,
+            lastOpenedAt: Date(),
+            addedAt: Date(),
+            currentChapterIndex: 0,
+            currentChapterPageIndex: 0,
+            coverPalette: .teal,
+            isFeatured: false,
+            sourceURLString: "lingyue-local-txt://import/%E8%B7%A8%E7%AB%A0%E5%8E%8B%E6%B5%8B",
+            chapters: chapters
+        )
+        return [
+            LibraryCategory(
+                id: UUID(uuidString: "FAB0CA70-0000-4000-8000-000000000002")!,
+                name: "无分类",
+                novels: [novel]
+            )
+        ]
     }
 
     private static func screenshotFixtureCategories() -> [LibraryCategory] {

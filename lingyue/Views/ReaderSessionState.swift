@@ -12,6 +12,11 @@ final class ReaderNavigationState: ObservableObject {
     @Published var pendingRestoreChapterKey: String?
     @Published var pendingRestoreChapterPageIndex: Int?
     @Published var pagerVersion = 0
+    /// Bumped for every explicit navigation (buttons, picker, slider, boundary
+    /// fallback). The continuous pager voids in-flight gesture landings that began
+    /// under an older epoch instead of being torn down via `.id` — a mid-session
+    /// identity swap permanently stopped SwiftUI representable updates on iOS 26.
+    @Published var navigationEpoch = 0
     @Published var boundarySwipeStartPageIndex: Int?
 }
 
