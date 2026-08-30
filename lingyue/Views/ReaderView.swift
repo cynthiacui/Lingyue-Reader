@@ -137,6 +137,16 @@ struct ReaderView: View {
     /// render after rotation when its parent uses `.ignoresSafeArea()`, so the previously-visible
     /// page renders with the wrong top padding until the next state change kicks a re-render.
     @State private var rotationLayoutVersion = 0
+    /// .pageCurl cannot survive a rotation in place on iOS 26 (its private container
+    /// swallows setViewControllers near the rotation and keeps the displayed child at
+    /// the old geometry), so it must be rebuilt — but rebuilding at rotation time races
+    /// the page-index clamp and the new orientation's pagination (snap-to-bookend,
+    /// animated reverse, teardown mid-animation). The rebuild is deferred instead:
+    /// the size-class handler arms this flag, and the pager generation bumps only once
+    /// the new orientation's pagination has landed, so the fresh pager is born into a
+    /// settled window.
+    @State private var pageCurlRotationRebuildPending = false
+    @State private var pageCurlRotationGeneration = 0
     /// Rebuilds the UIKit pager after any chapter change that did not land through a
     /// continuous cross-chapter bookend. A fixed pager identity is necessary for a
     /// bookend landing to preserve its live host, but reusing that same coordinator for
@@ -647,11 +657,18 @@ struct ReaderView: View {
             }
             .onChange(of: verticalSizeClass) { _, _ in
                 // Defer to the next runloop tick so SwiftUI has finished propagating the new
-                // safeAreaInsets through GeometryReader before we rebuild the pager. Without
-                // the dispatch the rebuild reads the same stale insets we're trying to escape.
+                // safeAreaInsets through GeometryReader before we re-render for the new
+                // geometry. Without the dispatch the re-render reads the same stale insets
+                // we're trying to escape. The slide pager stays alive across rotation —
+                // the epoch bump voids any page-turn gesture still in flight in the old
+                // orientation; pageCurl arms a deferred rebuild (see the flag's comment).
                 resetStableSafeAreaInsetsForOrientationChange()
                 windowInsets.refresh()
                 lastContainerSize = proxy.size
+                pagerNavigationEpoch &+= 1
+                if pageTransitionStyle == .pageCurl {
+                    pageCurlRotationRebuildPending = true
+                }
                 DispatchQueue.main.async {
                     windowInsets.refresh()
                     rotationLayoutVersion &+= 1
@@ -661,6 +678,10 @@ struct ReaderView: View {
                 resetStableSafeAreaInsetsForOrientationChange()
                 windowInsets.refresh()
                 lastContainerSize = proxy.size
+                pagerNavigationEpoch &+= 1
+                if pageTransitionStyle == .pageCurl {
+                    pageCurlRotationRebuildPending = true
+                }
                 DispatchQueue.main.async {
                     windowInsets.refresh()
                     rotationLayoutVersion &+= 1
@@ -1347,8 +1368,22 @@ struct ReaderView: View {
             )
         }
 
+        // The slide pager's identity must survive rotation: a mid-session `.id` swap
+        // wedges SwiftUI representable updates on iOS 26 when it happens inside a
+        // user-event transaction (the failure explicit chapter jumps used to trigger),
+        // and .scroll handles an in-place resize correctly, so it re-bases through the
+        // normal identity-driven update plus the epoch bump that voids gestures from
+        // the old orientation. .pageCurl cannot stay alive across a rotation on iOS 26:
+        // its private container silently swallows every non-animated setViewControllers
+        // near the rotation window AND leaves the displayed child at the old geometry,
+        // so the reader showed a stale portrait page clipped to half the landscape
+        // screen. For pageCurl only, rotation rebuilds the pager — the bump happens on
+        // a clean async tick (which does not wedge, unlike in-transaction bumps), and
+        // the rebuilt pager receives the post-rotation window through live updates.
+        _ = rotationLayoutVersion
+        let continuousRotationToken = transitionStyle == .pageCurl ? "-r\(pageCurlRotationGeneration)" : ""
         let idValue = continuous
-            ? "continuous-\(pageTransitionRaw)-\(pagerNavigationVersion)-\(rotationLayoutVersion)"
+            ? "continuous-\(pageTransitionRaw)-\(pagerNavigationVersion)\(continuousRotationToken)"
             : "\(pageTransitionRaw)-\(currentChapterIndex)-\(rotationLayoutVersion)-\(usingTwoColumn ? "2" : "1")"
 
         let navigationEpoch = pagerNavigationEpoch
@@ -2187,6 +2222,18 @@ struct ReaderView: View {
         )
     }
 
+    /// The deferred pageCurl rotation rebuild: called when the new orientation's
+    /// pagination lands (the signature embeds textSize, so rotation always changes
+    /// it), the page index has been clamped, and the slot window is settled — the
+    /// safe moment to swap in a fresh pager.
+    private func completeDeferredPageCurlRotationRebuildIfNeeded() {
+        guard pageCurlRotationRebuildPending else { return }
+        pageCurlRotationRebuildPending = false
+        if pageTransitionStyle == .pageCurl {
+            pageCurlRotationGeneration &+= 1
+        }
+    }
+
     private func setInitialChapterIfNeeded(textSize: CGSize) {
         guard !didSetInitialPage else { return }
 
@@ -2876,6 +2923,11 @@ struct ReaderView: View {
         clampCurrentPage(to: items)
         applyPendingPageRestoreIfNeeded(pages: items)
         persistReadingState(pages: items)
+        // Pagination for the current geometry just landed and the page index is
+        // clamped — the settled moment the deferred pageCurl rotation rebuild waits
+        // for (rotation always changes the signature via textSize, so this always
+        // runs after one).
+        completeDeferredPageCurlRotationRebuildIfNeeded()
     }
 
     private func readerContent(for chapter: NovelChapter?, chapterIndex: Int) -> String {

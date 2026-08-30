@@ -96,7 +96,7 @@ struct PageCurlPager: UIViewControllerRepresentable {
         let coordinator = context.coordinator
         pvc.onViewportLayout = { [weak coordinator, weak pvc] in
             guard let coordinator, let pvc else { return }
-            coordinator.prepareVisibleNeighborhood(in: pvc)
+            coordinator.handleViewportLayout(in: pvc)
         }
         context.coordinator.prepareVisibleNeighborhood(in: pvc)
         ReaderDiagnostics.shared.log(.info, "pager created", context: [
@@ -404,6 +404,74 @@ struct PageCurlPager: UIViewControllerRepresentable {
             return host
         }
 
+        /// Size of the pager viewport at the last settled layout. A change means the
+        /// pager was resized in place (rotation, split view) rather than rebuilt.
+        private var lastViewportSize: CGSize = .zero
+
+        /// Layout hook for the live pager. Besides keeping the visible neighbourhood
+        /// prepared, this detects an in-place resize: UIPageViewController's private
+        /// page structure (notably .pageCurl's) keeps the DISPLAYED child at its old
+        /// geometry through a rotation, so the reader showed a landscape page laid out
+        /// in portrait bounds — content squeezed into half the screen, footer pushed
+        /// off it. Once the new bounds settle, force the same shown-host replacement
+        /// used after slot re-bases; the fresh setViewControllers makes UIKit rebuild
+        /// its page structure at the new size. Deferred one runloop tick so we never
+        /// swap controllers from inside UIKit's own layout pass.
+        func handleViewportLayout(in pvc: UIPageViewController) {
+            let size = pvc.view.bounds.size
+            defer { prepareVisibleNeighborhood(in: pvc) }
+            guard size.width > 0, size.height > 0 else { return }
+            // iOS 26's .pageCurl does not re-frame the DISPLAYED child after the pager
+            // itself is resized (rotation/split view): the container relayouts to the
+            // new bounds while the child keeps its old-orientation frame, so most of
+            // the page is clipped off screen — the "blank page until I turn once"
+            // rotation report. Re-pin the child to its container whenever the pager is
+            // quiescent; a no-op in the (scroll) cases UIKit handles correctly.
+            // `viewControllers` is unreliable on iOS 26 pageCurl (it can keep
+            // returning a stale controller), so fall back to the cached host for the
+            // shown identity — the controller this coordinator last installed.
+            let displayedController = pvc.viewControllers?.first ?? hosts[shownIdentity]
+            if !isAnimating, !gestureInFlight, pvc.transitionCoordinator == nil,
+               let displayedView = displayedController?.view,
+               let container = displayedView.superview,
+               displayedView.frame != container.bounds {
+                ReaderDiagnostics.shared.log(.info, "pager re-framed displayed child", context: [
+                    "co": debugTag,
+                    "from": "\(Int(displayedView.frame.width))x\(Int(displayedView.frame.height))",
+                    "to": "\(Int(container.bounds.width))x\(Int(container.bounds.height))"
+                ])
+                displayedView.frame = container.bounds
+            }
+            let previous = lastViewportSize
+            lastViewportSize = size
+            guard previous != .zero, previous != size, !isDismantled else { return }
+            ReaderDiagnostics.shared.log(.info, "pager viewport resized", context: [
+                "co": debugTag,
+                "from": "\(Int(previous.width))x\(Int(previous.height))",
+                "to": "\(Int(size.width))x\(Int(size.height))",
+                "tree": Self.describeSubtree(of: pvc.view)
+            ])
+            needsNeighborRefresh = true
+            DispatchQueue.main.async { [weak self, weak pvc] in
+                guard let self, let pvc else { return }
+                self.refreshNeighborsIfNeeded(in: pvc)
+            }
+        }
+
+        /// Compact class+frame dump of the pager's view subtree for the rotation
+        /// diagnostics — cheap enough to leave in, invaluable when UIKit's private
+        /// page structure (snapshots, curl containers) misbehaves in the field.
+        private static func describeSubtree(of view: UIView, depth: Int = 0) -> String {
+            guard depth < 4 else { return "…" }
+            let f = view.frame
+            var line = "\(String(describing: type(of: view)))(\(Int(f.width))x\(Int(f.height))@\(Int(f.origin.x)),\(Int(f.origin.y)))\(view.isHidden ? "H" : "")"
+            if depth < 3, !view.subviews.isEmpty {
+                let children = view.subviews.prefix(4).map { describeSubtree(of: $0, depth: depth + 1) }
+                line += "[" + children.joined(separator: " ") + (view.subviews.count > 4 ? " +\(view.subviews.count - 4)" : "") + "]"
+            }
+            return String(line.prefix(depth == 0 ? 900 : 400))
+        }
+
         /// Eagerly prepare only the visible page and its adjacent neighbours. This keeps
         /// memory bounded to the same host cache while ensuring both swipe directions are
         /// ready before UIPageViewController asks for them during a gesture.
@@ -459,8 +527,47 @@ struct PageCurlPager: UIViewControllerRepresentable {
                 "replacedHost": "1"
             ])
             pvc.setViewControllers([host], direction: .forward, animated: false)
+            verifyInstalled(host, in: pvc)
             prepareVisibleNeighborhood(in: pvc)
             return true
+        }
+
+        /// Bounded retry budget for silently-dropped non-animated setViewControllers
+        /// calls. Reset whenever a swap verifiably lands.
+        private var installRetriesRemaining = 8
+
+        /// UIPageViewController can silently ignore a non-animated setViewControllers —
+        /// documented here for didFinishAnimating(completed:false), and observed again
+        /// around rotation: the call returns, `viewControllers` still holds the OLD
+        /// host, and the reader keeps showing the old-geometry page (the "blank half
+        /// page after rotating" report) while the state machine believes the swap
+        /// landed. Verify the swap and, when it was dropped, re-arm the neighbor
+        /// refresh a beat later — by then UIKit's transition has settled and the retry
+        /// installs a freshly prepared host at the new geometry.
+        ///
+        /// .scroll ONLY: on iOS 26, .pageCurl's `viewControllers` does not reliably
+        /// reflect a successful non-animated install (every verification read the old
+        /// host back even when the swap visibly landed), so verifying there produced
+        /// an endless reinstall storm. pageCurl rotation is handled through its
+        /// documented contract instead — `spineLocationFor` re-installs the shown host.
+        private func verifyInstalled(_ target: UIViewController, in pvc: UIPageViewController) {
+            guard pvc.transitionStyle == .scroll else { return }
+            if pvc.viewControllers?.first === target {
+                installRetriesRemaining = 8
+                return
+            }
+            guard installRetriesRemaining > 0, !isDismantled else { return }
+            installRetriesRemaining -= 1
+            needsNeighborRefresh = true
+            ReaderDiagnostics.shared.log(.info, "pager install dropped — retrying", context: [
+                "co": debugTag,
+                "shownID": shownIdentity,
+                "retriesLeft": String(installRetriesRemaining)
+            ])
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak self, weak pvc] in
+                guard let self, let pvc, !self.isDismantled else { return }
+                self.refreshNeighborsIfNeeded(in: pvc)
+            }
         }
 
         /// UIKit delegate/completion callbacks are still inside its transition stack.
@@ -668,6 +775,7 @@ struct PageCurlPager: UIViewControllerRepresentable {
             shownIdentity = identity
             if !animated {
                 pvc.setViewControllers([target], direction: direction, animated: false)
+                verifyInstalled(target, in: pvc)
                 prepareVisibleNeighborhood(in: pvc)
                 return
             }
@@ -834,6 +942,27 @@ struct PageCurlPager: UIViewControllerRepresentable {
         }
 
         // MARK: delegate
+
+        /// The documented rotation contract for .pageCurl: UIKit asks for the spine
+        /// location on every interface-orientation change and expects the delegate to
+        /// re-install the visible controllers for the new geometry. Without this, the
+        /// curl's private page structure kept the displayed child laid out for the OLD
+        /// orientation — the field report's blank/half page after rotating — and
+        /// setViewControllers calls made outside this callback were silently ignored
+        /// while the rotation transition ran.
+        func pageViewController(
+            _ pageViewController: UIPageViewController,
+            spineLocationFor orientation: UIInterfaceOrientation
+        ) -> UIPageViewController.SpineLocation {
+            if !isDismantled, let host = preparedHost(for: shownIdentity, in: pageViewController) {
+                ReaderDiagnostics.shared.log(.info, "pager spine relayout", context: [
+                    "co": debugTag,
+                    "shownID": shownIdentity
+                ])
+                pageViewController.setViewControllers([host], direction: .forward, animated: false)
+            }
+            return .min
+        }
 
         /// UIKit signals here when the user starts a swipe-driven curl. Track it so
         /// `requestTransition` can defer programmatic calls landing mid-swipe —

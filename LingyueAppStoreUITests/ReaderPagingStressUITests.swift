@@ -42,6 +42,70 @@ final class ReaderPagingStressUITests: XCTestCase {
         try runDeepJumpStress(app: app, transitionStyle: "pageCurl")
     }
 
+    func testSlideModeSurvivesRotation() throws {
+        let app = launchStressReader(transitionStyle: "slide")
+        try runRotationStress(app: app, transitionStyle: "slide")
+    }
+
+    func testPageCurlModeSurvivesRotation() throws {
+        let app = launchStressReader(transitionStyle: "pageCurl")
+        try runRotationStress(app: app, transitionStyle: "pageCurl")
+    }
+
+    // MARK: - Rotation stress
+
+    /// Field report: rotating portrait → landscape mid-read shows a blank page until
+    /// the user manually turns once. Rotation re-paginates for the new geometry and
+    /// (pre-fix) rebuilt the pager through a `.id` change — the same teardown that
+    /// wedged representable updates on explicit chapter jumps.
+    private func runRotationStress(app: XCUIApplication, transitionStyle: String) throws {
+        defer { XCUIDevice.shared.orientation = .portrait }
+
+        // Read a few pages in so rotation happens mid-chapter, mid-session.
+        for _ in 0..<3 {
+            swipeForward(in: app)
+            usleep(250_000)
+        }
+
+        for cycle in 0..<3 {
+            XCUIDevice.shared.orientation = .landscapeLeft
+            sleep(2)
+            var state = visibleState(in: app)
+            if state.blank {
+                failWithDiagnosticsFlush(
+                    "第\(cycle + 1)次转横屏后页面空白，模式=\(transitionStyle)"
+                )
+                return
+            }
+
+            // Page turns must keep working in the new orientation.
+            let before = state.signature
+            swipeForward(in: app)
+            usleep(400_000)
+            state = visibleState(in: app)
+            if state.blank || state.signature == before {
+                failWithDiagnosticsFlush(
+                    "第\(cycle + 1)次转横屏后翻页失效（空白=\(state.blank)），模式=\(transitionStyle)"
+                )
+                return
+            }
+
+            XCUIDevice.shared.orientation = .portrait
+            sleep(2)
+            state = visibleState(in: app)
+            if state.blank {
+                failWithDiagnosticsFlush(
+                    "第\(cycle + 1)次转回竖屏后页面空白，模式=\(transitionStyle)"
+                )
+                return
+            }
+        }
+
+        // Flush diagnostics for post-run inspection even on success.
+        XCUIDevice.shared.press(.home)
+        sleep(2)
+    }
+
     // MARK: - Shared launch / probes
 
     private func launchStressReader(transitionStyle: String) -> XCUIApplication {
@@ -87,17 +151,22 @@ final class ReaderPagingStressUITests: XCTestCase {
         app.staticTexts.matching(NSPredicate(format: "label MATCHES %@", "^第\\d+章 跨章章节\\d+$"))
     }
 
-    /// Label of the first HITTABLE match. UIPageViewController keeps cached
+    /// Label of the first ON-SCREEN match. UIPageViewController keeps cached
     /// neighbour pages alive off-screen with live accessibility elements, so an
     /// existence check alone can report a footer that isn't the visible page's —
     /// including when the visible page is the blank fallback (whole-page
-    /// background with no footer at all).
-    private func firstHittableLabel(in query: XCUIElementQuery) -> String? {
+    /// background with no footer at all). Visibility is judged from a throwing
+    /// `snapshot()` instead of `isHittable`, which hard-fails the test with
+    /// "Activation point invalid" when a page element is recycled mid-read.
+    private func firstOnScreenLabel(in query: XCUIElementQuery, appFrame: CGRect) -> String? {
         let count = min(query.count, 6)
+        let visibleArea = appFrame.insetBy(dx: 1, dy: 1)
         for index in 0..<count {
             let element = query.element(boundBy: index)
-            if element.exists, element.isHittable {
-                return element.label
+            guard let snapshot = try? element.snapshot() else { continue }
+            let frame = snapshot.frame
+            if !frame.isEmpty, visibleArea.intersects(frame) {
+                return snapshot.label
             }
         }
         return nil
@@ -108,8 +177,9 @@ final class ReaderPagingStressUITests: XCTestCase {
     /// footer exists — the blank-fallback-page symptom.
     private func visibleState(in app: XCUIApplication) -> (signature: String, blank: Bool) {
         for _ in 0..<3 {
-            let marker = firstHittableLabel(in: pageMarkerQuery(in: app))
-            let chapterFooter = firstHittableLabel(in: chapterFooterQuery(in: app))
+            let appFrame = app.frame
+            let marker = firstOnScreenLabel(in: pageMarkerQuery(in: app), appFrame: appFrame)
+            let chapterFooter = firstOnScreenLabel(in: chapterFooterQuery(in: app), appFrame: appFrame)
             if let marker, let chapterFooter {
                 return (chapterFooter + "|" + marker, false)
             }
@@ -306,8 +376,13 @@ final class ReaderPagingStressUITests: XCTestCase {
         // past the target row before it materializes.
         let dragFrom = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.64))
         let dragTo = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.34))
+        func rowIsOnScreen() -> Bool {
+            guard let snapshot = try? row.snapshot() else { return false }
+            let frame = snapshot.frame
+            return !frame.isEmpty && app.frame.insetBy(dx: 1, dy: 40).contains(frame)
+        }
         var attempts = 0
-        while !(row.exists && row.isHittable) && attempts < 50 {
+        while !rowIsOnScreen() && attempts < 50 {
             dragFrom.press(
                 forDuration: 0.03,
                 thenDragTo: dragTo,
@@ -316,7 +391,7 @@ final class ReaderPagingStressUITests: XCTestCase {
             )
             attempts += 1
         }
-        XCTAssertTrue(row.exists && row.isHittable, "目录应能滚动到第\(number)章")
+        XCTAssertTrue(rowIsOnScreen(), "目录应能滚动到第\(number)章")
         row.tap()
     }
 }
