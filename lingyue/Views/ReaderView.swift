@@ -2287,13 +2287,15 @@ struct ReaderView: View {
 
         let content = displayed(readerContent(for: chapter, chapterIndex: currentChapterIndex))
         guard !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        // This runs on the main thread before the first frame. Pagination cost scales
-        // with content length, and a cache entry poisoned with a whole-page blob (pre
-        // maxReasonableWebChapterLength builds) froze the reader open for ~20s and
-        // could watchdog-crash it. Past this size, skip the synchronous fast path and
-        // let the async `.task` pagination handle it off the main thread — the reader
-        // opens instantly on the loading placeholder instead.
-        guard content.count <= 30_000 else {
+        // This runs on the main thread before the first frame, purely to avoid a
+        // flash of the chapter start before snapping to the saved page. It is only
+        // worth blocking for a chapter small enough to lay out in a fraction of a
+        // second at the LARGEST reader font — a 12k-character chapter at 29pt was
+        // measured at 66s on device with the old quadratic paginator, and even the
+        // fixed one should not hold the first frame hostage. Anything bigger goes
+        // through the async `.task` path: the reader opens immediately on the
+        // loading placeholder and snaps to the saved page when pagination lands.
+        guard content.count <= 8_000 else {
             ReaderDiagnostics.shared.log(.paginationCancel, "sync restore skipped — oversized content", context: [
                 "ch": String(currentChapterIndex),
                 "len": String(content.count)
@@ -3414,7 +3416,9 @@ struct ReaderView: View {
         return ceil(font.lineHeight)
     }
 
-    nonisolated private static func paginate(
+    /// Internal (not private) so the pagination performance regression test can
+    /// call it directly — a 12k-character chapter at a large font used to take 66s.
+    nonisolated static func paginate(
         content: String,
         textSize: CGSize,
         fontSize: CGFloat,
@@ -3444,6 +3448,16 @@ struct ReaderView: View {
         return result
     }
 
+    /// Finds the longest prefix of `text` that still fits one page.
+    ///
+    /// The search brackets the break with a doubling probe BEFORE binary-searching,
+    /// so every measurement is proportional to one page rather than to the whole
+    /// remaining chapter. Plain binary search over `[1, totalLength]` measured half
+    /// the chapter on its first probe, a quarter on the next… for EVERY page, making
+    /// pagination scale with (chapter length x page count): a 12k-character chapter
+    /// at a large font (80 pages) took 66 SECONDS on the main thread, freezing the
+    /// reader on open. Heights are monotonic in prefix length, so the bracketed
+    /// search returns exactly the same split points as before — only faster.
     nonisolated private static func fittingSplitIndex(
         in text: String,
         textSize: CGSize,
@@ -3454,17 +3468,45 @@ struct ReaderView: View {
         let nsText = text as NSString
         let totalLength = nsText.length
 
-        var lowerBound = 1
-        var upperBound = totalLength
-        var bestLength = 1
+        func fits(_ length: Int) -> Bool {
+            measuredHeight(nsText.substring(to: length), width: textSize.width, attributes: attributes)
+                <= textSize.height + 0.5
+        }
+
+        // Double until the prefix overflows, keeping the last fitting length. The
+        // first probe is sized for a typical page so the common case measures ~2
+        // page-sized strings before the bracket closes.
+        var fitLength = 0
+        var overflowLength = totalLength
+        var probe = min(512, totalLength)
+        var bracketed = false
+        while true {
+            if Task.isCancelled { break }
+            if fits(probe) {
+                fitLength = probe
+                if probe >= totalLength { return text.endIndex }
+                probe = min(probe * 2, totalLength)
+            } else {
+                overflowLength = probe
+                bracketed = true
+                break
+            }
+        }
+        guard bracketed else {
+            // Cancelled mid-probe: fall back to whatever prefix is known to fit.
+            guard fitLength > 0, fitLength < totalLength else { return text.endIndex }
+            let nsRange = NSRange(location: 0, length: fitLength)
+            return Range(nsRange, in: text)?.upperBound ?? text.index(after: text.startIndex)
+        }
+
+        var lowerBound = fitLength + 1
+        var upperBound = overflowLength - 1
+        var bestLength = fitLength
 
         while lowerBound <= upperBound {
             if Task.isCancelled { break }
             let midpoint = (lowerBound + upperBound) / 2
-            let candidate = nsText.substring(to: midpoint)
-            let candidateHeight = measuredHeight(candidate, width: textSize.width, attributes: attributes)
-
-            if candidateHeight <= textSize.height + 0.5 {
+            if fits(midpoint) {
                 bestLength = midpoint
                 lowerBound = midpoint + 1
             } else {
@@ -3472,11 +3514,14 @@ struct ReaderView: View {
             }
         }
 
-        guard bestLength < totalLength else {
+        // Always consume at least one character so pagination cannot loop forever
+        // on a viewport too small for a single glyph.
+        let splitLength = max(bestLength, 1)
+        guard splitLength < totalLength else {
             return text.endIndex
         }
 
-        let nsRange = NSRange(location: 0, length: bestLength)
+        let nsRange = NSRange(location: 0, length: splitLength)
         return Range(nsRange, in: text)?.upperBound ?? text.index(after: text.startIndex)
     }
 

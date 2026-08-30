@@ -2703,3 +2703,74 @@ final class AntiBotChallengeDetectionTests: XCTestCase {
         XCTAssertTrue(BookImportService.shared.shouldUseCachedChapter(longButReal, for: original))
     }
 }
+
+/// The reader paginated by binary-searching the WHOLE remaining chapter for every
+/// page, so cost scaled with (chapter length × page count). A real field case — a
+/// 12,330-character chapter read at 29pt (80 pages) — blocked the main thread for
+/// 66 seconds on open, which the user experienced as "the book takes forever to
+/// open and then I can't turn the page". These pin the fix (bracketed search) and
+/// the page splits it must preserve.
+final class ReaderPaginationPerformanceTests: XCTestCase {
+    private let textSize = CGSize(width: 400, height: 844)
+
+    private func fieldCaseChapter() -> String {
+        // ~12k characters of Chinese prose, matching the reported chapter's size.
+        let paragraph = "他走进那间旧书房，窗外的光线斜斜落在桌面上，尘埃在空气里缓缓浮动。"
+            + "书页被风吹得翻了一角，露出下面压着的一张字条，字迹已经有些模糊了。"
+        return (1...175).map { "第\($0)段：" + paragraph }.joined(separator: "\n")
+    }
+
+    func testLargeFontChapterPaginatesQuicklyEnoughForTheMainThread() {
+        let content = fieldCaseChapter()
+        XCTAssertGreaterThan(content.count, 10_000, "fixture should match the field case size")
+
+        let start = Date()
+        let pages = ReaderView.paginate(
+            content: content,
+            textSize: textSize,
+            fontSize: 29,
+            lineSpacing: 8,
+            paragraphSpacing: 1,
+            fontFamily: .system
+        )
+        let elapsed = Date().timeIntervalSince(start)
+
+        XCTAssertGreaterThan(pages.count, 20, "a 29pt read of this chapter spans many pages")
+        // The old quadratic search took 66s for this shape on device. Two seconds in
+        // the simulator leaves generous headroom while still catching a regression.
+        XCTAssertLessThan(elapsed, 2.0, "分页耗时 \(elapsed)s —— 分页复杂度回退了")
+    }
+
+    func testPaginationIsLosslessAndOrdered() {
+        let content = fieldCaseChapter()
+        let pages = ReaderView.paginate(
+            content: content,
+            textSize: textSize,
+            fontSize: 29,
+            lineSpacing: 8,
+            paragraphSpacing: 1,
+            fontFamily: .system
+        )
+        XCTAssertFalse(pages.isEmpty)
+        XCTAssertFalse(pages.contains(where: \.isEmpty), "no page may be empty")
+
+        // Every page's text must appear in order, with nothing dropped: stripping
+        // whitespace, the concatenation reproduces the source.
+        let joined = pages.joined()
+        let strip: (String) -> String = { $0.filter { !$0.isWhitespace } }
+        XCTAssertEqual(strip(joined), strip(content), "pagination must not drop or reorder text")
+    }
+
+    func testTinyViewportStillMakesProgress() {
+        // A viewport too small for a single line must not spin forever.
+        let pages = ReaderView.paginate(
+            content: "短章节内容测试",
+            textSize: CGSize(width: 40, height: 8),
+            fontSize: 29,
+            lineSpacing: 8,
+            paragraphSpacing: 1,
+            fontFamily: .system
+        )
+        XCTAssertFalse(pages.isEmpty)
+    }
+}

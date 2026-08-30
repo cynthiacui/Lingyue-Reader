@@ -52,6 +52,55 @@ final class ReaderPagingStressUITests: XCTestCase {
         try runRotationStress(app: app, transitionStyle: "pageCurl")
     }
 
+    func testSlideModeRestoredPositionThenCrossChapterPaging() throws {
+        let app = launchStressReader(transitionStyle: "slide", restoringSavedPosition: true)
+        try runRestoredPositionStress(app: app, transitionStyle: "slide")
+    }
+
+    func testPageCurlModeRestoredPositionThenCrossChapterPaging() throws {
+        let app = launchStressReader(transitionStyle: "pageCurl", restoringSavedPosition: true)
+        try runRestoredPositionStress(app: app, transitionStyle: "pageCurl")
+    }
+
+    // MARK: - Restore-on-open stress
+
+    /// Field report: reopen the book you were reading, page forward into the next
+    /// chapter, and the reader dead-ends on that chapter's first page. Opening a
+    /// book restores a saved chapter+page, which is a different startup path than
+    /// the other stress tests (they always begin at chapter 1 page 1) — and it used
+    /// to rebuild the pager through its `.id` right after the first body pass.
+    private func runRestoredPositionStress(app: XCUIApplication, transitionStyle: String) throws {
+        // The fixture is saved on chapter 40's last page, so the first forward turn
+        // crosses a chapter boundary exactly like reopening a book mid-read.
+        var previous = visibleState(in: app)
+        XCTAssertFalse(previous.blank, "恢复阅读位置后不应是空白页")
+
+        for turn in 0..<12 {
+            swipeForward(in: app)
+            usleep(250_000)
+            var state = visibleState(in: app)
+
+            if state.blank || state.signature == previous.signature {
+                // Chapters load over the synthetic network delay; allow a settle
+                // window before calling it a dead end.
+                sleep(3)
+                swipeForward(in: app)
+                usleep(400_000)
+                state = visibleState(in: app)
+                if state.blank || state.signature == previous.signature {
+                    failWithDiagnosticsFlush(
+                        "恢复阅读位置后第\(turn + 1)次前翻卡住（空白=\(state.blank)，签名=\(state.signature)），模式=\(transitionStyle)"
+                    )
+                    return
+                }
+            }
+            previous = state
+        }
+
+        XCUIDevice.shared.press(.home)
+        sleep(2)
+    }
+
     // MARK: - Rotation stress
 
     /// Field report: rotating portrait → landscape mid-read shows a blank page until
@@ -108,10 +157,13 @@ final class ReaderPagingStressUITests: XCTestCase {
 
     // MARK: - Shared launch / probes
 
-    private func launchStressReader(transitionStyle: String) -> XCUIApplication {
+    private func launchStressReader(
+        transitionStyle: String,
+        restoringSavedPosition: Bool = false
+    ) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = [
-            "--paging-stress-fixture",
+            restoringSavedPosition ? "--paging-stress-restore-fixture" : "--paging-stress-fixture",
             "--diagnostics-deep",
             "-reader.pageTransition", transitionStyle,
             "-reader.hasSeenHelpOverlay", "YES",

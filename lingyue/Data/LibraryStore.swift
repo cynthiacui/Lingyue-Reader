@@ -787,7 +787,16 @@ final class LibraryStore: ObservableObject {
             "--category-reorder-long-fixture"
         )
         let usesPagingStressFixture = CommandLine.arguments.contains("--paging-stress-fixture")
-        let loadedLibrary = if usesPagingStressFixture {
+        // Same book, but saved mid-read so opening it replays the restore path.
+        let usesPagingRestoreFixture = CommandLine.arguments.contains("--paging-stress-restore-fixture")
+        let loadedLibrary = if usesPagingRestoreFixture {
+            LibraryStorageSnapshot(
+                categories: LibraryStore.pagingStressFixtureCategories(
+                    restoringTo: (chapterIndex: 39, pageIndex: 1)
+                ),
+                archivedBooks: []
+            )
+        } else if usesPagingStressFixture {
             LibraryStorageSnapshot(
                 categories: LibraryStore.pagingStressFixtureCategories(),
                 archivedBooks: []
@@ -1633,7 +1642,12 @@ final class LibraryStore: ObservableObject {
     /// `lingyue-stress://` path (see ChapterContentCache) to replay the remote
     /// lifecycle — loading placeholder, pagination-signature flips, bookends
     /// appearing mid-read — that real sources produce in the field.
-    private static func pagingStressFixtureCategories() -> [LibraryCategory] {
+    /// `restoringTo` seeds a saved reading position so the fixture exercises the
+    /// restore-on-open path (the reader reopens mid-book and snaps to the stored
+    /// page after async pagination) rather than always starting at chapter 1.
+    private static func pagingStressFixtureCategories(
+        restoringTo restorePosition: (chapterIndex: Int, pageIndex: Int)? = nil
+    ) -> [LibraryCategory] {
         let chapters = (1...150).map { chapterIndex in
             NovelChapter(
                 id: UUID(uuidString: String(format: "CAFE0000-0000-4000-8000-%012d", chapterIndex))!,
@@ -1657,8 +1671,9 @@ final class LibraryStore: ObservableObject {
             readMinutes: 0,
             lastOpenedAt: Date(),
             addedAt: Date(),
-            currentChapterIndex: 0,
-            currentChapterPageIndex: 0,
+            currentChapterIndex: restorePosition?.chapterIndex ?? 0,
+            currentChapterPageIndex: restorePosition?.pageIndex ?? 0,
+            currentChapterSourceURLString: restorePosition.map { "lingyue-stress://chapter/\($0.chapterIndex + 1)" },
             coverPalette: .teal,
             isFeatured: false,
             sourceURLString: "lingyue-local-txt://import/%E8%B7%A8%E7%AB%A0%E5%8E%8B%E6%B5%8B",
