@@ -2620,3 +2620,86 @@ final class AppUILanguageTests: XCTestCase {
         XCTAssertEqual(Text("删除 \(count) 个书源？"), Text(verbatim: "刪除 3 個書源？"))
     }
 }
+
+/// Bulk downloads used to persist anti-bot challenge pages ("cookies need to be
+/// enabled" walls, 访问过于频繁 interstitials) as chapter text once a source started
+/// rate-limiting the burst — and the garbage outlived the download until the user
+/// wiped the cache by hand. These pin the detector and the cache self-heal.
+final class AntiBotChallengeDetectionTests: XCTestCase {
+    func testEnglishCookieWallIsDetected() {
+        let wall = """
+        Cookies need to be enabled in order to browse this site.
+        Please enable cookies in your browser and try again.
+        """
+        XCTAssertTrue(BookImportService.isAntiBotChallengeContent(wall))
+    }
+
+    func testChineseRateLimitInterstitialIsDetected() {
+        XCTAssertTrue(BookImportService.isAntiBotChallengeContent("访问过于频繁，请开启Cookies后重新访问。"))
+        XCTAssertTrue(BookImportService.isAntiBotChallengeContent("人機驗證：請開啟Cookie後繼續訪問本站"))
+    }
+
+    func testCloudflareInterstitialIsDetected() {
+        XCTAssertTrue(BookImportService.isAntiBotChallengeContent("Checking your browser before accessing the site."))
+        XCTAssertTrue(BookImportService.isAntiBotChallengeContent("Verifying you are human. This may take a few seconds."))
+    }
+
+    func testRealChapterProseIsNotDetected() {
+        let shortChapter = "第三章 夜谈\n\n山间的风慢慢吹过旧书页，两人对坐无言，直到烛火燃尽。"
+        XCTAssertFalse(BookImportService.isAntiBotChallengeContent(shortChapter))
+    }
+
+    func testLongProseMentioningCookiesIsNotDetected() {
+        // The length gate keeps a genuine chapter that happens to quote a challenge
+        // phrase from being misclassified — challenge pages are always short.
+        let filler = String(repeating: "他继续读着屏幕上的报错信息，觉得有些好笑。", count: 60)
+        let chapter = filler + "屏幕上写着 cookies need to be enabled，他叹了口气合上电脑。"
+        XCTAssertFalse(BookImportService.isAntiBotChallengeContent(chapter))
+    }
+
+    func testPoisonedCacheEntryIsRejectedForRefetch() {
+        let poisoned = NovelChapter(
+            title: "第一百二十章 大结局",
+            content: "Cookies need to be enabled in order to browse this site.",
+            sourceURLString: "https://example.com/book/120.html"
+        )
+        let original = NovelChapter(
+            title: "第一百二十章 大结局",
+            content: "",
+            sourceURLString: "https://example.com/book/120.html"
+        )
+        XCTAssertFalse(BookImportService.shared.shouldUseCachedChapter(poisoned, for: original))
+    }
+
+    func testSourceBlockedSentinelStillAcceptedAsCacheEntry() {
+        let sentinel = NovelChapter(
+            title: "第一章",
+            content: BookImportService.sourceBlockedContentSentinel,
+            sourceURLString: "https://example.com/book/1.html"
+        )
+        let original = NovelChapter(title: "第一章", content: "", sourceURLString: "https://example.com/book/1.html")
+        XCTAssertTrue(BookImportService.shared.shouldUseCachedChapter(sentinel, for: original))
+    }
+
+    /// A whole-page blob cached by the extractor's whole-page fallback froze the
+    /// reader for ~20s on open (and could watchdog-crash it). Oversized web-cache
+    /// entries must be rejected so they re-fetch under the new extraction limit;
+    /// realistically long genuine chapters stay accepted.
+    func testOversizedCachedBlobIsRejectedButLongChapterIsKept() {
+        let original = NovelChapter(title: "第九章", content: "", sourceURLString: "https://example.com/book/9.html")
+        let blob = NovelChapter(
+            title: "第九章",
+            content: String(repeating: "目录 第一章 第二章 第三章 广告脚本噪声 ", count: 6_000),
+            sourceURLString: "https://example.com/book/9.html"
+        )
+        XCTAssertFalse(BookImportService.shared.shouldUseCachedChapter(blob, for: original))
+
+        let longButReal = NovelChapter(
+            title: "第九章",
+            content: "第九章\n\n" + String(repeating: "山间的风慢慢吹过旧书页，读者一页一页往下读。", count: 1_800),
+            sourceURLString: "https://example.com/book/9.html"
+        )
+        XCTAssertLessThanOrEqual(longButReal.content.count, BookImportService.maxReasonableWebChapterLength)
+        XCTAssertTrue(BookImportService.shared.shouldUseCachedChapter(longButReal, for: original))
+    }
+}

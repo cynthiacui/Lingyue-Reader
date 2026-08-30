@@ -58,6 +58,8 @@ enum WebBookImportError: LocalizedError {
     case noChaptersFound
     case emptyChapterContent
     case sourceBlockedContent
+    case antiBotChallenge
+    case oversizedChapterContent
     case rateLimited
     case badStatus(Int)
     case unsupportedEncoding
@@ -76,6 +78,10 @@ enum WebBookImportError: LocalizedError {
             return "章节页面可以打开，但没有解析到正文内容。"
         case .sourceBlockedContent:
             return "该来源已将章节正文移至 APP 内，网页版无法显示。请在「发现」重新搜索本书并从其他来源导入。"
+        case .antiBotChallenge:
+            return "该来源触发了访问验证（Cookies），本章暂时无法获取。请稍等几分钟再重试，已下载的章节不受影响。"
+        case .oversizedChapterContent:
+            return "章节页面解析异常（内容远超正常章节大小），已放弃本次抓取。请稍后重试或更换来源。"
         case .rateLimited:
             return "该来源短时间内请求过多，请稍后再试。"
         case .badStatus(let statusCode):
@@ -110,6 +116,54 @@ final class BookImportService: Sendable {
 
     static func isSourceBlockedSentinelContent(_ content: String) -> Bool {
         content.hasPrefix(sourceBlockedContentSentinel)
+    }
+
+    /// Ceiling on the extracted body of a WEB-FETCHED chapter, in characters. Real
+    /// web-novel chapters top out around 15–40k characters; the only way past this
+    /// line is `chapterBodyHTML`'s whole-page fallback swallowing a catalog page or
+    /// script-heavy template (hundreds of thousands of characters). Such a blob, once
+    /// cached, froze the reader for ~20s on open (placeholder layout + synchronous
+    /// pagination of the whole thing on the main thread) and could watchdog-crash the
+    /// app. Local TXT/EPUB chapters never pass through this limit — it gates only the
+    /// web-extraction path and the web chapter cache.
+    static let maxReasonableWebChapterLength = 60_000
+
+    /// Detects an anti-bot / rate-limit challenge page that a source served in place
+    /// of chapter text ("cookies need to be enabled", Cloudflare interstitials, 访问
+    /// 过于频繁…). Bulk downloads trip these on later chapters once the burst crosses
+    /// the site's threshold; without this check the challenge text was parsed as a
+    /// perfectly valid body and persisted to the chapter cache, so the garbage
+    /// outlived the download until the user wiped the cache by hand.
+    ///
+    /// Content-level (not HTML-level) on purpose: ad/footer scripts on legitimate
+    /// chapter pages can mention cookies, but the extracted BODY of a real chapter
+    /// never opens with these phrases. The length gate keeps a (hypothetical) long
+    /// chapter that quotes one of these phrases from being misclassified — challenge
+    /// pages are always short.
+    static func isAntiBotChallengeContent(_ content: String) -> Bool {
+        let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed.count < 800 else { return false }
+        let lowered = trimmed.lowercased()
+        let markers = [
+            "cookies need to be enabled",
+            "please enable cookies",
+            "cookies must be enabled",
+            "enable javascript and cookies",
+            "checking your browser",
+            "verify you are human",
+            "verifying you are human",
+            "attention required! | cloudflare",
+            "ddos protection by",
+            "ddos-guard",
+            "cf-browser-verification",
+            "cf_chl_",
+            "开启cookie", "開啟cookie", "启用cookie", "啟用cookie",
+            "访问过于频繁", "訪問過於頻繁",
+            "请求过于频繁", "請求過於頻繁",
+            "访问频率过快",
+            "人机验证", "人機驗證"
+        ]
+        return markers.contains { lowered.contains($0) }
     }
 
     /// Safety fuse for parser runaways, not a normal product cap. Legitimately long web novels
@@ -476,6 +530,19 @@ final class BookImportService: Sendable {
         // chapter name. These were produced by the old <h1>-grabs-first bug; force
         // a re-fetch so the new title parser can pick the right heading.
         if isSiteBrandTitle(cachedChapter.title) {
+            return false
+        }
+        // Self-heal caches poisoned by anti-bot challenge pages saved as chapter
+        // text (pre-detection builds did this during bulk downloads). Rejecting the
+        // entry deletes it and re-fetches — the user no longer has to clear the
+        // whole cache by hand.
+        if Self.isAntiBotChallengeContent(cachedChapter.content) {
+            return false
+        }
+        // Self-heal whole-page blobs cached by pre-limit builds (the "book takes 20s
+        // to open, then crashes" report). The re-fetch either extracts a sane body or
+        // fails loudly — it can no longer re-cache another blob.
+        if cachedChapter.content.count > Self.maxReasonableWebChapterLength {
             return false
         }
         // Reject cached chapters whose body begins with a breadcrumb signature —
@@ -1063,6 +1130,19 @@ final class BookImportService: Sendable {
             .trimmingCharacters(in: .whitespacesAndNewlines)
 
         guard contentWithoutTitle.count >= 30 else { return nil }
+        // A challenge interstitial parses as a plausible short body. Throwing (instead
+        // of returning it) keeps it out of every cache; the URLSession fetch path falls
+        // through to the WKWebView fallback, which runs JS + cookies and clears most
+        // "enable cookies" walls on its own.
+        if Self.isAntiBotChallengeContent(contentWithoutTitle) {
+            throw WebBookImportError.antiBotChallenge
+        }
+        // The whole-page fallback in `chapterBodyHTML` can swallow a catalog page or
+        // script template. Never let such a blob become (cached) chapter text — it
+        // freezes the reader on open for tens of seconds.
+        if contentWithoutTitle.count > Self.maxReasonableWebChapterLength {
+            throw WebBookImportError.oversizedChapterContent
+        }
         let chapterContent = content.hasPrefix(title) ? content : "\(title)\n\n\(content)"
         return NovelChapter(title: title, content: chapterContent)
     }

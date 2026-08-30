@@ -2159,7 +2159,12 @@ struct ReaderView: View {
         let rawChapter = baseChapters.indices.contains(chapterIndex) ? baseChapters[chapterIndex] : nil
         let chapter = rawChapter.map { loadedChapterOverrides[chapterCacheKey($0)] ?? $0 }
         let title = displayed(chapter?.title ?? activeNovel.title)
-        let content = displayed(readerContent(for: chapter, chapterIndex: chapterIndex))
+        // The placeholder shows the whole un-paginated chapter for at most a few
+        // hundred milliseconds while real pagination runs. Laying out an oversized
+        // blob (a poisoned cache entry) in UITextView stalls the main thread for
+        // seconds, so cap what the transitional page renders — one screen only ever
+        // shows the first ~1k characters anyway.
+        let content = String(displayed(readerContent(for: chapter, chapterIndex: chapterIndex)).prefix(8_000))
         let renderSignature = [
             "placeholder",
             "\(chapterIndex)",
@@ -2235,6 +2240,19 @@ struct ReaderView: View {
 
         let content = displayed(readerContent(for: chapter, chapterIndex: currentChapterIndex))
         guard !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        // This runs on the main thread before the first frame. Pagination cost scales
+        // with content length, and a cache entry poisoned with a whole-page blob (pre
+        // maxReasonableWebChapterLength builds) froze the reader open for ~20s and
+        // could watchdog-crash it. Past this size, skip the synchronous fast path and
+        // let the async `.task` pagination handle it off the main thread — the reader
+        // opens instantly on the loading placeholder instead.
+        guard content.count <= 30_000 else {
+            ReaderDiagnostics.shared.log(.paginationCancel, "sync restore skipped — oversized content", context: [
+                "ch": String(currentChapterIndex),
+                "len": String(content.count)
+            ])
+            return
+        }
 
         ReaderDiagnostics.shared.log(.paginationStart, "sync restore", context: [
             "ch": String(currentChapterIndex),

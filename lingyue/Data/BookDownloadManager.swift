@@ -266,6 +266,28 @@ final class BookDownloadManager: ObservableObject {
         return false
     }
 
+    /// Fetches one chapter into the cache, backing off and retrying when the source
+    /// answers with an anti-bot challenge ("cookies need to be enabled" walls). Bulk
+    /// downloads trip these once the request burst crosses the site's rate threshold;
+    /// a pause usually lets the window lapse, so waiting beats failing the whole book.
+    /// Anything else (including a challenge that survives both retries) rethrows and
+    /// surfaces through the normal `.failed` path — the chapter is never cached wrong.
+    private static func fetchChapterAllowingChallengeRetry(_ chapter: NovelChapter) async throws {
+        var attempt = 0
+        while true {
+            do {
+                _ = try await ChapterContentCache.shared.chapter(for: chapter)
+                return
+            } catch let error as WebBookImportError {
+                guard case .antiBotChallenge = error, attempt < 2, !Task.isCancelled else {
+                    throw error
+                }
+                attempt += 1
+                try? await Task.sleep(nanoseconds: UInt64(attempt == 1 ? 2 : 6) * 1_000_000_000)
+            }
+        }
+    }
+
     /// Throttled progress publish. Drops intermediate `.downloading(...)` ticks that arrive
     /// within `progressThrottleInterval` of the last one, except when `total` is hit (so the
     /// final tick before the terminal `.downloaded` state always shows the right count).
@@ -310,7 +332,7 @@ final class BookDownloadManager: ObservableObject {
             while inflight < concurrency, let chapter = iterator.next() {
                 group.addTask {
                     do {
-                        _ = try await ChapterContentCache.shared.chapter(for: chapter)
+                        try await Self.fetchChapterAllowingChallengeRetry(chapter)
                         return .success(())
                     } catch {
                         return .failure(error)
@@ -354,7 +376,7 @@ final class BookDownloadManager: ObservableObject {
                 if let chapter = iterator.next() {
                     group.addTask {
                         do {
-                            _ = try await ChapterContentCache.shared.chapter(for: chapter)
+                            try await Self.fetchChapterAllowingChallengeRetry(chapter)
                             return .success(())
                         } catch {
                             return .failure(error)
