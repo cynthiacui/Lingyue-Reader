@@ -113,7 +113,7 @@ struct SourcesListView: View {
             .animation(.snappy, value: editMode)
         }
         .alert(
-            "删除该书源？",
+            Text("删除该书源？"),
             isPresented: Binding(
                 get: { pendingDelete != nil },
                 set: { if !$0 { pendingDelete = nil } }
@@ -130,7 +130,7 @@ struct SourcesListView: View {
             Text("书源「\(entry.rule.name)」会从书源列表中移除。该操作无法撤销。")
         }
         .alert(
-            "删除 \(selectedIDs.count) 个书源？",
+            Text("删除 \(selectedIDs.count) 个书源？"),
             isPresented: $pendingBatchDelete
         ) {
             Button("取消", role: .cancel) {}
@@ -187,7 +187,7 @@ struct SourcesListView: View {
             exportDocument = nil
         }
         .alert(
-            "导出失败",
+            Text("导出失败"),
             isPresented: Binding(
                 get: { exportError != nil },
                 set: { if !$0 { exportError = nil } }

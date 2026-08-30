@@ -227,6 +227,7 @@ struct ContentView: View {
     @StateObject private var importCoordinator = SourceImportCoordinator()
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.colorScheme) private var systemColorScheme
+    @AppStorage(AppUILanguage.storageKey) private var usesTraditionalChineseInterface = false
 
     var body: some View {
         let effectiveTheme = themeManager.effectiveTheme(for: systemColorScheme)
@@ -273,6 +274,12 @@ struct ContentView: View {
         }
         .tint(effectiveTheme.accent)
         .preferredColorScheme(chromeOverride)
+        // The interface-language conversion happens inside the Text/Label/Button
+        // shadow initializers (AppUILanguage.swift) when a view is constructed, so
+        // views that don't observe the key would keep their already-built text when
+        // it flips. Re-keying the whole tree rebuilds every screen in the new
+        // script; the stores above are owned by ContentView, so no data reloads.
+        .id(usesTraditionalChineseInterface)
         // Render transient popups above the navigation chrome and tab bar so
         // the dim layer covers the whole window — otherwise the toolbar /
         // search drawer / tab bar paint over the dim and look highlighted.
@@ -342,7 +349,7 @@ struct ContentView: View {
         // decode + diff. Presented at the root so a deep-link import
         // works from any tab.
         .alert(
-            "导入书源",
+            Text("导入书源"),
             isPresented: Binding(
                 get: { importCoordinator.staged != nil },
                 set: { if !$0 { importCoordinator.staged = nil } }
@@ -361,7 +368,7 @@ struct ContentView: View {
             Text(importCoordinator.dialogMessage(for: staged.summary))
         }
         .alert(
-            "导入失败",
+            Text("导入失败"),
             isPresented: Binding(
                 get: { importCoordinator.errorMessage != nil },
                 set: { if !$0 { importCoordinator.errorMessage = nil } }
@@ -376,7 +383,7 @@ struct ContentView: View {
             if importCoordinator.isFetching {
                 ZStack {
                     Color.black.opacity(0.2).ignoresSafeArea()
-                    ProgressView("正在下载书源…")
+                    ProgressView { Text("正在下载书源…") }
                         .padding(20)
                         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                 }

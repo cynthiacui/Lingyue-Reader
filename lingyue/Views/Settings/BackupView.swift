@@ -66,7 +66,7 @@ struct BackupView: View {
             handleImporterResult(result)
         }
         .confirmationDialog(
-            "确定要恢复备份吗？",
+            Text("确定要恢复备份吗？"),
             isPresented: Binding(
                 get: { pendingArchive != nil },
                 set: { newValue in

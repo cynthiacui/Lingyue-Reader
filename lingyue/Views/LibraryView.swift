@@ -2967,7 +2967,7 @@ private struct CategoryDetailView: View {
         .animation(.easeInOut(duration: 0.18), value: categoryEditBook?.id)
         .navigationTitle(categoryName)
         .navigationBarTitleDisplayMode(.inline)
-        .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .always), prompt: "搜索书名、作者或章节")
+        .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .always), prompt: Text("搜索书名、作者或章节"))
         .navigationDestination(item: $bookToOpen) { novel in
             ReaderView(novel: novel)
         }
@@ -3032,7 +3032,7 @@ private struct CategoryManagementView: View {
             }
         }
         .alert(
-            "删除分类",
+            Text("删除分类"),
             isPresented: Binding(
                 get: { pendingDeletion != nil },
                 set: { if !$0 { pendingDeletion = nil } }
@@ -3061,7 +3061,7 @@ private struct CategoryManagementView: View {
             }
         }
         .alert(
-            "无法重命名",
+            Text("无法重命名"),
             isPresented: Binding(
                 get: { renameError != nil },
                 set: { if !$0 { renameError = nil } }
@@ -3203,7 +3203,7 @@ private struct LibrarySearchBar: ViewModifier {
             content.searchable(
                 text: $text,
                 placement: .navigationBarDrawer(displayMode: .automatic),
-                prompt: "搜索书名或作者"
+                prompt: Text("搜索书名或作者")
             )
         } else {
             content

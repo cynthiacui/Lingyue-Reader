@@ -105,7 +105,7 @@ struct SourceReviewView: View {
         }
         .navigationTitle("书源详情")
         .navigationBarTitleDisplayMode(.inline)
-        .alert("删除该书源？", isPresented: $pendingDelete) {
+        .alert(Text("删除该书源？"), isPresented: $pendingDelete) {
             Button("取消", role: .cancel) {}
             Button("删除", role: .destructive) {
                 Task { await deleteDraft() }

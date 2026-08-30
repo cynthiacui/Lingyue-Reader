@@ -127,7 +127,7 @@ struct ArchivedBooksView: View {
         }
         .navigationTitle("已归档")
         .navigationBarTitleDisplayMode(.inline)
-        .searchable(text: $searchText, prompt: "搜索书名或作者")
+        .searchable(text: $searchText, prompt: Text("搜索书名或作者"))
         .navigationDestination(item: $bookToOpen) { novel in
             ReaderView(novel: novel)
         }
@@ -153,7 +153,7 @@ struct ArchivedBooksView: View {
             }
         }
         .alert(
-            "删除书籍",
+            Text("删除书籍"),
             isPresented: Binding(
                 get: { pendingDeletion != nil },
                 set: { if !$0 { pendingDeletion = nil } }

@@ -1,9 +1,21 @@
 import XCTest
 
+/// Every fixture launch pins both traditional-Chinese keys to NO through the
+/// NSArgumentDomain (`-key value` launch arguments), because `xcodebuild test`
+/// clones the host simulator's data container — if 繁体中文 was left enabled
+/// there, every label these tests match ("阅读偏好", "书架"…) would render in
+/// traditional script and the assertions would fail for reasons unrelated to
+/// the code under test.
+private let simplifiedChineseFixtureArguments = [
+    "-app.usesTraditionalChineseInterface", "NO",
+    "-reader.usesTraditionalChinese", "NO"
+]
+
 final class MeTabSmokeTests: XCTestCase {
     func testScreenshotFixtureOpensCleanMeTab() {
         let app = XCUIApplication()
         app.launchArguments = ["--screenshot-me", "--screenshot-fixture"]
+            + simplifiedChineseFixtureArguments
         app.launch()
 
         XCTAssertTrue(app.navigationBars["我"].waitForExistence(timeout: 5))
@@ -17,6 +29,7 @@ final class MeTabSmokeTests: XCTestCase {
     func testReadingPreferenceLabelsMatchReaderPanel() {
         let app = XCUIApplication()
         app.launchArguments = ["--screenshot-me", "--screenshot-fixture"]
+            + simplifiedChineseFixtureArguments
         app.launch()
 
         let settingsLink = app.staticTexts["阅读偏好"].firstMatch
@@ -145,6 +158,7 @@ final class CategoryReorderUITests: XCTestCase {
     private func launchFixture(additionalArguments: [String] = []) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = ["--screenshot-fixture", "--category-reorder-fixture"]
+            + simplifiedChineseFixtureArguments
             + additionalArguments
         app.launch()
         return app

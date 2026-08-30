@@ -348,7 +348,6 @@ struct ReadingPreferencesView: View {
                 .listRowBackground(theme.cardBackground)
 
                 Section {
-                    traditionalRow
                     autoScrollRow
                     if autoScroll {
                         autoScrollSecondsRow
@@ -552,16 +551,6 @@ struct ReadingPreferencesView: View {
         }
     }
 
-    private var traditionalRow: some View {
-        Toggle(isOn: $usesTraditionalChinese) {
-            Label("繁体中文显示", systemImage: "character.book.closed")
-                .font(.system(
-                    size: ReaderPreferenceControlMetrics.labelSize,
-                    weight: .medium
-                ))
-        }
-    }
-
     private var autoScrollRow: some View {
         Toggle(isOn: $autoScroll) {
             Label("自动滚读", systemImage: "arrow.down.to.line.compact")
@@ -596,6 +585,9 @@ struct AppearanceThemeView: View {
     @Environment(\.appTheme) private var theme
     @EnvironmentObject private var themeManager: AppThemeManager
 
+    @AppStorage(AppUILanguage.storageKey) private var usesTraditionalChineseInterface = false
+    @AppStorage("reader.usesTraditionalChinese") private var readerUsesTraditionalChinese = false
+
     var body: some View {
         ZStack {
             ThemeBackgroundView()
@@ -605,12 +597,41 @@ struct AppearanceThemeView: View {
                     appThemeRow
                 }
                 .listRowBackground(theme.cardBackground)
+
+                Section {
+                    traditionalChineseRow
+                } header: {
+                    Text("语言")
+                } footer: {
+                    Text("开启后，界面与阅读正文都使用繁体中文。阅读时仍可在阅读设置里单独切换正文简繁。")
+                }
+                .listRowBackground(theme.cardBackground)
             }
             .listStyle(.insetGrouped)
             .scrollContentBackground(.hidden)
         }
         .navigationTitle("外观主题")
         .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private var traditionalChineseRow: some View {
+        Toggle(isOn: traditionalChineseBinding) {
+            Label("繁体中文", systemImage: "character.book.closed")
+                .font(.subheadline)
+        }
+    }
+
+    /// Master switch: flips the interface language and the reader-content conversion
+    /// together, while the reader keeps its own key so the in-reader 繁体 pill can
+    /// still override the content script without rebuilding the whole app.
+    private var traditionalChineseBinding: Binding<Bool> {
+        Binding(
+            get: { usesTraditionalChineseInterface },
+            set: { newValue in
+                usesTraditionalChineseInterface = newValue
+                readerUsesTraditionalChinese = newValue
+            }
+        )
     }
 
     private var appThemeRow: some View {

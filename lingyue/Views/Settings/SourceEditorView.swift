@@ -125,7 +125,7 @@ struct SourceEditorView: View {
                 SourceTestSheet(rule: draft)
             }
         }
-        .alert("删除该书源？", isPresented: $pendingDelete) {
+        .alert(Text("删除该书源？"), isPresented: $pendingDelete) {
             Button("取消", role: .cancel) {}
             Button("删除", role: .destructive) { Task { await delete() } }
         } message: {

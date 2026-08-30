@@ -2483,3 +2483,55 @@ private struct SingleSourceRegistry: LingyueCore.BookSourceRegistry {
         source.id == id ? source : nil
     }
 }
+
+// MARK: - App interface language (简体 → 繁体 UI conversion)
+
+/// The interface-language feature relies on Swift preferring the app module's
+/// concrete `String` initializer shadows over SwiftUI's `LocalizedStringKey` /
+/// `StringProtocol` overloads for string literals. If that resolution ever changed
+/// (a SwiftUI API addition, a new overload), UI chrome would silently stop
+/// converting — so pin the behavior here at the `Text` level.
+final class AppUILanguageTests: XCTestCase {
+    private var savedValue: Any?
+
+    override func setUp() {
+        super.setUp()
+        savedValue = UserDefaults.standard.object(forKey: AppUILanguage.storageKey)
+    }
+
+    override func tearDown() {
+        if let savedValue {
+            UserDefaults.standard.set(savedValue, forKey: AppUILanguage.storageKey)
+        } else {
+            UserDefaults.standard.removeObject(forKey: AppUILanguage.storageKey)
+        }
+        super.tearDown()
+    }
+
+    func testDisplayPassesThroughWhenSimplified() {
+        UserDefaults.standard.set(false, forKey: AppUILanguage.storageKey)
+        XCTAssertEqual(AppUILanguage.display("书架与分类"), "书架与分类")
+    }
+
+    func testDisplayConvertsWhenTraditional() {
+        UserDefaults.standard.set(true, forKey: AppUILanguage.storageKey)
+        XCTAssertEqual(AppUILanguage.display("书架"), "書架")
+        XCTAssertEqual(AppUILanguage.display("阅读历史"), "閱讀歷史")
+        // ASCII (URLs, header names…) must survive conversion untouched.
+        XCTAssertEqual(AppUILanguage.display("https://example.com"), "https://example.com")
+    }
+
+    func testTextLiteralRoutesThroughInterfaceLanguageShadow() {
+        UserDefaults.standard.set(true, forKey: AppUILanguage.storageKey)
+        XCTAssertEqual(Text("书架"), Text(verbatim: "書架"))
+
+        UserDefaults.standard.set(false, forKey: AppUILanguage.storageKey)
+        XCTAssertEqual(Text("书架"), Text(verbatim: "书架"))
+    }
+
+    func testTextInterpolationRoutesThroughInterfaceLanguageShadow() {
+        UserDefaults.standard.set(true, forKey: AppUILanguage.storageKey)
+        let count = 3
+        XCTAssertEqual(Text("删除 \(count) 个书源？"), Text(verbatim: "刪除 3 個書源？"))
+    }
+}
