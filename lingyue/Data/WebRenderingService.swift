@@ -1,4 +1,5 @@
 import Foundation
+import LingyueCore
 import UIKit
 import WebKit
 
@@ -12,6 +13,16 @@ enum BrowserUserAgent {
         "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) "
         + "AppleWebKit/605.1.15 (KHTML, like Gecko) "
         + "Version/17.5 Mobile/15E148 Safari/604.1"
+}
+
+/// What a headless render produced: the DOM snapshot plus the URL the
+/// web view actually ended up on. `finalURL` matters because legacy CMS
+/// search endpoints 302 a single-match query straight to the book's
+/// detail page — the engine can only recognize that redirect if the
+/// snapshot carries the post-redirect URL, not the requested one.
+struct RenderedWebPage {
+    let html: String
+    let finalURL: URL?
 }
 
 @MainActor
@@ -35,26 +46,41 @@ final class WebRenderingService: NSObject {
         webView.navigationDelegate = self
     }
 
-    func renderHTML(
+    func render(
         at url: URL,
         settleAfter: TimeInterval = 0.8,
-        timeout: TimeInterval = 6
-    ) async -> String? {
+        timeout: TimeInterval = 6,
+        challengeGrace: TimeInterval = 15
+    ) async -> RenderedWebPage? {
         let previous = serializer
-        let work = Task<String?, Never> { @MainActor [weak self] in
+        let work = Task<RenderedWebPage?, Never> { @MainActor [weak self] in
             _ = await previous.value
             guard let self else { return nil }
-            return await self.performRender(url: url, settleAfter: settleAfter, timeout: timeout)
+            return await self.performRender(
+                url: url,
+                settleAfter: settleAfter,
+                timeout: timeout,
+                challengeGrace: challengeGrace
+            )
         }
         serializer = Task<Void, Never> { _ = await work.value }
         return await work.value
     }
 
+    func renderHTML(
+        at url: URL,
+        settleAfter: TimeInterval = 0.8,
+        timeout: TimeInterval = 6
+    ) async -> String? {
+        await render(at: url, settleAfter: settleAfter, timeout: timeout)?.html
+    }
+
     private func performRender(
         url: URL,
         settleAfter: TimeInterval,
-        timeout: TimeInterval
-    ) async -> String? {
+        timeout: TimeInterval,
+        challengeGrace: TimeInterval
+    ) async -> RenderedWebPage? {
         attachToWindowIfNeeded()
         webView.stopLoading()
         resumePendingNavigation()
@@ -79,7 +105,39 @@ final class WebRenderingService: NSObject {
 
         try? await Task.sleep(for: .seconds(settleAfter))
 
-        return await withCheckedContinuation { continuation in
+        var html = await currentHTML()
+
+        // Anti-bot interstitials (Cloudflare's 「请稍候…」) finish a
+        // navigation of their own, so the wait above returns while the
+        // challenge is still spinning — the real page arrives via a
+        // *second* navigation several seconds later. Snapshotting here
+        // would hand challenge HTML to the parse pipeline: zero search
+        // rows, "empty" catalogs. Poll until the DOM stops looking like a
+        // challenge (grace-bounded so a challenge that never clears —
+        // e.g. one demanding interaction — degrades to today's behavior
+        // instead of hanging the render queue).
+        if let first = html, ChallengePageScreen.isChallenge(first), challengeGrace > 0 {
+            let deadline = ContinuousClock.now.advanced(by: .seconds(challengeGrace))
+            while ContinuousClock.now < deadline {
+                try? await Task.sleep(for: .milliseconds(500))
+                guard let current = await currentHTML() else { continue }
+                html = current
+                if !ChallengePageScreen.isChallenge(current), !webView.isLoading {
+                    // Give the real page its settle window too — late JS
+                    // (chapter lists, lazy titles) lands just after load.
+                    try? await Task.sleep(for: .seconds(settleAfter))
+                    html = await currentHTML() ?? current
+                    break
+                }
+            }
+        }
+
+        guard let html else { return nil }
+        return RenderedWebPage(html: html, finalURL: webView.url)
+    }
+
+    private func currentHTML() async -> String? {
+        await withCheckedContinuation { continuation in
             webView.evaluateJavaScript("document.documentElement.outerHTML") { result, _ in
                 continuation.resume(returning: result as? String)
             }

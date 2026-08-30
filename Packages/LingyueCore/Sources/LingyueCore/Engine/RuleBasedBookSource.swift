@@ -53,18 +53,76 @@ public struct RuleBasedBookSource: BookSource {
             }
         }
 
+        let primary: [BookSearchResult]
         // Single query → keep the original one-request behaviour.
         if queries.count == 1 {
-            return try await runSingleSearch(step: step, query: queries[0])
+            primary = try await runSingleSearch(step: step, query: queries[0])
+        } else {
+            // Fan out concurrently, then flatten in query order so the user's own
+            // query and the most-relevant suggestions stay first. A per-query
+            // failure drops to an empty list rather than failing the whole search.
+            let indexed = await withTaskGroup(of: (Int, [BookSearchResult]).self) { group in
+                for (index, candidate) in queries.enumerated() {
+                    group.addTask {
+                        let hits = (try? await self.runSingleSearch(step: step, query: candidate)) ?? []
+                        return (index, hits)
+                    }
+                }
+                var collected: [(Int, [BookSearchResult])] = []
+                for await pair in group { collected.append(pair) }
+                return collected.sorted { $0.0 < $1.0 }
+            }
+
+            var seen = Set<URL>()
+            var merged: [BookSearchResult] = []
+            for (_, hits) in indexed {
+                for hit in hits where seen.insert(hit.detailURL).inserted {
+                    merged.append(hit)
+                }
+            }
+            primary = merged
         }
 
-        // Fan out concurrently, then flatten in query order so the user's own
-        // query and the most-relevant suggestions stay first. A per-query
-        // failure drops to an empty list rather than failing the whole search.
+        if primary.isEmpty {
+            let tokenHits = await tokenizedFallbackSearch(step: step, query: baseQuery)
+            if !tokenHits.isEmpty { return tokenHits }
+        }
+        return primary
+    }
+
+    /// 杰奇-style backends match the whole query as one literal substring
+    /// against the title, so a space-separated query — `第二人格 规则怪谈`,
+    /// which a human means as two title fragments (the real title is
+    /// `第二人格[规则怪谈]`), or `书名 作者` — matches nothing at all. When the
+    /// literal query produced zero hits and it splits into ≥2 tokens, search
+    /// the longest tokens individually and keep only the hits in which
+    /// *every* token actually appears (title + author, bracket-, width- and
+    /// simplified/traditional-insensitive). The client-side AND filter is
+    /// what preserves precision: a broad single-token search (`第二人格` →
+    /// 18 books on 半夏) cannot leak noise into the results, because only
+    /// rows also containing `规则怪谈` survive.
+    ///
+    /// Runs only after an empty result, so sites whose backend already
+    /// tokenizes spaced queries (52书库 et al.) never pay the extra requests.
+    private func tokenizedFallbackSearch(
+        step: SearchStep,
+        query: String
+    ) async -> [BookSearchResult] {
+        let tokens = query
+            .split(whereSeparator: \.isWhitespace)
+            .map(String.init)
+            .filter { $0.count >= 2 }
+        guard tokens.count >= 2 else { return [] }
+
+        // Bound the fan-out: the two longest tokens are the most selective
+        // server-side; the AND filter below applies all of them regardless.
+        let searchTokens = tokens.sorted { $0.count > $1.count }.prefix(2)
+        let requiredTokens = tokens.map(Self.matchingKey)
+
         let indexed = await withTaskGroup(of: (Int, [BookSearchResult]).self) { group in
-            for (index, candidate) in queries.enumerated() {
+            for (index, token) in searchTokens.enumerated() {
                 group.addTask {
-                    let hits = (try? await self.runSingleSearch(step: step, query: candidate)) ?? []
+                    let hits = (try? await self.runSingleSearch(step: step, query: token)) ?? []
                     return (index, hits)
                 }
             }
@@ -80,7 +138,27 @@ public struct RuleBasedBookSource: BookSource {
                 merged.append(hit)
             }
         }
-        return merged
+        return merged.filter { hit in
+            let haystack = Self.matchingKey(hit.title + (hit.author ?? ""))
+            return requiredTokens.allSatisfy { haystack.contains($0) }
+        }
+    }
+
+    /// Text folded for containment matching: simplified Chinese, half-width,
+    /// lowercased, everything that isn't a letter or digit stripped. Turns
+    /// `第二人格[規則怪談]` and the query tokens `第二人格` + `规则怪谈` into
+    /// directly comparable strings. Static + pure for unit tests.
+    static func matchingKey(_ text: String) -> String {
+        var folded = text
+        for transform in ["Traditional-Simplified", "Fullwidth-Halfwidth"] {
+            let mutable = NSMutableString(string: folded)
+            if CFStringTransform(mutable, nil, transform as CFString, false) {
+                folded = mutable as String
+            }
+        }
+        return String(
+            folded.lowercased().unicodeScalars.filter(CharacterSet.alphanumerics.contains)
+        )
     }
 
     /// Run one search request + parse its result rows into `BookSearchResult`s.
@@ -137,7 +215,48 @@ public struct RuleBasedBookSource: BookSource {
                 sourceID: id
             ))
         }
+        if results.isEmpty,
+           let redirected = await searchResultFromRedirectedDetail(snapshot: snapshot) {
+            return [redirected]
+        }
         return results
+    }
+
+    /// Legacy CMS backends (杰奇 and its descendants — 半夏小说, many
+    /// 笔趣阁 mirrors) answer a single-match search with a 302 straight to
+    /// the book's detail page. There is no results list to parse, so the
+    /// row selector legitimately matches nothing and the book silently
+    /// vanishes from the fan-out — even though a human searching on the
+    /// site "finds" it by landing on the book page. Recognize that shape
+    /// with the rule's own `detection` block and synthesize the one hit
+    /// the redirect was pointing at.
+    ///
+    /// Gated on detection confidence ≥ 0.7, which requires a `pathPattern`
+    /// match on the *final* URL: an ordinary "no results" page still lives
+    /// on the search endpoint's path (host alone scores 0.4, +confirm
+    /// selector 0.6), so it can never fake a hit. This also means the
+    /// fallback only works with loaders that report the true post-redirect
+    /// URL in `WebPageSnapshot.finalURL`.
+    private func searchResultFromRedirectedDetail(
+        snapshot: WebPageSnapshot
+    ) async -> BookSearchResult? {
+        guard
+            let detection = try? await detectBook(in: snapshot),
+            detection.confidence >= 0.7,
+            let title = detection.title
+        else { return nil }
+        let author = AuthorHeuristics.extract(fromHTML: snapshot.html)
+        let cover = CoverHeuristics.extract(
+            fromHTML: snapshot.html, baseURL: snapshot.finalURL
+        ).map(CoverHeuristics.httpsUpgraded)
+        return BookSearchResult(
+            title: title,
+            author: author,
+            coverURL: cover,
+            snippet: nil,
+            detailURL: detection.detailURL,
+            sourceID: id
+        )
     }
 
     private func runSearchRequest(

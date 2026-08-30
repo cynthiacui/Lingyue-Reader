@@ -30,7 +30,7 @@ struct WebViewSourceLoader: SourceHTMLLoading {
 
     func renderHTML(_ request: SourceRequest) async throws -> WebPageSnapshot {
         let url = request.url
-        guard let html = await WebRenderingService.shared.renderHTML(
+        guard let page = await WebRenderingService.shared.render(
             at: url,
             settleAfter: settleAfter,
             timeout: timeout
@@ -38,7 +38,10 @@ struct WebViewSourceLoader: SourceHTMLLoading {
             throw BookSourceError.loadFailed(reason: "WKWebView render returned no HTML")
         }
         await Self.syncWKCookiesToHTTPStorage()
-        return WebPageSnapshot(html: html, finalURL: url)
+        // Prefer the web view's own post-redirect URL: single-match search
+        // redirects (search endpoint → book detail page) are invisible to
+        // the engine unless the snapshot reports where the render landed.
+        return WebPageSnapshot(html: page.html, finalURL: page.finalURL ?? url)
     }
 
     /// Copies every cookie from `WKWebsiteDataStore.default().httpCookieStore`
