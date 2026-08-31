@@ -115,7 +115,7 @@ struct ReaderView: View {
     /// container width. Zero until the first GeometryReader pass settles.
     @State private var lastContainerSize: CGSize = .zero
     @State private var autoScrollTask: Task<Void, Never>?
-    @State private var browserDestination: URL?
+    @State private var browserDestination: ReaderBrowserDestination?
     @State private var showSourceSwitcher = false
     /// Live downward drag distance on the preferences popup. The popup follows the finger
     /// (resisted slightly upward) and either snaps back or dismisses depending on the
@@ -734,8 +734,12 @@ struct ReaderView: View {
         // against the maximum safe-area inset (see `stableSafeAreaTop/Bottom`), so
         // toggling the status bar never reflows the body.
         .statusBarHidden(!showControls)
-        .navigationDestination(item: $browserDestination) { url in
-            InAppBrowserView(url: url, title: activeNovel.title)
+        .navigationDestination(item: $browserDestination) { destination in
+            InAppBrowserView(
+                url: destination.url,
+                title: activeNovel.title,
+                switchTarget: destination.switchTarget
+            )
         }
         .sheet(isPresented: $showSourceSwitcher) {
             BookSourceSwitcherSheet(
@@ -746,7 +750,15 @@ struct ReaderView: View {
                 // Wait for the sheet's dismiss animation to finish before pushing
                 // the in-app browser, otherwise SwiftUI drops the navigation push.
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                    browserDestination = url
+                    // Hand the book's identity along: confirming the import in the
+                    // browser then replaces this one copy, not every same-titled book.
+                    browserDestination = ReaderBrowserDestination(
+                        url: url,
+                        switchTarget: SourceSwitchTarget(
+                            bookID: activeNovel.id,
+                            title: activeNovel.title
+                        )
+                    )
                 }
             }
         }
@@ -1514,7 +1526,7 @@ struct ReaderView: View {
 
                         if let chapterURL {
                             Button {
-                                browserDestination = chapterURL
+                                browserDestination = ReaderBrowserDestination(url: chapterURL)
                             } label: {
                                 Image(systemName: "globe")
                                     .font(.system(size: 18, weight: .semibold))
@@ -3783,10 +3795,18 @@ enum ReaderDictionary {
     }
 }
 
+/// Where the reader is sending the in-app browser, and whether the trip is a 换源
+/// hand-off aimed at this book. The globe button opens the same browser with no
+/// target, so an import from there behaves like any other browse-and-import.
+private struct ReaderBrowserDestination: Hashable {
+    let url: URL
+    var switchTarget: SourceSwitchTarget?
+}
+
 /// Sheet that re-runs the Discovery aggregated search for the current book and lists every
 /// known source for it. Tapping a row hands the URL back to the reader, which closes the
-/// sheet and pushes the in-app browser — from there the existing detect-and-replace flow
-/// updates the book in the library.
+/// sheet and pushes the in-app browser — confirming the import there replaces this one
+/// book, or shelves the new source next to it if the user asks to keep both.
 private struct BookSourceSwitcherSheet: View {
     let novelTitle: String
     let currentSourceURLString: String?
@@ -3869,7 +3889,7 @@ private struct BookSourceSwitcherSheet: View {
                     .foregroundStyle(theme.primaryText)
                     .padding(.horizontal, 4)
 
-                Text("点击书源即可在内置浏览器中打开对应章节页。在浏览器中确认导入后，灵阅会用新的书源替换当前书架记录。")
+                Text("点击书源即可在内置浏览器中打开对应章节页。在浏览器中确认导入后，可以只替换这一本，也可以两本都留在书架。")
                     .font(.footnote)
                     .foregroundStyle(theme.secondaryText)
                     .padding(.horizontal, 4)

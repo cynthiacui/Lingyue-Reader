@@ -2277,6 +2277,267 @@ final class LibraryTitleMatchingTests: XCTestCase {
         )
     }
 
+    /// 两本都留: importing the same title from a second source keeps the shelf copy
+    /// instead of overwriting it.
+    func testKeepingBothSameTitleImportsLeavesTheOriginalOnTheShelf() {
+        let store = LibraryStore(storageDirectory: temporaryDirectory())
+        let original = makeNovel(
+            title: "第二人格",
+            sourceURLString: "https://a.example.com/book/1/"
+        )
+        store.categories = [LibraryCategory(name: "无分类", novels: [original])]
+
+        let other = makeNovel(
+            title: "第二人格",
+            sourceURLString: "https://b.example.com/book/2/"
+        )
+        XCTAssertTrue(
+            store.containsSameTitleBookFromAnotherSource(
+                sourceURLString: other.sourceURLString,
+                title: other.title
+            ),
+            "a same-titled book from another source is what makes keeping both meaningful"
+        )
+        XCTAssertTrue(store.addImportedNovelKeepingSameTitleBooks(other, categoryName: "无分类"))
+
+        XCTAssertEqual(
+            Set(store.allNovels.map(\.id)),
+            [original.id, other.id],
+            "both copies should stay on the shelf"
+        )
+    }
+
+    /// Once the user has said the two same-titled books are distinct, a later import
+    /// of either source must update only that copy — the title alone no longer
+    /// identifies a record, or the next 更新书籍 would delete both.
+    func testReimportingAfterKeepingBothReplacesOnlyThatSource() {
+        let store = LibraryStore(storageDirectory: temporaryDirectory())
+        let original = makeNovel(
+            title: "第二人格",
+            sourceURLString: "https://a.example.com/book/1/"
+        )
+        store.categories = [LibraryCategory(name: "无分类", novels: [original])]
+        let other = makeNovel(
+            title: "第二人格",
+            sourceURLString: "https://b.example.com/book/2/"
+        )
+        store.addImportedNovelKeepingSameTitleBooks(other, categoryName: "无分类")
+
+        let refreshedOther = makeNovel(
+            title: "第二人格",
+            sourceURLString: "https://b.example.com/book/2/"
+        )
+        XCTAssertTrue(store.addImportedNovel(refreshedOther, categoryName: "无分类"))
+
+        XCTAssertEqual(
+            Set(store.allNovels.map(\.id)),
+            [original.id, refreshedOther.id],
+            "refreshing one source should replace only its own copy"
+        )
+    }
+
+    /// A third source's import can't guess which of the kept copies it belongs to,
+    /// so it lands as its own record rather than silently swallowing either one.
+    func testImportFromAThirdSourceDoesNotSwallowKeptDuplicates() {
+        let store = LibraryStore(storageDirectory: temporaryDirectory())
+        let original = makeNovel(
+            title: "第二人格",
+            sourceURLString: "https://a.example.com/book/1/"
+        )
+        store.categories = [LibraryCategory(name: "无分类", novels: [original])]
+        let other = makeNovel(
+            title: "第二人格",
+            sourceURLString: "https://b.example.com/book/2/"
+        )
+        store.addImportedNovelKeepingSameTitleBooks(other, categoryName: "无分类")
+
+        XCTAssertFalse(
+            store.containsBook(
+                sourceURLString: "https://c.example.com/book/3/",
+                title: "第二人格"
+            ),
+            "deliberate duplicates are matched by source URL only"
+        )
+    }
+
+    /// Re-importing the exact same page is a refresh, not a second book: the prompt
+    /// must not offer 两本都留 there.
+    func testSamePageReimportIsNotOfferedAsADuplicate() {
+        let store = LibraryStore(storageDirectory: temporaryDirectory())
+        let original = makeNovel(
+            title: "第二人格",
+            sourceURLString: "https://a.example.com/book/1/"
+        )
+        store.categories = [LibraryCategory(name: "无分类", novels: [original])]
+
+        XCTAssertFalse(
+            store.containsSameTitleBookFromAnotherSource(
+                sourceURLString: "https://a.example.com/book/1/",
+                title: "第二人格"
+            )
+        )
+    }
+
+    /// Keep-both on the very same page is a refresh in disguise — two records from
+    /// one URL would be indistinguishable forever, so the store replaces instead.
+    func testKeepingBothFallsBackToReplacingWhenTheSourceURLIsIdentical() {
+        let store = LibraryStore(storageDirectory: temporaryDirectory())
+        let original = makeNovel(
+            title: "第二人格",
+            sourceURLString: "https://a.example.com/book/1/"
+        )
+        store.categories = [LibraryCategory(name: "无分类", novels: [original])]
+
+        let samePage = makeNovel(
+            title: "第二人格",
+            sourceURLString: "https://a.example.com/book/1/"
+        )
+        XCTAssertTrue(store.addImportedNovelKeepingSameTitleBooks(samePage, categoryName: "无分类"))
+
+        XCTAssertEqual(store.allNovels.map(\.id), [samePage.id])
+    }
+
+    /// The duplicate flag is stored as an optional so a library saved before it
+    /// existed still decodes.
+    func testLibraryWithoutDuplicateFlagStillDecodes() throws {
+        let novel = makeNovel(title: "第二人格", sourceURLString: "https://a.example.com/book/1/")
+        var object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: try JSONEncoder().encode(novel)) as? [String: Any]
+        )
+        object.removeValue(forKey: "isSameTitleDuplicate")
+        let legacy = try JSONSerialization.data(withJSONObject: object)
+
+        let decoded = try JSONDecoder().decode(Novel.self, from: legacy)
+        XCTAssertNil(decoded.isSameTitleDuplicate)
+    }
+
+    private func makeNovel(title: String, sourceURLString: String) -> Novel {
+        Novel(
+            title: title,
+            author: "测试",
+            genre: "测试",
+            summary: "",
+            lastChapter: "第一章",
+            progress: 0,
+            readMinutes: 0,
+            coverPalette: .teal,
+            isFeatured: false,
+            sourceURLString: sourceURLString,
+            chapters: [NovelChapter(title: "第一章", content: "测试正文")]
+        )
+    }
+
+    private func temporaryDirectory() -> URL {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent("LingyueAppTests", isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    }
+}
+
+@MainActor
+final class LibrarySourceSwitchTests: XCTestCase {
+    /// 切换书源 targets the book the user opened. With two same-titled copies on the
+    /// shelf, the switch must move that one and leave its sibling untouched.
+    func testSwitchingSourceReplacesOnlyTheTargetedBook() {
+        let store = LibraryStore(storageDirectory: temporaryDirectory())
+        let opened = makeNovel(title: "第二人格", sourceURLString: "https://a.example.com/book/1/")
+        store.categories = [LibraryCategory(name: "无分类", novels: [opened])]
+        let sibling = makeNovel(title: "第二人格", sourceURLString: "https://b.example.com/book/2/")
+        store.addImportedNovelKeepingSameTitleBooks(sibling, categoryName: "无分类")
+
+        let switched = makeNovel(title: "第二人格", sourceURLString: "https://c.example.com/book/3/")
+        XCTAssertTrue(store.replaceBook(id: opened.id, with: switched, categoryName: "无分类"))
+
+        XCTAssertEqual(
+            Set(store.allNovels.map(\.id)),
+            [switched.id, sibling.id],
+            "only the opened copy should have moved to the new source"
+        )
+        XCTAssertEqual(
+            store.allNovels.first(where: { $0.id == switched.id })?.isSameTitleDuplicate,
+            true,
+            "the switched copy stays a deliberate duplicate, or the pair re-merges by title"
+        )
+    }
+
+    /// The switched-in record keeps the book's shelf spot: same category, same row.
+    func testSwitchingSourceKeepsTheBookInItsCategory() {
+        let store = LibraryStore(storageDirectory: temporaryDirectory())
+        let other = makeNovel(title: "别的书", sourceURLString: "https://x.example.com/book/9/")
+        let opened = makeNovel(title: "第二人格", sourceURLString: "https://a.example.com/book/1/")
+        store.categories = [LibraryCategory(name: "玄幻", novels: [other, opened])]
+
+        let switched = makeNovel(title: "第二人格", sourceURLString: "https://c.example.com/book/3/")
+        XCTAssertTrue(store.replaceBook(id: opened.id, with: switched, categoryName: "玄幻"))
+
+        XCTAssertEqual(store.categories.map(\.name), ["玄幻"])
+        XCTAssertEqual(store.categories.first?.novels.map(\.id), [other.id, switched.id])
+    }
+
+    /// An archived book has no category to pick, so the switch leaves it archived.
+    func testSwitchingSourceOnAnArchivedBookKeepsItArchived() {
+        let store = LibraryStore(storageDirectory: temporaryDirectory())
+        let opened = makeNovel(title: "第二人格", sourceURLString: "https://a.example.com/book/1/")
+        store.categories = [LibraryCategory(name: "无分类", novels: [opened])]
+        XCTAssertNotNil(store.archiveBook(opened))
+
+        let switched = makeNovel(title: "第二人格", sourceURLString: "https://c.example.com/book/3/")
+        XCTAssertTrue(
+            store.replaceBook(id: opened.id, with: switched, categoryName: LibraryStore.uncategorizedName)
+        )
+
+        XCTAssertEqual(store.archivedBooks.map(\.id), [switched.id])
+        XCTAssertTrue(store.categories.allSatisfy { $0.novels.isEmpty })
+    }
+
+    /// Deleting the book from the library tab while the browser is open leaves the
+    /// import nothing to replace; the caller falls back to a plain add.
+    func testSwitchingSourceReportsFailureWhenTheBookIsGone() {
+        let store = LibraryStore(storageDirectory: temporaryDirectory())
+        let switched = makeNovel(title: "第二人格", sourceURLString: "https://c.example.com/book/3/")
+
+        XCTAssertFalse(
+            store.replaceBook(id: UUID(), with: switched, categoryName: "无分类")
+        )
+        XCTAssertTrue(store.allNovels.isEmpty)
+    }
+
+    /// Refreshing one of two kept copies from its own source must not hand its title
+    /// back: the pair would start matching each other again and the next 更新书籍
+    /// would take both.
+    func testRefreshingAKeptDuplicateStaysADuplicate() {
+        let store = LibraryStore(storageDirectory: temporaryDirectory())
+        let original = makeNovel(title: "第二人格", sourceURLString: "https://a.example.com/book/1/")
+        store.categories = [LibraryCategory(name: "无分类", novels: [original])]
+        let kept = makeNovel(title: "第二人格", sourceURLString: "https://b.example.com/book/2/")
+        store.addImportedNovelKeepingSameTitleBooks(kept, categoryName: "无分类")
+
+        let refreshed = makeNovel(title: "第二人格", sourceURLString: "https://b.example.com/book/2/")
+        XCTAssertTrue(store.addImportedNovel(refreshed, categoryName: "无分类"))
+
+        XCTAssertEqual(
+            store.allNovels.first(where: { $0.id == refreshed.id })?.isSameTitleDuplicate,
+            true
+        )
+        XCTAssertEqual(Set(store.allNovels.map(\.id)), [original.id, refreshed.id])
+    }
+
+    /// The browser stays open after 换源 hands it a target, so the user can wander to
+    /// another novel. That page must not be offered as a replacement for the book they
+    /// set out to switch — a decorated variant of the same title still counts as a match.
+    func testSwitchTargetOnlyAppliesToTheSameBook() {
+        let store = LibraryStore(storageDirectory: temporaryDirectory())
+        let opened = makeNovel(
+            title: "第二人格_骑着鬼火扫大街【完结】",
+            sourceURLString: "https://a.example.com/book/1/"
+        )
+        store.categories = [LibraryCategory(name: "无分类", novels: [opened])]
+
+        XCTAssertTrue(store.book(withID: opened.id, matchesTitle: "第二人格"))
+        XCTAssertFalse(store.book(withID: opened.id, matchesTitle: "拥有第二人格"))
+        XCTAssertFalse(store.book(withID: UUID(), matchesTitle: "第二人格"))
+    }
+
     private func makeNovel(title: String, sourceURLString: String) -> Novel {
         Novel(
             title: title,

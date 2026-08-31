@@ -927,6 +927,29 @@ final class LibraryStore: ObservableObject {
         }
     }
 
+    /// The shelf record with this id, or nil once it has been deleted. Callers that
+    /// hold on to a book across a screen (the 换源 hand-off) re-resolve through this
+    /// instead of trusting a stale copy.
+    func novel(withID id: UUID) -> Novel? {
+        location(for: id).map { novel(at: $0) }
+    }
+
+    /// True when an imported title names the same book as the record with `id`. The
+    /// 换源 flow checks this before aiming a replacement: the user may have browsed on
+    /// to a different novel in the same session, and that one must not overwrite the
+    /// book they set out to switch.
+    func book(withID id: UUID, matchesTitle title: String) -> Bool {
+        guard let novel = novel(withID: id) else { return false }
+        return normalized(novel.title) == normalized(title)
+    }
+
+    func categoryName(forBookWithID id: UUID) -> String? {
+        for category in categories where category.novels.contains(where: { $0.id == id }) {
+            return category.name
+        }
+        return nil
+    }
+
     func categoryName(forBookWith sourceURLString: String?, title: String) -> String? {
         let normalizedTitle = normalized(title)
         for category in categories {
@@ -982,6 +1005,12 @@ final class LibraryStore: ObservableObject {
         let existingArchiveDate = archivedBooks.first(where: {
             matches($0.novel, sourceURLString: novel.sourceURLString, normalizedTitle: normalizedTitle)
         })?.archivedAt
+        // Refreshing a copy the user kept next to a same-titled sibling must not hand
+        // back its title: the pair would start matching each other again.
+        let replacesDeliberateDuplicate = allNovels.contains { existing in
+            existing.isSameTitleDuplicate == true
+                && matches(existing, sourceURLString: novel.sourceURLString, normalizedTitle: normalizedTitle)
+        }
 
         removeExistingBook(
             sourceURLString: novel.sourceURLString,
@@ -996,6 +1025,9 @@ final class LibraryStore: ObservableObject {
         // outranks both via `librarySortRank`.
         var stamped = novel
         stamped.addedAt = Date.now
+        if replacesDeliberateDuplicate {
+            stamped.isSameTitleDuplicate = true
+        }
 
         if let existingArchiveDate {
             archivedBooks.insert(
@@ -1013,6 +1045,132 @@ final class LibraryStore: ObservableObject {
             )
         }
         return true
+    }
+
+    /// True when a same-titled book on the shelf came from a *different* source URL,
+    /// which is the only case where keeping both copies produces something the user
+    /// can tell apart. Re-importing the very same page can only ever be a refresh.
+    func containsSameTitleBookFromAnotherSource(sourceURLString: String?, title: String) -> Bool {
+        let normalizedTitle = normalized(title)
+        return allNovels.contains { novel in
+            guard matches(novel, sourceURLString: sourceURLString, normalizedTitle: normalizedTitle) else {
+                return false
+            }
+            guard let sourceURLString, let existing = novel.sourceURLString else { return true }
+            return existing != sourceURLString
+        }
+    }
+
+    /// Imports a book that collides by title with something already on the shelf and
+    /// keeps both copies. Every colliding record — and the newcomer — is stamped as a
+    /// deliberate duplicate, so from here on the copies are told apart by source URL:
+    /// re-importing either one updates just that copy instead of merging them again.
+    @discardableResult
+    func addImportedNovelKeepingSameTitleBooks(
+        _ novel: Novel,
+        categoryName: String = LibraryStore.uncategorizedName
+    ) -> Bool {
+        // Two records scraped from the exact same page could never be told apart
+        // again — the shelf labels both "作者 · 书源" and every later lookup would hit
+        // whichever came first. That's a refresh, so replace instead.
+        if let sourceURLString = novel.sourceURLString,
+           allNovels.contains(where: { $0.sourceURLString == sourceURLString }) {
+            return addImportedNovel(novel, categoryName: categoryName)
+        }
+
+        markSameTitleDuplicates(sourceURLString: novel.sourceURLString, title: novel.title)
+
+        var stamped = novel
+        stamped.addedAt = Date.now
+        stamped.isSameTitleDuplicate = true
+
+        let targetIndex = ensureCategory(named: categoryName)
+        categories[targetIndex].novels.insert(stamped, at: 0)
+        Task {
+            await BookCoverStore.shared.prefetchCover(
+                for: stamped.id,
+                remoteURLString: stamped.coverImageURLString
+            )
+        }
+        return true
+    }
+
+    /// Swaps one specific shelf record for a freshly imported one — the 换源 path,
+    /// where the user pointed at a book and asked for *that* copy to move to another
+    /// source. Unlike `addImportedNovel` it never consults titles, so same-titled
+    /// siblings the user chose to keep are left untouched. Returns false when the
+    /// record is gone (deleted while the browser was open) so the caller can fall
+    /// back to a plain import.
+    @discardableResult
+    func replaceBook(id: UUID, with novel: Novel, categoryName: String) -> Bool {
+        guard let location = location(for: id) else { return false }
+        let previous = self.novel(at: location)
+
+        var stamped = novel
+        stamped.addedAt = Date.now
+        if previous.isSameTitleDuplicate == true {
+            stamped.isSameTitleDuplicate = true
+        }
+        readingStats.rememberBook(previous, deletedAt: Date())
+
+        switch location {
+        case .archived:
+            // Archived books have no category to move to; the switch keeps them filed
+            // exactly where they were.
+            replaceNovel(stamped, at: location)
+        case .category(let categoryIndex, _) where categories[categoryIndex].name == categoryName:
+            replaceNovel(stamped, at: location)
+        case .category:
+            var updatedCategories = categories
+            var updatedArchive = archivedBooks
+            removeBook(at: location, from: &updatedCategories, archivedBooks: &updatedArchive)
+            let targetIndex = ensureCategoryIndex(named: categoryName, in: &updatedCategories)
+            updatedCategories[targetIndex].novels.insert(stamped, at: 0)
+            categories = updatedCategories
+            archivedBooks = updatedArchive
+        }
+
+        removeStoredAssets(for: [previous])
+        Task {
+            await BookCoverStore.shared.prefetchCover(
+                for: stamped.id,
+                remoteURLString: stamped.coverImageURLString
+            )
+        }
+        return true
+    }
+
+    /// Flags the records the newcomer would otherwise have replaced, archived ones
+    /// included, so their identity narrows to their own source URL.
+    private func markSameTitleDuplicates(sourceURLString: String?, title: String) {
+        let normalizedTitle = normalized(title)
+        var updatedCategories = categories
+        var didUpdateCategories = false
+        for categoryIndex in updatedCategories.indices {
+            for novelIndex in updatedCategories[categoryIndex].novels.indices {
+                let novel = updatedCategories[categoryIndex].novels[novelIndex]
+                guard matches(novel, sourceURLString: sourceURLString, normalizedTitle: normalizedTitle),
+                      novel.isSameTitleDuplicate != true else { continue }
+                updatedCategories[categoryIndex].novels[novelIndex].isSameTitleDuplicate = true
+                didUpdateCategories = true
+            }
+        }
+        if didUpdateCategories {
+            categories = updatedCategories
+        }
+
+        var updatedArchive = archivedBooks
+        var didUpdateArchive = false
+        for index in updatedArchive.indices {
+            let novel = updatedArchive[index].novel
+            guard matches(novel, sourceURLString: sourceURLString, normalizedTitle: normalizedTitle),
+                  novel.isSameTitleDuplicate != true else { continue }
+            updatedArchive[index].novel.isSameTitleDuplicate = true
+            didUpdateArchive = true
+        }
+        if didUpdateArchive {
+            archivedBooks = updatedArchive
+        }
     }
 
     @discardableResult
@@ -1411,6 +1569,11 @@ final class LibraryStore: ObservableObject {
            existingSourceURLString == sourceURLString {
             return true
         }
+
+        // A record the user deliberately kept next to a same-titled book is only ever
+        // matched by its own source URL. Falling back to the title here would let the
+        // next import of either copy delete both.
+        guard novel.isSameTitleDuplicate != true else { return false }
 
         return normalized(novel.title) == normalizedTitle
     }

@@ -20,6 +20,11 @@ struct Novel: Identifiable, Hashable, Codable, Sendable {
     let isFeatured: Bool
     let sourceURLString: String?
     let chapters: [NovelChapter]
+    /// Set when the user answered 两本都留 to a same-title import. Such a record is
+    /// matched by its source URL alone, so re-importing either copy later updates
+    /// just that one instead of collapsing the two back into a single book.
+    /// Optional because libraries saved before the flag existed decode without the key.
+    var isSameTitleDuplicate: Bool?
 
     var coverColor: Color {
         coverPalette.color
@@ -43,7 +48,8 @@ struct Novel: Identifiable, Hashable, Codable, Sendable {
         coverImageURLString: String? = nil,
         isFeatured: Bool,
         sourceURLString: String? = nil,
-        chapters: [NovelChapter] = []
+        chapters: [NovelChapter] = [],
+        isSameTitleDuplicate: Bool? = nil
     ) {
         self.id = id
         self.title = title
@@ -63,6 +69,7 @@ struct Novel: Identifiable, Hashable, Codable, Sendable {
         self.isFeatured = isFeatured
         self.sourceURLString = sourceURLString
         self.chapters = chapters
+        self.isSameTitleDuplicate = isSameTitleDuplicate
     }
 
     /// Date used by the library's most-recent-first sort. Picks the

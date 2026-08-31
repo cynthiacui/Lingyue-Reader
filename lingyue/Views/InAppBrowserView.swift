@@ -23,6 +23,26 @@ private enum MinimizedImportCandidate {
     }
 }
 
+/// The shelf record a 换源 hand-off is aimed at. Carrying the id — not just the
+/// title — lets the import replace exactly the copy the user opened, even when the
+/// shelf holds same-titled siblings they chose to keep.
+struct SourceSwitchTarget: Hashable {
+    let bookID: UUID
+    let title: String
+}
+
+/// What the user chose when an import collides with a book already on the shelf.
+private enum ImportDisposition: Equatable {
+    /// Nothing matched — a plain first-time import.
+    case fresh
+    /// Overwrite whatever matched by source URL or title.
+    case replaceExisting
+    /// Move one specific record to this source, leaving same-titled siblings alone.
+    case replaceBook(UUID)
+    /// Shelve this copy next to the existing one; both stay, told apart by source.
+    case keepBoth
+}
+
 struct InAppBrowserView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.appTheme) private var theme
@@ -31,6 +51,9 @@ struct InAppBrowserView: View {
 
     let url: URL
     let title: String
+    /// Set when the reader handed this browser off from 切换书源, so a confirmed
+    /// import replaces that one book by default instead of guessing by title.
+    var switchTarget: SourceSwitchTarget?
 
     @StateObject private var browserState = InAppBrowserState()
     @State private var detectedBook: WebBookCandidate?
@@ -52,6 +75,18 @@ struct InAppBrowserView: View {
     // URL: navigating away hides the pill, coming back (same URL) restores it,
     // and tapping it re-presents the import prompt.
     @State private var minimizedImports: [String: MinimizedImportCandidate] = [:]
+
+    /// The 换源 target, when it still applies: the book has to be on the shelf (it
+    /// can be deleted from another screen mid-browse) and the page being imported has
+    /// to be the same book. Browsing on to a different novel drops the target rather
+    /// than letting it overwrite the one the user set out to switch.
+    private func activeSwitchTarget(matching title: String) -> SourceSwitchTarget? {
+        guard let switchTarget,
+              libraryStore.book(withID: switchTarget.bookID, matchesTitle: title) else {
+            return nil
+        }
+        return switchTarget
+    }
 
     private var currentMinimizedImport: MinimizedImportCandidate? {
         guard let currentURLString = browserState.currentURL?.absoluteString else { return nil }
@@ -284,19 +319,32 @@ struct InAppBrowserView: View {
             }
         }
 
+        let copy = collisionPromptCopy(
+            sourceURLString: candidate.sourceURL.absoluteString,
+            title: candidate.title
+        )
+
         return CustomAlertView(
             type: .info,
-            title: "书籍已存在",
+            title: copy.title,
             bookTitle: candidate.title,
-            message: "书架里已经有这本书啦。\n要用当前页面的内容更新一下吗？",
-            primaryButton: .primary("更新书籍") {
+            message: copy.message,
+            primaryButton: .primary(copy.replaceLabel) {
                 withAnimation(ModalStyle.presentationAnimation) {
                     replacementCandidate = nil
                 }
-                promptForCategory(candidate, isReplacing: true)
+                promptForCategory(candidate, disposition: copy.replaceDisposition)
             },
             secondaryButton: .secondary("先不了", action: dismiss),
-            iconOverride: "books.vertical.circle.fill",
+            tertiaryButton: copy.offersKeepBoth
+                ? .secondary("两本都留") {
+                    withAnimation(ModalStyle.presentationAnimation) {
+                        replacementCandidate = nil
+                    }
+                    promptForCategory(candidate, disposition: .keepBoth)
+                }
+                : nil,
+            iconOverride: copy.icon,
             tintOverride: Color.readerAccent,
             onDismiss: dismiss
         )
@@ -481,23 +529,48 @@ struct InAppBrowserView: View {
     }
 
     private func requestImport(_ candidate: WebBookCandidate) {
-        if libraryStore.containsBook(sourceURLString: candidate.sourceURL.absoluteString, title: candidate.title) {
+        // A 换源 hand-off always lands on the prompt: the book it targets may not
+        // match by title (deliberate duplicates are matched by source URL alone),
+        // yet replacing it is exactly what the user came here to do.
+        if activeSwitchTarget(matching: candidate.title) != nil
+            || libraryStore.containsBook(
+                sourceURLString: candidate.sourceURL.absoluteString,
+                title: candidate.title
+            ) {
             replacementCandidate = candidate
             return
         }
 
-        promptForCategory(candidate, isReplacing: false)
+        promptForCategory(candidate, disposition: .fresh)
     }
 
-    private func promptForCategory(_ candidate: WebBookCandidate, isReplacing: Bool) {
-        if isReplacing,
+    private func promptForCategory(_ candidate: WebBookCandidate, disposition: ImportDisposition) {
+        if case .replaceBook(let bookID) = disposition {
+            switch targetedCategoryStep(bookID: bookID) {
+            case .startImmediately:
+                startImport(
+                    candidate,
+                    disposition: disposition,
+                    categoryName: LibraryStore.uncategorizedName
+                )
+            case .pick(let initialCategory):
+                categoryPrompt = CategoryPromptState(
+                    candidate: candidate,
+                    disposition: disposition,
+                    initialCategory: initialCategory
+                )
+            }
+            return
+        }
+
+        if disposition == .replaceExisting,
            libraryStore.isArchivedBook(
                sourceURLString: candidate.sourceURL.absoluteString,
                title: candidate.title
            ) {
             startImport(
                 candidate,
-                isReplacing: true,
+                disposition: .replaceExisting,
                 categoryName: LibraryStore.uncategorizedName
             )
             return
@@ -509,12 +582,16 @@ struct InAppBrowserView: View {
         )
         categoryPrompt = CategoryPromptState(
             candidate: candidate,
-            isReplacing: isReplacing,
+            disposition: disposition,
             initialCategory: existing
         )
     }
 
-    private func startImport(_ candidate: WebBookCandidate, isReplacing: Bool, categoryName: String) {
+    private func startImport(
+        _ candidate: WebBookCandidate,
+        disposition: ImportDisposition,
+        categoryName: String
+    ) {
         ignoredBookURLs.insert(candidate.sourceURL.absoluteString)
         importStatus = BrowserImportStatus(title: candidate.title)
 
@@ -522,21 +599,17 @@ struct InAppBrowserView: View {
             do {
                 let enrichedCandidate = await enrichedCandidateForImport(candidate)
                 let novel = try await BookImportService.shared.importBook(from: enrichedCandidate)
-                let inserted = libraryStore.addImportedNovel(novel, categoryName: categoryName)
+                let inserted = insertImportedNovel(novel, disposition: disposition, categoryName: categoryName)
                 let remainsArchived = libraryStore.isArchived(novel)
                 importStatus = nil
                 let resultType: CustomAlertType = inserted ? .success : .info
                 let title = remainsArchived ? "归档书籍已更新" : (inserted ? "导入成功" : "已在书架")
-                let message: String
-                if remainsArchived {
-                    message = "已替换旧记录，并保留在「已归档」。打开章节时会联网加载正文。"
-                } else if isReplacing {
-                    message = "已替换旧记录，加入「\(categoryName)」。打开章节时会联网加载正文。"
-                } else if inserted {
-                    message = "已加入「\(categoryName)」。打开章节时会联网加载正文。"
-                } else {
-                    message = "这本书已经在你的书架中了。"
-                }
+                let message = importResultMessage(
+                    disposition: disposition,
+                    categoryName: categoryName,
+                    remainsArchived: remainsArchived,
+                    inserted: inserted
+                )
 
                 importResult = BrowserImportResult(
                     type: resultType,
@@ -558,6 +631,114 @@ struct InAppBrowserView: View {
                     novel: nil
                 )
             }
+        }
+    }
+
+    private enum TargetedCategoryStep {
+        case pick(initialCategory: String?)
+        case startImmediately
+    }
+
+    /// Category step for a 换源 replace: an archived book has no shelf to pick, so the
+    /// import starts straight away and `replaceBook` leaves it archived. Otherwise the
+    /// picker opens on the book's current category, which is where it usually stays.
+    private func targetedCategoryStep(bookID: UUID) -> TargetedCategoryStep {
+        if let target = libraryStore.novel(withID: bookID), libraryStore.isArchived(target) {
+            return .startImmediately
+        }
+        return .pick(initialCategory: libraryStore.categoryName(forBookWithID: bookID))
+    }
+
+    /// Wording and wiring for the "this collides with something on the shelf" prompt.
+    /// A 换源 hand-off aims the replace at the one book the user opened and always
+    /// offers to keep both; otherwise the collision is found by title, and keeping
+    /// both is only offered when the sibling came from a different source.
+    private struct CollisionPromptCopy {
+        let title: String
+        let message: String
+        let replaceLabel: String
+        let replaceDisposition: ImportDisposition
+        let offersKeepBoth: Bool
+        let icon: String
+    }
+
+    private func collisionPromptCopy(sourceURLString: String, title: String) -> CollisionPromptCopy {
+        if let target = activeSwitchTarget(matching: title) {
+            return CollisionPromptCopy(
+                title: "切换书源",
+                message: "要把书架上的《\(target.title)》换成这个书源吗？\n也可以两本都留着。",
+                replaceLabel: "替换这一本",
+                replaceDisposition: .replaceBook(target.bookID),
+                offersKeepBoth: true,
+                icon: "arrow.left.arrow.right.circle.fill"
+            )
+        }
+
+        let canKeepBoth = libraryStore.containsSameTitleBookFromAnotherSource(
+            sourceURLString: sourceURLString,
+            title: title
+        )
+        return CollisionPromptCopy(
+            title: "书籍已存在",
+            message: canKeepBoth
+                ? "书架里已经有同名的书啦。\n要更新那一本，还是两本都留着？"
+                : "书架里已经有这本书啦。\n要用当前页面的内容更新一下吗？",
+            replaceLabel: "更新书籍",
+            replaceDisposition: .replaceExisting,
+            offersKeepBoth: canKeepBoth,
+            icon: "books.vertical.circle.fill"
+        )
+    }
+
+    /// Routes the finished import to the store the way the user chose: keep-both
+    /// shelves it alongside the existing copy, a 换源 replace swaps exactly the book
+    /// the user opened, everything else replaces whatever matched by URL or title.
+    /// Returns whether a new record landed on the shelf.
+    private func insertImportedNovel(
+        _ novel: Novel,
+        disposition: ImportDisposition,
+        categoryName: String
+    ) -> Bool {
+        switch disposition {
+        case .keepBoth:
+            return libraryStore.addImportedNovelKeepingSameTitleBooks(
+                novel,
+                categoryName: categoryName
+            )
+        case .replaceBook(let bookID):
+            // The target can vanish while the import runs (deleted from the library
+            // tab); falling back keeps the fetched book rather than dropping it.
+            if libraryStore.replaceBook(id: bookID, with: novel, categoryName: categoryName) {
+                return true
+            }
+            return libraryStore.addImportedNovel(novel, categoryName: categoryName)
+        case .fresh, .replaceExisting:
+            return libraryStore.addImportedNovel(novel, categoryName: categoryName)
+        }
+    }
+
+    /// Result copy for a finished import, shared so the heuristic and rule flows
+    /// can't drift apart.
+    private func importResultMessage(
+        disposition: ImportDisposition,
+        categoryName: String,
+        remainsArchived: Bool,
+        inserted: Bool
+    ) -> String {
+        if remainsArchived {
+            return "已替换旧记录，并保留在「已归档」。打开章节时会联网加载正文。"
+        }
+        switch disposition {
+        case .keepBoth:
+            return "已作为新的一本加入「\(categoryName)」，原来那本仍在书架。"
+        case .replaceBook:
+            return "已换成新的书源，仍在「\(categoryName)」。打开章节时会联网加载正文。"
+        case .replaceExisting:
+            return "已替换旧记录，加入「\(categoryName)」。打开章节时会联网加载正文。"
+        case .fresh:
+            return inserted
+                ? "已加入「\(categoryName)」。打开章节时会联网加载正文。"
+                : "这本书已经在你的书架中了。"
         }
     }
 
@@ -598,19 +779,32 @@ struct InAppBrowserView: View {
             }
         }
 
+        let copy = collisionPromptCopy(
+            sourceURLString: candidate.detection.detection.detailURL.absoluteString,
+            title: candidate.displayTitle
+        )
+
         return CustomAlertView(
             type: .info,
-            title: "书籍已存在",
+            title: copy.title,
             bookTitle: candidate.displayTitle,
-            message: "书架里已经有这本书啦。\n要用当前页面的内容更新一下吗？",
-            primaryButton: .primary("更新书籍") {
+            message: copy.message,
+            primaryButton: .primary(copy.replaceLabel) {
                 withAnimation(ModalStyle.presentationAnimation) {
                     ruleReplacementCandidate = nil
                 }
-                promptRuleCategory(candidate, isReplacing: true)
+                promptRuleCategory(candidate, disposition: copy.replaceDisposition)
             },
             secondaryButton: .secondary("先不了", action: dismiss),
-            iconOverride: "books.vertical.circle.fill",
+            tertiaryButton: copy.offersKeepBoth
+                ? .secondary("两本都留") {
+                    withAnimation(ModalStyle.presentationAnimation) {
+                        ruleReplacementCandidate = nil
+                    }
+                    promptRuleCategory(candidate, disposition: .keepBoth)
+                }
+                : nil,
+            iconOverride: copy.icon,
             tintOverride: Color.readerAccent,
             onDismiss: dismiss
         )
@@ -636,11 +830,11 @@ struct InAppBrowserView: View {
                     let chosen = name.trimmingCharacters(in: .whitespacesAndNewlines)
                     let categoryName = chosen.isEmpty ? LibraryStore.uncategorizedName : chosen
                     let candidate = prompt.candidate
-                    let isReplacing = prompt.isReplacing
+                    let disposition = prompt.disposition
                     withAnimation(ModalStyle.presentationAnimation) {
                         ruleCategoryPrompt = nil
                     }
-                    startRuleImport(candidate, isReplacing: isReplacing, categoryName: categoryName)
+                    startRuleImport(candidate, disposition: disposition, categoryName: categoryName)
                 }
             )
         }
@@ -648,23 +842,42 @@ struct InAppBrowserView: View {
 
     private func requestRuleImport(_ candidate: RuleImportCandidate) {
         let detailURL = candidate.detection.detection.detailURL.absoluteString
-        if libraryStore.containsBook(sourceURLString: detailURL, title: candidate.displayTitle) {
+        if activeSwitchTarget(matching: candidate.displayTitle) != nil
+            || libraryStore.containsBook(sourceURLString: detailURL, title: candidate.displayTitle) {
             ruleReplacementCandidate = candidate
             return
         }
-        promptRuleCategory(candidate, isReplacing: false)
+        promptRuleCategory(candidate, disposition: .fresh)
     }
 
-    private func promptRuleCategory(_ candidate: RuleImportCandidate, isReplacing: Bool) {
+    private func promptRuleCategory(_ candidate: RuleImportCandidate, disposition: ImportDisposition) {
+        if case .replaceBook(let bookID) = disposition {
+            switch targetedCategoryStep(bookID: bookID) {
+            case .startImmediately:
+                startRuleImport(
+                    candidate,
+                    disposition: disposition,
+                    categoryName: LibraryStore.uncategorizedName
+                )
+            case .pick(let initialCategory):
+                ruleCategoryPrompt = RuleCategoryPromptState(
+                    candidate: candidate,
+                    disposition: disposition,
+                    initialCategory: initialCategory
+                )
+            }
+            return
+        }
+
         let detailURL = candidate.detection.detection.detailURL.absoluteString
-        if isReplacing,
+        if disposition == .replaceExisting,
            libraryStore.isArchivedBook(
                sourceURLString: detailURL,
                title: candidate.displayTitle
            ) {
             startRuleImport(
                 candidate,
-                isReplacing: true,
+                disposition: .replaceExisting,
                 categoryName: LibraryStore.uncategorizedName
             )
             return
@@ -676,14 +889,14 @@ struct InAppBrowserView: View {
         )
         ruleCategoryPrompt = RuleCategoryPromptState(
             candidate: candidate,
-            isReplacing: isReplacing,
+            disposition: disposition,
             initialCategory: existing
         )
     }
 
     private func startRuleImport(
         _ candidate: RuleImportCandidate,
-        isReplacing: Bool,
+        disposition: ImportDisposition,
         categoryName: String
     ) {
         ignoredBookURLs.insert(candidate.pageURL.absoluteString)
@@ -707,21 +920,17 @@ struct InAppBrowserView: View {
                 } catch {
                     throw error
                 }
-                let inserted = libraryStore.addImportedNovel(novel, categoryName: categoryName)
+                let inserted = insertImportedNovel(novel, disposition: disposition, categoryName: categoryName)
                 let remainsArchived = libraryStore.isArchived(novel)
                 importStatus = nil
                 let resultType: CustomAlertType = inserted ? .success : .info
                 let title = remainsArchived ? "归档书籍已更新" : (inserted ? "导入成功" : "已在书架")
-                let message: String
-                if remainsArchived {
-                    message = "已替换旧记录，并保留在「已归档」。打开章节时会联网加载正文。"
-                } else if isReplacing {
-                    message = "已替换旧记录，加入「\(categoryName)」。打开章节时会联网加载正文。"
-                } else if inserted {
-                    message = "已加入「\(categoryName)」。打开章节时会联网加载正文。"
-                } else {
-                    message = "这本书已经在你的书架中了。"
-                }
+                let message = importResultMessage(
+                    disposition: disposition,
+                    categoryName: categoryName,
+                    remainsArchived: remainsArchived,
+                    inserted: inserted
+                )
                 importResult = BrowserImportResult(
                     type: resultType,
                     title: title,
@@ -876,11 +1085,11 @@ struct InAppBrowserView: View {
                     let chosen = name.trimmingCharacters(in: .whitespacesAndNewlines)
                     let categoryName = chosen.isEmpty ? LibraryStore.uncategorizedName : chosen
                     let candidate = prompt.candidate
-                    let isReplacing = prompt.isReplacing
+                    let disposition = prompt.disposition
                     withAnimation(ModalStyle.presentationAnimation) {
                         categoryPrompt = nil
                     }
-                    startImport(candidate, isReplacing: isReplacing, categoryName: categoryName)
+                    startImport(candidate, disposition: disposition, categoryName: categoryName)
                 }
             )
         }
@@ -1263,7 +1472,7 @@ private struct BrowserImportResult: Identifiable {
 private struct CategoryPromptState: Identifiable {
     let id = UUID()
     let candidate: WebBookCandidate
-    let isReplacing: Bool
+    let disposition: ImportDisposition
     let initialCategory: String?
 }
 
@@ -1298,7 +1507,7 @@ private struct RuleImportCandidate: Identifiable, Equatable {
 private struct RuleCategoryPromptState: Identifiable {
     let id = UUID()
     let candidate: RuleImportCandidate
-    let isReplacing: Bool
+    let disposition: ImportDisposition
     let initialCategory: String?
 }
 

@@ -50,6 +50,9 @@ struct CustomAlertView: View {
     let message: String
     let primaryButton: CustomAlertButton
     let secondaryButton: CustomAlertButton?
+    /// Third choice, e.g. 两本都留 next to 更新书籍 / 先不了. Its presence switches the
+    /// action row to a vertical stack — three Chinese labels never fit side by side.
+    let tertiaryButton: CustomAlertButton?
     let onDismiss: (() -> Void)?
     let showsIcon: Bool
     let iconOverride: String?
@@ -64,6 +67,7 @@ struct CustomAlertView: View {
         message: String,
         primaryButton: CustomAlertButton,
         secondaryButton: CustomAlertButton? = nil,
+        tertiaryButton: CustomAlertButton? = nil,
         showsIcon: Bool = true,
         iconOverride: String? = nil,
         tintOverride: Color? = nil,
@@ -75,6 +79,7 @@ struct CustomAlertView: View {
         self.message = message
         self.primaryButton = primaryButton
         self.secondaryButton = secondaryButton
+        self.tertiaryButton = tertiaryButton
         self.showsIcon = showsIcon
         self.iconOverride = iconOverride
         self.tintOverride = tintOverride
@@ -141,7 +146,27 @@ struct CustomAlertView: View {
 
     @ViewBuilder
     private var actions: some View {
-        if let secondaryButton {
+        if let tertiaryButton {
+            VStack(spacing: 10) {
+                ModalButton(
+                    title: primaryButton.title,
+                    role: primaryButton.role,
+                    action: primaryButton.action
+                )
+                ModalButton(
+                    title: tertiaryButton.title,
+                    role: tertiaryButton.role,
+                    action: tertiaryButton.action
+                )
+                if let secondaryButton {
+                    ModalButton(
+                        title: secondaryButton.title,
+                        role: secondaryButton.role,
+                        action: secondaryButton.action
+                    )
+                }
+            }
+        } else if let secondaryButton {
             HStack(spacing: 10) {
                 ModalButton(
                     title: secondaryButton.title,
@@ -204,6 +229,23 @@ struct CustomAlertView: View {
             message: "已经在书架中。替换会重新导入信息和章节目录。",
             primaryButton: .destructive("替换") {},
             secondaryButton: .secondary("取消") {},
+            onDismiss: {}
+        )
+    }
+}
+
+#Preview("Duplicate title - three choices") {
+    ZStack {
+        Color.readerBackground.ignoresSafeArea()
+        CustomAlertView(
+            title: "书籍已存在",
+            bookTitle: "九重紫",
+            message: "书架里已经有同名的书啦。",
+            primaryButton: .primary("更新书籍") {},
+            secondaryButton: .secondary("先不了") {},
+            tertiaryButton: .secondary("两本都留") {},
+            iconOverride: "books.vertical.circle.fill",
+            tintOverride: Color.readerAccent,
             onDismiss: {}
         )
     }
