@@ -421,27 +421,7 @@ struct PageCurlPager: UIViewControllerRepresentable {
             let size = pvc.view.bounds.size
             defer { prepareVisibleNeighborhood(in: pvc) }
             guard size.width > 0, size.height > 0 else { return }
-            // iOS 26's .pageCurl does not re-frame the DISPLAYED child after the pager
-            // itself is resized (rotation/split view): the container relayouts to the
-            // new bounds while the child keeps its old-orientation frame, so most of
-            // the page is clipped off screen — the "blank page until I turn once"
-            // rotation report. Re-pin the child to its container whenever the pager is
-            // quiescent; a no-op in the (scroll) cases UIKit handles correctly.
-            // `viewControllers` is unreliable on iOS 26 pageCurl (it can keep
-            // returning a stale controller), so fall back to the cached host for the
-            // shown identity — the controller this coordinator last installed.
-            let displayedController = pvc.viewControllers?.first ?? hosts[shownIdentity]
-            if !isAnimating, !gestureInFlight, pvc.transitionCoordinator == nil,
-               let displayedView = displayedController?.view,
-               let container = displayedView.superview,
-               displayedView.frame != container.bounds {
-                ReaderDiagnostics.shared.log(.info, "pager re-framed displayed child", context: [
-                    "co": debugTag,
-                    "from": "\(Int(displayedView.frame.width))x\(Int(displayedView.frame.height))",
-                    "to": "\(Int(container.bounds.width))x\(Int(container.bounds.height))"
-                ])
-                displayedView.frame = container.bounds
-            }
+            repinDisplayedChildIfNeeded(in: pvc)
             let previous = lastViewportSize
             lastViewportSize = size
             guard previous != .zero, previous != size, !isDismantled else { return }
@@ -451,10 +431,167 @@ struct PageCurlPager: UIViewControllerRepresentable {
                 "to": "\(Int(size.width))x\(Int(size.height))",
                 "tree": Self.describeSubtree(of: pvc.view)
             ])
+            // A rotation swallows the completion of any animated setViewControllers
+            // that was in flight across it, so `isAnimating` would stay set until the
+            // watchdog fires seconds later — and EVERY recovery path (neighbour
+            // refresh, the re-install below) is gated on it. Measured on iOS 26: the
+            // reader sat on the previous orientation's page for ~3s waiting for that
+            // watchdog. The page-turn is void anyway; the reader bumps its navigation
+            // epoch on rotation precisely so a landing from the old orientation cannot
+            // commit. Clear the state here and let this resize re-install the page.
+            if isAnimating || gestureInFlight {
+                ReaderDiagnostics.shared.log(.info, "pager transition voided by resize", context: [
+                    "co": debugTag,
+                    "isAnimating": isAnimating ? "1" : "0",
+                    "gestureInFlight": gestureInFlight ? "1" : "0",
+                    "ageMs": animationStartedAt.map { String(Int($0.distance(to: Date()) * 1000)) } ?? "-"
+                ])
+                isAnimating = false
+                gestureInFlight = false
+                animationStartedAt = nil
+                pendingIdentity = nil
+                cancelTransitionWatchdog()
+            }
             needsNeighborRefresh = true
             DispatchQueue.main.async { [weak self, weak pvc] in
                 guard let self, let pvc else { return }
                 self.refreshNeighborsIfNeeded(in: pvc)
+            }
+            startResizeEnforcement(in: pvc)
+        }
+
+        /// Identity of the host actually covering the pager's viewport, found by walking
+        /// the view hierarchy rather than asking `viewControllers`. On iOS 26 pageCurl
+        /// that property keeps reporting a swap as if it landed even when the page on
+        /// screen never changed, which is why the earlier install verification had to be
+        /// limited to .scroll. The hierarchy does not lie: whichever of our cached hosts
+        /// is parented and covers the middle of the viewport is what the user sees.
+        private func onScreenHostIdentity(in pvc: UIPageViewController) -> String? {
+            let viewport = pvc.view.bounds
+            guard viewport.width > 0, viewport.height > 0 else { return nil }
+            let core = viewport.insetBy(dx: viewport.width * 0.35, dy: viewport.height * 0.35)
+            for (identity, host) in hosts {
+                guard let view = host.viewIfLoaded,
+                      view.superview != nil,
+                      !view.isHidden,
+                      view.alpha > 0.01 else { continue }
+                let frameInPager = view.convert(view.bounds, to: pvc.view)
+                if frameInPager.contains(CGPoint(x: core.midX, y: core.midY)) {
+                    return identity
+                }
+            }
+            return nil
+        }
+
+        /// Rotation's last mile. Re-pagination for the new geometry gives the current
+        /// page a new identity, and the reader installs it the usual way — but iOS 26's
+        /// .pageCurl silently drops a `setViewControllers` made anywhere near the
+        /// rotation window, leaving the PREVIOUS orientation's host on screen: its text
+        /// is laid out for the old bounds, so the body is clipped and the footer sits
+        /// entirely off screen. That is the "blank page until I turn once" report.
+        ///
+        /// Retry the install, verifying against the view hierarchy, until the page the
+        /// reader wants is the page the user sees. Attempts are cheap (a no-op once the
+        /// right host is on screen) and bounded, so a genuinely stuck pager degrades to
+        /// today's behaviour instead of spinning.
+        /// Deadline for the post-resize enforcement below. A second resize inside the
+        /// window (rotating twice quickly) extends it instead of starting a competing
+        /// polling chain. The window is the only bound on the work: the reader needs
+        /// however many reinstalls it takes to outlast UIKit's swallowing, and each one
+        /// that lands ends the retries immediately.
+        private var resizeEnforcementDeadline: Date?
+
+        private func startResizeEnforcement(in pvc: UIPageViewController) {
+            let alreadyRunning = resizeEnforcementDeadline.map { $0 > Date() } ?? false
+            resizeEnforcementDeadline = Date().addingTimeInterval(2.5)
+            guard !alreadyRunning else { return }
+            enforceDesiredHostAfterResize(in: pvc)
+        }
+
+        private func enforceDesiredHostAfterResize(in pvc: UIPageViewController) {
+            guard !isDismantled,
+                  let deadline = resizeEnforcementDeadline,
+                  Date() < deadline else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { [weak self, weak pvc] in
+                guard let self, let pvc, !self.isDismantled else { return }
+                // Poll for the whole window rather than stopping at the first match: the
+                // page the reader wants changes again mid-window (the new orientation's
+                // pagination lands, then the page index clamps), and each of those
+                // installs can be swallowed in turn.
+                defer { self.enforceDesiredHostAfterResize(in: pvc) }
+                // A live gesture or animation owns the pager; leave UIKit's queue alone
+                // and check again on the next tick.
+                guard !self.isAnimating, !self.gestureInFlight,
+                      pvc.transitionCoordinator == nil,
+                      let desired = self.identity(at: self.parent.currentIndex) else { return }
+                let onScreen = self.onScreenHostIdentity(in: pvc)
+                guard onScreen != desired else {
+                    self.repinDisplayedChildIfNeeded(in: pvc)
+                    return
+                }
+                ReaderDiagnostics.shared.log(.info, "pager reinstalling after resize", context: [
+                    "co": self.debugTag,
+                    "onScreen": onScreen ?? "-",
+                    "desired": desired,
+                    "shownID": self.shownIdentity
+                ])
+                // Drop the cached host so it is rebuilt and laid out at the new viewport
+                // size; a host prepared for the old orientation is exactly what we are
+                // trying to get off the screen.
+                self.removeCachedHost(desired)
+                if let host = self.preparedHost(for: desired, in: pvc) {
+                    self.shownIdentity = desired
+                    pvc.setViewControllers([host], direction: .forward, animated: false)
+                    self.repinDisplayedChildAfterInstall(in: pvc)
+                    self.prepareVisibleNeighborhood(in: pvc)
+                }
+            }
+        }
+
+        /// Re-pins the displayed child to its container's bounds when UIKit left it at
+        /// a stale geometry. iOS 26's .pageCurl does this in two situations, and BOTH
+        /// end with most of the page — footer included — clipped off screen, which the
+        /// field report describes as "blank page until I turn once":
+        ///
+        /// 1. The pager itself is resized (rotation / split view): the container
+        ///    relayouts to the new bounds while the displayed child keeps its
+        ///    old-orientation frame.
+        /// 2. A `setViewControllers` lands right after such a resize — re-pagination
+        ///    changes the page identity, so the reader always installs a fresh host
+        ///    just after rotating — and curl's private page structure frames the
+        ///    NEWLY installed child at the previous orientation's size. Nothing
+        ///    resizes the pager again afterwards, so the layout hook never fires and
+        ///    the mis-framed page stays until the user turns a page by hand.
+        ///
+        /// Idempotent and cheap: a no-op whenever UIKit framed the child correctly,
+        /// which is every .scroll transition and most curl ones.
+        @discardableResult
+        func repinDisplayedChildIfNeeded(in pvc: UIPageViewController) -> Bool {
+            guard !isDismantled, !isAnimating, !gestureInFlight,
+                  pvc.transitionCoordinator == nil else { return false }
+            // `viewControllers` is unreliable on iOS 26 pageCurl (it can keep returning a
+            // stale controller), so fall back to the cached host for the shown identity —
+            // the controller this coordinator last installed.
+            let displayedController = pvc.viewControllers?.first ?? hosts[shownIdentity]
+            guard let displayedView = displayedController?.view,
+                  let container = displayedView.superview,
+                  displayedView.frame != container.bounds else { return false }
+            ReaderDiagnostics.shared.log(.info, "pager re-framed displayed child", context: [
+                "co": debugTag,
+                "from": "\(Int(displayedView.frame.width))x\(Int(displayedView.frame.height))",
+                "to": "\(Int(container.bounds.width))x\(Int(container.bounds.height))"
+            ])
+            displayedView.frame = container.bounds
+            return true
+        }
+
+        /// Post-install counterpart to `repinDisplayedChildIfNeeded`. UIKit frames a
+        /// freshly installed child on its next layout pass, so an inline check would
+        /// always read the not-yet-updated frame; hop one runloop turn first.
+        func repinDisplayedChildAfterInstall(in pvc: UIPageViewController) {
+            DispatchQueue.main.async { [weak self, weak pvc] in
+                guard let self, let pvc else { return }
+                self.repinDisplayedChildIfNeeded(in: pvc)
             }
         }
 
@@ -528,6 +665,7 @@ struct PageCurlPager: UIViewControllerRepresentable {
             ])
             pvc.setViewControllers([host], direction: .forward, animated: false)
             verifyInstalled(host, in: pvc)
+            repinDisplayedChildAfterInstall(in: pvc)
             prepareVisibleNeighborhood(in: pvc)
             return true
         }
@@ -776,6 +914,7 @@ struct PageCurlPager: UIViewControllerRepresentable {
             if !animated {
                 pvc.setViewControllers([target], direction: direction, animated: false)
                 verifyInstalled(target, in: pvc)
+                repinDisplayedChildAfterInstall(in: pvc)
                 prepareVisibleNeighborhood(in: pvc)
                 return
             }
@@ -800,6 +939,7 @@ struct PageCurlPager: UIViewControllerRepresentable {
                 self.cancelTransitionWatchdog()
                 if let pvc {
                     self.prepareVisibleNeighborhood(in: pvc)
+                    self.repinDisplayedChildAfterInstall(in: pvc)
                 }
                 self.retryNeighborRefreshAfterTransition(in: pvc)
                 // iOS 26 UIPageViewController quirk: an animated setViewControllers can
@@ -960,6 +1100,7 @@ struct PageCurlPager: UIViewControllerRepresentable {
                     "shownID": shownIdentity
                 ])
                 pageViewController.setViewControllers([host], direction: .forward, animated: false)
+                repinDisplayedChildAfterInstall(in: pageViewController)
             }
             return .min
         }
@@ -1070,6 +1211,7 @@ struct PageCurlPager: UIViewControllerRepresentable {
                 parent.onCommit(landedID)
             }
             prepareVisibleNeighborhood(in: pvc)
+            repinDisplayedChildAfterInstall(in: pvc)
             retryNeighborRefreshAfterTransition(in: pvc)
             // Apply any pending programmatic target stashed during the transition.
             let pending = pendingIdentity
